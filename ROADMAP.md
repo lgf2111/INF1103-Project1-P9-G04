@@ -7,6 +7,7 @@
 ## Contents
 
 1. [General progress and deliverables](#general-progress-and-deliverables)
+   1. [Email-file assessment workflow](#email-file-assessment-workflow)
 2. Four-layer architecture
    1. [Input Layer](#input-layer)
    2. [AI Processing Layer](#ai-processing-layer)
@@ -124,6 +125,24 @@ Complete the mandatory assessment flow before optional extensions. Record retain
 - Pass every agreed rule case; reject malformed AI output without a successful assessment.
 - Retrieve unchanged saved assessments after restart. Record exclusions and evaluation results in the report.
 
+### Email-file assessment workflow
+
+**Team-agreed input direction:** The user supplies an email file location through the CLI. File import is planned, not implemented by the existing message-entry flow. The supported format (`.eml`, `.msg` or text), file limits and parsed-record schema still need agreement. The earlier email/SMS/chat scope remains to be reconciled with this direction; do not assume those other channels are implemented or removed.
+
+**Proposed handoffs, subject to layer-owner agreement:**
+
+| Step | Responsibility | Expected handoff |
+| --- | --- | --- |
+| Select and read email | Input owners: Jeremy & Bryan | Validate the supplied path, readability, supported format and agreed size limit; parse usable email content or display an error and re-prompt. |
+| Prepare input record | Input owners, with AI owners agreeing the contract | Return a typed dictionary of agreed email fields and user-reported actions. Reading an email cannot establish whether the user clicked, downloaded or disclosed credentials. |
+| Obtain AI findings | AI owners: Arvin & Guan Feng | Build a prompt from the dictionary, call the API, parse and validate findings, or return the agreed failure information. AI receives content; it does not open the user's file path. |
+| Assess findings | Logic owners: Bryan & Xavier | Combine validated AI findings and reported actions to determine the outcome, score and response checklist. |
+| Persist and display | Data owners and input owners | Save only evaluated reports; display the assessment and its limitations through I/O. |
+
+AI failures must stop the assessment before evaluation or saving. Email content is untrusted data; importing a file must not open links or execute attachments. Sender/Reply-To comparison, link-label/destination comparison, attachment metadata and evidence quotes are optional proposals requiring agreed fields and ownership, not part of the settled input decision.
+
+**Current AI work boundary:** Implement only the AI manager and its tests under an approved contract. File selection, reading/parsing, scoring, storage, displays and shared `main.py` changes remain with their owners unless separately agreed. AI development can use fictional parsed-record fixtures; this does not establish that file import or full integration works.
+
 ### Implementation sequence
 
 - [ ] Agree schemas, interfaces, rule table and ownership of individual tasks in `docs/design.md` and GitHub issues.
@@ -159,6 +178,7 @@ Complete the mandatory assessment flow before optional extensions. Record retain
 ### Deliverables
 
 - [ ] **I1 — Complete input record**
+  - Agree the email-file format and parsed-record contract for the workflow above. File import and parsing remain input-owner work; existing manual-input helpers do not implement file import.
   - Connect helpers to `collect_input()`. Return channel, optional sender, message, included-link/file details and user actions in the agreed dictionary.
   - Convert flags to booleans and choices to agreed values.
 - [ ] **I2 — Input validation**
@@ -200,6 +220,7 @@ Complete the mandatory assessment flow before optional extensions. Record retain
 ### Deliverables
 
 - [ ] **A1 — Shared schema and prompts**
+  - Agree the parsed email dictionary with input owners before adopting new fields. Accept content rather than opening a file path; preserve the four public AI interfaces and keep file parsing outside this layer.
   - Define phishing findings and any retained extraction fields in `docs/design.md`.
   - Keep `build_prompt`, `call_api`, `parse_response` and `validate_response` public; map prototype helpers into that interface.
 - [ ] **A2 — Proposed extraction integration**
@@ -445,6 +466,7 @@ Agree contract changes with affected layer owners before implementation. Update 
 | Instructor topic sign-off and one-paragraph problem statement | Team coordinator to be assigned | G1 completion |
 | Correct repository URL in the proposal and Project Initial Details | Team coordinator to be assigned | G5 completion |
 | Input, AI, decision and saved-record schemas; error contracts | All layer owners | Cross-layer integration |
+| Email-file format, limits, parsed fields and relationship to earlier SMS/chat scope | Input owners with AI owners; team for channel scope | Email-file import and new AI input contract |
 | Retained extraction fields and second AI formatting call | Arvin & Guan Feng, Bryan & Xavier | Extraction integration |
 | Two-AI-field rule, score use, precedence and exposure outcomes | Bryan & Xavier | Final logic implementation |
 | Personal-information/payment categories and supported user actions | Jeremy & Bryan, Bryan & Xavier | Input/logic extension |
