@@ -21,16 +21,21 @@ jobs:
       - name: Check code style
         run: ruff check .
 
-      # Hard constraint C1: the code must be 100% procedural - no classes.
-      # This fails the build if anyone adds a class definition in app/.
+      # Hard constraint C1: no class definitions in team-authored Python.
+      # Check every tracked Python file, including tests and root helpers.
       - name: Check for class definitions (must be none)
         run: |
-          if grep -rnE '^[[:space:]]*class[[:space:]]+[A-Za-z_]' app/; then
-            echo "ERROR: found a class definition in app/ - this project must be 100% procedural (no classes)."
+          if git grep -nE '^[[:space:]]*class[[:space:]]+[A-Za-z_]' -- '*.py'; then
+            echo "ERROR: class definitions are not allowed in team-authored Python."
             exit 1
           else
-            echo "OK: no class definitions found."
+            status=$?
+            if [ "$status" -ne 1 ]; then
+              echo "ERROR: class check failed (git grep exit $status)."
+              exit "$status"
+            fi
           fi
+          echo "OK: no class definitions found in tracked Python files."
 
   # Job 1: run the offline tests on plain Python.
   test:
