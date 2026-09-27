@@ -1,4 +1,5 @@
-# Local coursework references
+# Git history and local coursework references
+.git/
 .local/
 
 # API keys and other machine-specific settings
