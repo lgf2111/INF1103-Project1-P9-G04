@@ -1,6 +1,6 @@
-# Generated with: pip freeze
-# The Gemini call uses Python's built-in urllib, so no extra library is needed.
-# pytest is only for running the tests.
+# Pinned test dependencies generated with pip freeze.
+# The Groq API call uses Python's standard-library urllib; no API SDK is needed.
+# The packages below support offline tests, not the application's runtime.
 iniconfig==2.3.0
 packaging==26.3
 pluggy==1.6.0

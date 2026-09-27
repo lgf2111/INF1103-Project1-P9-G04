@@ -2,157 +2,77 @@
 
 [![CI](https://github.com/lgf2111/phish-report/actions/workflows/ci.yml/badge.svg)](https://github.com/lgf2111/phish-report/actions/workflows/ci.yml)
 
-A simple command-line tool that checks if a message looks like phishing.
-You paste a suspicious message and say what you did (clicked a link, gave a
-password, etc). The app sends the message to an AI, applies our rules, and
-gives you a priority, a score and a checklist of what to do. Reports are saved
-to a file so you can look at them later.
+PhishReport is a procedural Python CLI for checking suspicious messages. It sends each new message to the Groq API, validates the AI findings, and applies rules using those findings and the user's reported actions. It displays a priority, a rule-based score and a response checklist, then saves the assessment as JSON.
 
-This is our INF team project (Phase 1). It is written in plain Python using
-functions only (no classes), split into four "manager" files.
+This is the Phase 1 coursework application. The current code provides a starter assessment flow; planned improvements and team decisions are in [ROADMAP.md](ROADMAP.md). A result with no clear indicators does not guarantee that a message is safe.
 
-## How it fits together
+## Project layout
 
+| Path | Purpose |
+| --- | --- |
+| `app/io_manager.py` | Collect terminal input and display results. |
+| `app/ai_manager.py` | Request and validate structured AI findings. |
+| `app/logic_manager.py` | Apply assessment rules, scoring and routing. |
+| `app/data_manager.py` | Save, load and query JSON reports. |
+| `app/main.py` | Connect the managers and run the menu. |
+| `tests/` | Run offline tests with sample AI responses. |
+
+## Set up
+
+Use Python 3.12 to match CI and the Docker image. Run these commands from the repository root.
+
+**Windows PowerShell**
+
+```powershell
+py -3.12 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
-you  ->  io_manager  ->  ai_manager  ->  logic_manager  ->  data_manager
-        (ask/print)     (call the AI)    (the rules)        (save to file)
-```
 
-| File | What it does | Owner |
-| --- | --- | --- |
-| `app/io_manager.py` | Menu, questions and printing (all input/print live here) | Lee Guan Feng |
-| `app/ai_manager.py` | Sends the message to the Groq API, checks the reply | Pair A |
-| `app/logic_manager.py` | The rules: priority, score, checklist | Xavier Heng & Bryan Ow |
-| `app/data_manager.py` | Saves and loads reports (`reports.json`) | Xavier Heng & Bryan Ow |
-| `app/main.py` | Runs the menu and connects the four managers | shared |
-
-## First-time setup
-
-You need Python 3 installed. Then, from the project folder:
+**macOS or Linux**
 
 ```bash
-# 1. make a virtual environment (a private space for our packages)
-python3 -m venv .venv
-
-# 2. turn it on
-source .venv/bin/activate        # Mac/Linux
-# .venv\Scripts\activate         # Windows
-
-# 3. install what we need
-pip install -r requirements.txt
-
-# 4. add your API key
-cp .env.example .env             # then open .env and paste your Groq key
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+cp .env.example .env
 ```
 
-Your key goes in `.env` like this:
+Open `.env` and set `GROQ_API_KEY` to your key from the [Groq console](https://console.groq.com):
 
-```
+```text
 GROQ_API_KEY=your_key_here
 ```
 
-`.env` is gitignored, so your key never gets uploaded. Get a free key from the
-Groq console (https://console.groq.com).
+A key is required for a live assessment, but not for the offline tests. Use fictional messages for testing; never enter real passwords or one-time codes.
 
-## Running the app
-
-With the virtual environment turned on:
+## Run and test
 
 ```bash
 python app/main.py
+python -m pytest
 ```
 
-You will see a menu:
+The app lets you assess a message, view saved reports or quit. It writes `reports.json` in the directory from which you run it. The tests use sample AI responses and do not need network access.
 
-```
-=== PhishReport ===
-1. Check a new message
-2. View saved reports
-3. Quit
-```
+## Check the Docker build
 
-Pick **1**, paste a message, answer the questions, and you get a result like:
-
-```
-Priority: high
-Score: 90
-What to do:
- - Recover your account through the official website.
- - Tell IT.
-```
-
-## Running the tests
-
-The tests check the rules in `logic_manager` using fake AI answers, so they
-run without the internet and without a key:
+With Docker running, build the image and run the offline tests:
 
 ```bash
-pytest
+docker build -t phishreport .
+docker run --rm phishreport pytest
 ```
 
-## Running in Docker
-
-Docker makes the app run the same on everyone's laptop (this is graded). You
-need Docker Desktop open. There is a helper script so you don't have to
-remember the commands:
+To run the interactive application in Docker, first create `.env` as described above:
 
 ```bash
-chmod +x docker.sh     # first time only
-./docker.sh build      # build the image
-./docker.sh run        # run the app (reads your key from .env)
-./docker.sh test       # run the tests in the container
-./docker.sh clean      # delete the image
+docker run --rm -it --env-file .env phishreport
 ```
 
-## How we work together (Git)
+Reports saved inside this temporary container do not persist after it exits. Persistent container storage and verification on every team laptop remain delivery tasks in the roadmap.
 
-Please don't commit straight to `main`. Instead:
+## Contributing
 
-```bash
-git checkout main
-git pull                              # get the latest
-git checkout -b feat/your-thing       # make a branch for your work
-# ... do your work, then ...
-git add <your files>
-git commit -m "short description of what you did"
-git push -u origin feat/your-thing
-```
-
-Then open a Pull Request on GitHub and ask a teammate to review before
-merging. Small, frequent commits with clear messages are what we're graded on,
-so commit as you go rather than one big dump at the end.
-
-## Code rules and automatic checks
-
-Every push and pull request is checked automatically by GitHub Actions (you
-don't run these yourself, they just run online). If something goes red, click
-the failed check to see why. There are three checks:
-
-**1. No classes allowed.** This is the big one. The assignment requires the
-whole app to be written with functions only - **no `class` anywhere**. It's an
-instant-fail rule for the grade, so CI will block any code in `app/` that
-contains a class. If your check fails with a "found a class definition"
-message, rewrite it using plain functions.
-
-**2. Lint (ruff).** We run `ruff`, a linter that flags things like unused
-imports, bad import order and over-long lines. To avoid surprises:
-
-- Install the **Ruff extension** in your IDE (VS Code: search "Ruff"). It
-  underlines problems as you type and can auto-fix them on save.
-- Or run it yourself before pushing:
-
-  ```bash
-  ruff check .          # show problems
-  ruff check . --fix    # fix the easy ones automatically
-  ```
-
-**3. Tests.** The tests in `tests/` run automatically. If you change the rules
-in `logic_manager`, update or add a test so it still passes.
-
-## Notes
-
-- The AI reply is JSON with three true/false fields: `credential_request`,
-  `suspicious`, `insufficient_context`. `logic_manager` turns those (plus what
-  you did) into the priority.
-- Never put real passwords or codes into the app. Use fake/sample messages.
-- `reports.json` is created when you run the app and is gitignored.
+See the [proposed team workflow](ROADMAP.md#team-standards-and-task-instructions) for task issues, branch names, checks and pull request reviews.
