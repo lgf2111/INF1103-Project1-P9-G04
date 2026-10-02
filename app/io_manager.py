@@ -3,13 +3,17 @@
 
 
 def main_menu():
-    # show the menu and return the user's choice
-    print()
-    print("=== PhishReport ===")
+    print("\n=== PhishReport ===")
     print("1. Check a new message")
     print("2. View saved reports")
     print("3. Quit")
-    return input("Choose 1-3: ").strip()
+
+    choice = input("Choose 1-3: ").strip()
+
+    while choice not in ("1", "2", "3"):
+        choice = input("Invalid choice. Please choose 1-3: ").strip()
+
+    return choice
 
 
 def collect_input():
@@ -37,11 +41,71 @@ def collect_input():
 
 def ask_yes_no(question):
     answer = input(question).strip().lower()
-    while answer not in ("y", "n"):
-        answer = input("Please type y or n: ").strip().lower()
-    return answer == "y"
 
+    while answer not in ("y", "yes", "n", "no"):
+        answer = input("Please type yes/y or no/n: ").strip().lower()
 
+    return answer in ("y", "yes")
+
+def get_channel():
+    channel = input("Enter channel (Email/SMS/Chat): ").strip().lower()
+
+    while channel not in ("email", "sms", "chat"):
+        channel = input(
+            "Invalid channel. Please enter Email, SMS, or Chat: "
+        ).strip().lower()
+
+    return channel
+
+def get_sender():
+    sender = input(
+        "Enter sender information (press Enter if unknown): "
+    ).strip()
+
+    if sender == "":
+        return None
+
+    return sender
+
+def get_message():
+    message = input("Enter the suspicious message: ").strip()
+
+    while message == "":
+        message = input(
+            "Message cannot be blank. Please enter the suspicious message: "
+        ).strip()
+
+    return message
+
+def get_link_information():
+    has_link = ask_yes_no("Was a link included? (yes/no): ")
+
+    if not has_link:
+        return False, None
+
+    link = input("Enter the link: ").strip()
+
+    while link == "":
+        link = input(
+            "Link cannot be blank. Please enter the link: "
+        ).strip()
+
+    return True, link
+
+def get_file_information():
+    has_file = ask_yes_no("Was a file included? (yes/no): ")
+
+    if not has_file:
+        return False, None
+
+    file_name = input("Enter the file name: ").strip()
+
+    while file_name == "":
+        file_name = input(
+            "File name cannot be blank. Please enter the file name: "
+        ).strip()
+
+    return True, file_name
 def display_result(result):
     print()
     print("Priority:", result["priority"])
