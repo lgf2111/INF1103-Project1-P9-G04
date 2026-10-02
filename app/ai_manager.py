@@ -70,21 +70,55 @@ def call_api(prompt):
     return data["choices"][0]["message"]["content"]
 
 
-def parse_response(raw):
-    # the model sometimes wraps JSON in ```json ... ``` - strip that.
+def _unique_object(pairs):
+    """Build a JSON object without silently accepting duplicate field names."""
+    data = {}
+    for key, value in pairs:
+        if key in data:
+            raise ValueError("AI reply contains duplicate JSON fields.")
+        data[key] = value
+    return data
+
+
+def _reject_constant(value):
+    """Reject NaN and infinity, which Python accepts but JSON does not."""
+    raise ValueError("AI reply contains a non-JSON numeric constant.")
+
+
+def parse_response(raw: str) -> dict:
+    """Parse JSON text, optionally enclosed in a complete plain or json fence.
+
+    Return an object for validate_response to check. Raise ValueError for
+    non-text input, unsupported wrappers, invalid JSON or a non-object root.
+    """
+    if not isinstance(raw, str):
+        raise ValueError("AI reply must be text.")
     text = raw.strip()
     if text.startswith("```"):
-        text = text.strip("`")
-        if text.startswith("json"):
-            text = text[4:]
-    return json.loads(text)
+        lines = text.splitlines()
+        if len(lines) < 3 or lines[0] not in ("```", "```json") or lines[-1] != "```":
+            raise ValueError("AI reply has an invalid code fence.")
+        text = "\n".join(lines[1:-1])
+    try:
+        data = json.loads(text, object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+    except json.JSONDecodeError:
+        raise ValueError("AI reply is not valid JSON.") from None
+    if not isinstance(data, dict):
+        raise ValueError("AI reply must be a JSON object.")
+    return data
 
 
-def validate_response(data):
-    # make sure the keys we need are there and are true/false
+def validate_response(data: dict) -> dict:
+    """Return unchanged findings with exactly three boolean fields.
+
+    Raise ValueError for an invalid root, missing/extra keys or wrong types.
+    This checks structure only; the logic layer interprets field combinations.
+    """
+    if not isinstance(data, dict):
+        raise ValueError("AI reply must be a JSON object.")
+    if set(data) != set(REQUIRED_KEYS):
+        raise ValueError("AI reply must contain exactly: " + ", ".join(REQUIRED_KEYS))
     for key in REQUIRED_KEYS:
-        if key not in data:
-            raise ValueError("AI reply is missing key: " + key)
         if not isinstance(data[key], bool):
             raise ValueError("AI reply key is not true/false: " + key)
     return data
