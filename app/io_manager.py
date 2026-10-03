@@ -106,6 +106,23 @@ def get_file_information():
         ).strip()
 
     return True, file_name
+
+def get_submitted_category():
+    submitted = input(
+        "Did you give a password or code? (password/otp/no): "
+    ).strip().lower()
+
+    while submitted not in ("password", "otp", "no"):
+        submitted = input(
+            "Please type password, otp or no: "
+        ).strip().lower()
+
+    if submitted == "no":
+        return None
+
+    return submitted
+
+
 def display_result(result):
     print()
     print("Priority:", result["priority"])
