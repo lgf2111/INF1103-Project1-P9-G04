@@ -17,27 +17,27 @@ def main_menu():
 
 
 def collect_input():
-    # ask the user about the message and what they did
-    message = input("Paste the suspicious message: ").strip()
-    while message == "":
-        message = input("Message cannot be empty. Paste it again: ").strip()
+    channel = get_channel()
+    sender = get_sender()
+    message = get_message()
 
-    submitted = input("Did you give a password or code? (password/otp/no): ").strip()
-    while submitted not in ("password", "otp", "no"):
-        submitted = input("Please type password, otp or no: ").strip()
-    if submitted == "no":
-        submitted = None
+    has_link, link = get_link_information()
+    has_file, file_name = get_file_information()
 
-    clicked = ask_yes_no("Did you click a link? (y/n): ")
-    downloaded = ask_yes_no("Did you download a file? (y/n): ")
+    user_actions = collect_user_actions(has_link, has_file)
 
     return {
+        "channel": channel,
+        "sender": sender,
         "message": message,
-        "submitted_category": submitted,
-        "clicked": clicked,
-        "downloaded": downloaded,
+        "has_link": has_link,
+        "link": link,
+        "has_file": has_file,
+        "file_name": file_name,
+        "clicked": user_actions["clicked"],
+        "downloaded": user_actions["downloaded"],
+        "submitted_category": user_actions["submitted_category"],
     }
-
 
 def ask_yes_no(question):
     answer = input(question).strip().lower()
