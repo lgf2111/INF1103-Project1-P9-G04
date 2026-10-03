@@ -122,6 +122,24 @@ def get_submitted_category():
 
     return submitted
 
+def collect_user_actions(has_link, has_file):
+    if has_link:
+        clicked = ask_yes_no("Did you click the link? (yes/no): ")
+    else:
+        clicked = False
+
+    if has_file:
+        downloaded = ask_yes_no("Did you download the file? (yes/no): ")
+    else:
+        downloaded = False
+
+    submitted_category = get_submitted_category()
+
+    return {
+        "clicked": clicked,
+        "downloaded": downloaded,
+        "submitted_category": submitted_category,
+    }
 
 def display_result(result):
     print()
