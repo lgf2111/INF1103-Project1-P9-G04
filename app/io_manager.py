@@ -39,7 +39,6 @@ def collect_input():
         "submitted_category": user_actions["submitted_category"],
     }
 
-
 def ask_yes_no(question):
     answer = input(question).strip().lower()
 
@@ -48,26 +47,25 @@ def ask_yes_no(question):
 
     return answer in ("y", "yes")
 
-
 def get_channel():
     channel = input("Enter channel (Email/SMS/Chat): ").strip().lower()
 
     while channel not in ("email", "sms", "chat"):
-        channel = (
-            input("Invalid channel. Please enter Email, SMS, or Chat: ").strip().lower()
-        )
+        channel = input(
+            "Invalid channel. Please enter Email, SMS, or Chat: "
+        ).strip().lower()
 
     return channel
 
-
 def get_sender():
-    sender = input("Enter sender information (press Enter if unknown): ").strip()
+    sender = input(
+        "Enter sender information (press Enter if unknown): "
+    ).strip()
 
     if sender == "":
         return None
 
     return sender
-
 
 def get_message():
     message = input("Enter the suspicious message: ").strip()
@@ -79,7 +77,6 @@ def get_message():
 
     return message
 
-
 def get_link_information():
     has_link = ask_yes_no("Was a link included? (yes/no): ")
 
@@ -89,10 +86,11 @@ def get_link_information():
     link = input("Enter the link: ").strip()
 
     while link == "":
-        link = input("Link cannot be blank. Please enter the link: ").strip()
+        link = input(
+            "Link cannot be blank. Please enter the link: "
+        ).strip()
 
     return True, link
-
 
 def get_file_information():
     has_file = ask_yes_no("Was a file included? (yes/no): ")
@@ -109,20 +107,20 @@ def get_file_information():
 
     return True, file_name
 
-
 def get_submitted_category():
-    submitted = (
-        input("Did you give a password or code? (password/otp/no): ").strip().lower()
-    )
+    submitted = input(
+        "Did you give a password or code? (password/otp/no): "
+    ).strip().lower()
 
     while submitted not in ("password", "otp", "no"):
-        submitted = input("Please type password, otp or no: ").strip().lower()
+        submitted = input(
+            "Please type password, otp or no: "
+        ).strip().lower()
 
     if submitted == "no":
         return None
 
     return submitted
-
 
 def collect_user_actions(has_link, has_file):
     if has_link:
@@ -143,29 +141,24 @@ def collect_user_actions(has_link, has_file):
         "submitted_category": submitted_category,
     }
 
-
 def display_result(result):
     print()
-    print(response)
+    print("Priority:", result["priority"])
+    print("Score:", result["score"])
+    print("What to do:")
+    for step in result["checklist"]:
+        print(" -", step)
 
 
 def display_list(records):
-    """Display saved AI responses and summaries of earlier scoring reports."""
-    # Preserve the existing empty-history message.
     if not records:
         print("No saved reports yet.")
         return
     print()
     for i, record in enumerate(records, start=1):
-        # Older records retain their stored priority; no new score is calculated.
-        if "response" in record:
-            summary = record["response"]
-        else:
-            summary = record.get("result", {}).get("priority", "?")
-        print(i, "-", summary, "-", record.get("message", "")[:50])
+        result = record.get("result", {})
+        print(i, "-", result.get("priority", "?"), "-", record.get("message", "")[:50])
 
 
 def show_message(text):
-    """Display a menu or error message supplied by the application."""
-    # Keep terminal output in the I/O Manager.
     print(text)
