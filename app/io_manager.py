@@ -3,14 +3,7 @@
 
 
 def main_menu():
-<<<<<<< HEAD
-    """Display the available actions and return the user's menu choice."""
-    # show the menu and return the user's choice
-    print()
-    print("=== PhishReport ===")
-=======
     print("\n=== PhishReport ===")
->>>>>>> main
     print("1. Check a new message")
     print("2. View saved reports")
     print("3. Quit")
@@ -24,20 +17,6 @@ def main_menu():
 
 
 def collect_input():
-<<<<<<< HEAD
-    """Collect a nonempty message and return it in a new report record."""
-    # Repeat the input question until there is text for the AI to examine.
-    message = input("Paste the message: ").strip()
-    while message == "":
-        message = input("Message cannot be empty. Paste it again: ").strip()
-
-    return {"message": message}
-
-
-def display_result(response):
-    """Display the validated final response supplied by the AI."""
-    # Print the original response without composing or changing its contents.
-=======
     channel = get_channel()
     sender = get_sender()
     message = get_message()
@@ -60,6 +39,7 @@ def display_result(response):
         "submitted_category": user_actions["submitted_category"],
     }
 
+
 def ask_yes_no(question):
     answer = input(question).strip().lower()
 
@@ -68,25 +48,26 @@ def ask_yes_no(question):
 
     return answer in ("y", "yes")
 
+
 def get_channel():
     channel = input("Enter channel (Email/SMS/Chat): ").strip().lower()
 
     while channel not in ("email", "sms", "chat"):
-        channel = input(
-            "Invalid channel. Please enter Email, SMS, or Chat: "
-        ).strip().lower()
+        channel = (
+            input("Invalid channel. Please enter Email, SMS, or Chat: ").strip().lower()
+        )
 
     return channel
 
+
 def get_sender():
-    sender = input(
-        "Enter sender information (press Enter if unknown): "
-    ).strip()
+    sender = input("Enter sender information (press Enter if unknown): ").strip()
 
     if sender == "":
         return None
 
     return sender
+
 
 def get_message():
     message = input("Enter the suspicious message: ").strip()
@@ -98,6 +79,7 @@ def get_message():
 
     return message
 
+
 def get_link_information():
     has_link = ask_yes_no("Was a link included? (yes/no): ")
 
@@ -107,11 +89,10 @@ def get_link_information():
     link = input("Enter the link: ").strip()
 
     while link == "":
-        link = input(
-            "Link cannot be blank. Please enter the link: "
-        ).strip()
+        link = input("Link cannot be blank. Please enter the link: ").strip()
 
     return True, link
+
 
 def get_file_information():
     has_file = ask_yes_no("Was a file included? (yes/no): ")
@@ -128,20 +109,20 @@ def get_file_information():
 
     return True, file_name
 
+
 def get_submitted_category():
-    submitted = input(
-        "Did you give a password or code? (password/otp/no): "
-    ).strip().lower()
+    submitted = (
+        input("Did you give a password or code? (password/otp/no): ").strip().lower()
+    )
 
     while submitted not in ("password", "otp", "no"):
-        submitted = input(
-            "Please type password, otp or no: "
-        ).strip().lower()
+        submitted = input("Please type password, otp or no: ").strip().lower()
 
     if submitted == "no":
         return None
 
     return submitted
+
 
 def collect_user_actions(has_link, has_file):
     if has_link:
@@ -162,8 +143,8 @@ def collect_user_actions(has_link, has_file):
         "submitted_category": submitted_category,
     }
 
+
 def display_result(result):
->>>>>>> main
     print()
     print(response)
 
