@@ -552,3 +552,40 @@ def test_ai_pipeline_can_process_next_record_after_provider_failure(provider_tra
     assert [json.loads(prompt.split("Message (JSON string):\n", 1)[1])
             for prompt in prompts] == [first["message"], second["message"]]
     assert "ai" not in first and "ai" not in second
+
+
+@pytest.mark.parametrize("prompt", [None, 42, {}, [], b"PRIVATE_PROMPT", "", " \t\n"])
+def test_call_api_rejects_invalid_prompts_before_http(provider_transport, caplog, prompt):
+    envelope = {"choices": [{"finish_reason": "stop", "message": {"content": "{}"}}]}
+    provider_transport.return_value.__enter__.return_value.read.return_value = (
+        json.dumps(envelope).encode()
+    )
+    with caplog.at_level(logging.WARNING, logger="ai_manager"):
+        with pytest.raises(ValueError, match="nonblank text"):
+            ai_manager.call_api(prompt)
+    provider_transport.assert_not_called()
+    diagnostics = [r for r in caplog.records if r.name == "ai_manager"]
+    assert len(diagnostics) == 1
+    assert "stage=call_api" in diagnostics[0].getMessage()
+    assert "PRIVATE_PROMPT" not in caplog.text
+    assert diagnostics[0].exc_info is None
+
+
+def test_call_api_checks_prompt_before_credentials(provider_transport, monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="nonblank text"):
+        ai_manager.call_api(None)
+    provider_transport.assert_not_called()
+
+
+
+def test_call_api_preserves_valid_prompt_whitespace(provider_transport):
+    prompt = " \tFictional assessment instructions\n "
+    envelope = {"choices": [{"finish_reason": "stop", "message": {"content": "{}"}}]}
+    provider_transport.return_value.__enter__.return_value.read.return_value = (
+        json.dumps(envelope).encode()
+    )
+    assert ai_manager.call_api(prompt) == "{}"
+    provider_transport.assert_called_once()
+    request = provider_transport.call_args.args[0]
+    assert json.loads(request.data)["messages"][0]["content"] == prompt

@@ -59,12 +59,17 @@ def build_prompt(record: dict) -> str:
 def call_api(prompt: str) -> str:
     """Send one request and return content from a completed provider response.
 
+    Require nonblank prompt text, otherwise raise ValueError before configuration/HTTP.
+    Preserve valid prompt text exactly as supplied.
     Raise RuntimeError for missing credentials, HTTP/connection/read failures,
     invalid provider JSON, malformed envelopes or incomplete/refused answers.
     Error messages exclude provider bodies and underlying exception details.
     Read GROQ_MODEL at request time, after the caller has loaded its environment.
     An unset model uses DEFAULT_MODEL; an explicitly blank setting is rejected.
     """
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise _failure("call_api", "AI prompt must be nonblank text.", ValueError)
+
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         raise _failure("call_api", "Set the GROQ_API_KEY environment variable first.", RuntimeError)
