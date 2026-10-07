@@ -157,6 +157,6 @@ def test_check_new_message_displays_full_record(monkeypatch, capsys):
     assert len(saved) == 1
     assert saved[0]["channel"] == "sms"
     assert saved[0]["message"] == message
-    assert saved[0]["details"] == details
+    assert saved[0]["ai"]["details"] == details
 
     assert len(api_calls) == 1

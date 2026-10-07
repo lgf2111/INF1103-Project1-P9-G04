@@ -32,7 +32,7 @@ def check_message():
         raw = ai_manager.call_api(prompt)
         reply = ai_manager.parse_response(raw)
         findings = ai_manager.validate_response(reply)
-        details = ai_manager.validate_details(findings["details"], record["message"])
+        ai_manager.validate_details(findings["details"], record["message"])
 
         # Enrich a new dictionary only after every AI check passes.
         assessed_record = {**record, "ai": findings}
@@ -42,22 +42,13 @@ def check_message():
         io_manager.show_message("Sorry, the check failed: " + str(error))
         return
 
-    # Keep the current database contract until complete-record persistence is introduced.
-    report = {
-        "channel": record["channel"],
-        "sender": record["sender"],
-        "message": record["message"],
-        "link": record["link"],
-        "file_name": record["file_name"],
-        "details": details,
-        "score": result["score"],
-        "priority": result["priority"],
-    }
+    report = {**assessed_record, "schema_version": 1, "result": result}
     try:
         data_manager.save(report)
-    except OSError:
+    except (OSError, ValueError):
         io_manager.show_message(
-            "Could not save the local report; database upload was not attempted."
+            "Could not save the local report; existing history preserved "
+            "and database upload not attempted."
         )
     except RuntimeError as error:
         # The local write completed before the failed database request.
@@ -66,11 +57,11 @@ def check_message():
     # io_manager.display_result expects the logic result dictionary.
     io_manager.display_result(result)
 
-def load_reports() -> list[dict]:
-    """Load PostgreSQL history, checking local JSON on failure or empty results."""
+def load_reports() -> list[dict] | None:
+    """Load history; return None on local read failure, distinct from empty history."""
     try:
         records = data_manager.fetch()
-    except RuntimeError as error:
+    except (RuntimeError, ValueError) as error:
         # Explain the unavailable source before reading the local copy.
         io_manager.show_message("PostgreSQL unavailable; checking reports.json: " + str(error))
         records = []
@@ -78,11 +69,17 @@ def load_reports() -> list[dict]:
     # Prefer database history; consult the local copy if it returned no records.
     if records:
         return records
-    return data_manager.load()
+    try:
+        return data_manager.load()
+    except (OSError, ValueError):
+        io_manager.show_message("Could not load local report history; existing file preserved.")
+        return None
 
 def view_reports():
     """Load database or local history and send it to I/O for display."""
-    io_manager.display_list(load_reports())
+    records = load_reports()
+    if records is not None:
+        io_manager.display_list(records)
 
 def _log_write_failed(record):
     """FileHandler's procedural error callback; keep traceback output out of the CLI."""
@@ -113,7 +110,7 @@ def main():
     load_env()
     log_handler = configure_logging()
     try:
-        if not load_reports():
+        if load_reports() == []:
             io_manager.show_message("No saved reports found.")
         while True:
             choice = io_manager.main_menu()

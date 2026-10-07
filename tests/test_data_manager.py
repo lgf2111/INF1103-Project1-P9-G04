@@ -1,7 +1,8 @@
 """Check the four storage requirements independently of implementation details."""
 
 import json
-from unittest.mock import MagicMock
+from copy import deepcopy
+from unittest.mock import MagicMock, Mock
 
 import data_manager
 import main
@@ -68,16 +69,10 @@ def test_save(storage, monkeypatch):
     # Run the actual coordinator, then read its persisted output independently.
     main.check_message()
     saved = json.loads(storage.read_text())
-    assert saved == [{
-        "channel": record["channel"],
-        "sender": record["sender"],
-        "message": record["message"],
-        "link": None,
-        "file_name": None,
+    assert saved == [{**record, "schema_version": 1, "ai": {
+        "credential_request": False, "suspicious": False, "insufficient_context": False,
         "details": details,
-        "score": 10,
-        "priority": "LOW",
-    }]
+    }, "result": displayed[0]}]
     assert len(displayed) == 1
     assert len(api_calls) == 1
 
@@ -201,4 +196,187 @@ def test_file_errors(storage):
     assert not storage.exists()
     assert data_manager.load() == []
     storage.write_text("{invalid JSON")
-    assert data_manager.load() == []
+    with pytest.raises(ValueError):
+        data_manager.load()
+
+
+def _complete_report():
+    return {
+        "schema_version": 1, "channel": "email", "sender": "demo@example.test",
+        "message": "Fictional login request", "has_link": False, "link": None,
+        "has_file": False, "file_name": None, "clicked": False, "downloaded": False,
+        "submitted_category": "password",
+        "ai": {"credential_request": True, "suspicious": True,
+               "insufficient_context": False,
+               "details": {"emails": [], "phone_numbers": [], "ip_addresses": []}},
+        "result": {"score": 90, "priority": "HIGH", "reasons": ["Password disclosed."],
+                   "checklist": ["Change the affected password."]},
+    }
+
+
+def test_complete_local_roundtrip_preserves_legacy_and_input(storage, monkeypatch):
+    legacy = {"message": "Older report", "score": 20, "priority": "LOW"}
+    storage.write_text(json.dumps([legacy]))
+    record = _complete_report()
+    before = deepcopy(record)
+    upload = Mock(return_value=1)
+    monkeypatch.setattr(data_manager, "upload", upload)
+    data_manager.save(record)
+    assert data_manager.load() == [legacy, record]
+    assert record == before
+    assert "clicked" not in data_manager.load()[0]
+    upload.assert_called_once_with([record])
+
+
+@pytest.mark.parametrize("content", ['{broken', '{}', '[1]', '[null]', '[{"schema_version": 2}]'])
+def test_corrupt_history_is_preserved_and_never_uploaded(storage, monkeypatch, capsys, content):
+    storage.write_text(content)
+    upload = Mock()
+    monkeypatch.setattr(data_manager, "upload", upload)
+    with pytest.raises(ValueError):
+        data_manager.load()
+    with pytest.raises(ValueError):
+        data_manager.save(_complete_report())
+    assert storage.read_text() == content
+    upload.assert_not_called()
+    assert capsys.readouterr().out == ""
+
+
+@pytest.mark.parametrize("key,value", [
+    ("schema_version", 2), ("schema_version", True), ("clicked", "no"),
+    ("ai", {}), ("result", {"score": True, "priority": "HIGH", "reasons": [], "checklist": []}),
+    ("result", {"score": 101, "priority": "HIGH", "reasons": [], "checklist": []}),
+])
+def test_invalid_complete_report_rejected_before_write(storage, monkeypatch, key, value):
+    storage.write_text('[]')
+    record = _complete_report()
+    record[key] = value
+    upload = Mock()
+    monkeypatch.setattr(data_manager, "upload", upload)
+    with pytest.raises(ValueError):
+        data_manager.save(record)
+    assert storage.read_text() == '[]'
+    upload.assert_not_called()
+
+
+def test_failed_atomic_replace_preserves_old_history(storage, monkeypatch):
+    storage.write_text('[{"message":"Older report"}]')
+    before = storage.read_bytes()
+    upload = Mock()
+    monkeypatch.setattr(data_manager, "upload", upload)
+    monkeypatch.setattr(data_manager.os, "replace", Mock(side_effect=OSError("write failed")))
+    with pytest.raises(OSError):
+        data_manager.save(_complete_report())
+    assert storage.read_bytes() == before
+    assert list(storage.parent.glob('*.tmp')) == []
+    upload.assert_not_called()
+
+
+def test_database_failure_keeps_complete_local_record(storage, monkeypatch):
+    monkeypatch.setattr(data_manager, "upload", Mock(side_effect=RuntimeError("Unavailable")))
+    with pytest.raises(RuntimeError):
+        data_manager.save(_complete_report())
+    assert data_manager.load() == [_complete_report()]
+
+
+def test_complete_postgresql_roundtrip_without_schema_migration(monkeypatch):
+    cursor = MagicMock()
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    connection.cursor.return_value.__enter__.return_value = cursor
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example.invalid/test")
+    monkeypatch.setattr(data_manager.psycopg, "connect", Mock(return_value=connection))
+    record = _complete_report()
+    assert data_manager.upload([record]) == 1
+    sql, rows = cursor.executemany.call_args.args
+    assert rows[0][-2:] == (90, "HIGH")
+    payload = json.loads(rows[0][5])
+    assert payload == {"schema_version": 1, "record": record}
+    legacy = {"channel": "sms", "sender": None, "message": "Older report",
+              "link": None, "file_name": None, "details": {"emails": []},
+              "score": None, "priority": None}
+    row = {key: record[key] for key in ("channel", "sender", "message", "link", "file_name")}
+    row.update(details=payload, score=90, priority="HIGH")
+    cursor.fetchall.return_value = [legacy, row]
+    assert data_manager.fetch() == [legacy, record]
+    row["score"] = 10
+    with pytest.raises(ValueError):
+        data_manager.fetch()
+
+
+@pytest.mark.parametrize("operation", ["startup", "view", "save"])
+def test_coordinator_handles_broken_local_history(storage, monkeypatch, capsys, operation):
+    storage.write_text('{broken')
+    monkeypatch.setattr(data_manager, "fetch", Mock(side_effect=RuntimeError("Unavailable")))
+    monkeypatch.setattr(main, "configure_logging", lambda: None)
+    monkeypatch.setattr(main.io_manager, "main_menu", lambda: "3")
+    if operation == "save":
+        record = _complete_report()
+        monkeypatch.setattr(main.io_manager, "collect_input", lambda: {
+            k: v for k, v in record.items() if k not in ("schema_version", "ai", "result")})
+        monkeypatch.setattr(main.ai_manager, "call_api", lambda prompt: json.dumps(record["ai"]))
+        main.check_message()
+    elif operation == "startup":
+        main.main()
+    else:
+        main.view_reports()
+    assert storage.read_text() == '{broken'
+    output = capsys.readouterr().out
+    assert "Could not" in output
+    assert "starting with an empty list" not in output
+    assert "No saved reports" not in output
+
+
+@pytest.mark.parametrize("failure", ["serialization", "flush", "read"])
+def test_io_failures_do_not_upload_or_damage_history(storage, monkeypatch, failure):
+    storage.write_text('[{"message":"Existing"}]')
+    before = storage.read_bytes()
+    upload = Mock()
+    monkeypatch.setattr(data_manager, "upload", upload)
+    if failure == "serialization":
+        monkeypatch.setattr(data_manager.json, "dump", Mock(side_effect=ValueError("Invalid JSON")))
+    elif failure == "flush":
+        monkeypatch.setattr(data_manager.os, "fsync", Mock(side_effect=OSError("Disk unavailable")))
+    else:
+        monkeypatch.setattr(data_manager, "load", Mock(side_effect=PermissionError("Read denied")))
+    with pytest.raises((ValueError, OSError)):
+        data_manager.save(_complete_report())
+    assert storage.read_bytes() == before
+    assert list(storage.parent.glob('*.tmp')) == []
+    upload.assert_not_called()
+
+
+@pytest.mark.parametrize("database_failure", [False, True])
+def test_coordinator_distinguishes_local_and_database_failure(
+    storage, monkeypatch, capsys, database_failure
+):
+    record = _complete_report()
+    monkeypatch.setattr(main.io_manager, "collect_input", lambda: {
+        k: v for k, v in record.items() if k not in ("schema_version", "ai", "result")})
+    monkeypatch.setattr(main.ai_manager, "call_api", lambda prompt: json.dumps(record["ai"]))
+    upload = Mock(side_effect=RuntimeError("Unavailable"))
+    monkeypatch.setattr(data_manager, "upload", upload)
+    if not database_failure:
+        monkeypatch.setattr(data_manager.os, "replace", Mock(side_effect=OSError("Write denied")))
+    main.check_message()
+    output = capsys.readouterr().out
+    assert "=== Assessment ===" in output  # Assessment succeeded even if storage failed.
+    if database_failure:
+        assert "Report saved locally, but database saving failed" in output
+        assert data_manager.load()[0]["ai"] == record["ai"]
+    else:
+        assert "Could not save the local report" in output
+        assert "Report saved locally" not in output
+        assert not storage.exists()
+        upload.assert_not_called()
+
+
+def test_saved_complete_report_displays_actions_and_result(storage, capsys):
+    record = _complete_report()
+    data_manager.save(record)
+    main.io_manager.display_record(data_manager.load()[0])
+    output = capsys.readouterr().out
+    assert "Information submitted: Password" in output
+    assert "Rule-based score: 90" in output
+    assert "Password disclosed." in output
+    assert "Change the affected password." in output

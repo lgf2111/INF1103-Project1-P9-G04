@@ -113,11 +113,8 @@ def test_successful_assessment_reaches_real_logic_and_storage(app_boundary, monk
     main.check_message()
 
     saved = data_manager.load()
-    assert saved == [{
-        "channel": "email", "sender": None, "message": record["message"],
-        "link": None, "file_name": None, "details": _details(),
-        "score": 90, "priority": "HIGH",
-    }]
+    assert saved == [{**record, "schema_version": 1, "ai": _findings(),
+                      "result": main.io_manager.display_result.call_args.args[0]}]
     assert record == original
     result = main.io_manager.display_result.call_args.args[0]
     assert result["score"] == 90 and result["priority"] == "HIGH"
@@ -245,7 +242,7 @@ def test_combined_caller_passes_validated_findings_to_logic_once(app_boundary, m
     evaluate.assert_called_once_with({**record, "ai": data})
     assert "ai" not in record
     save.assert_called_once()
-    assert save.call_args.args[0]["details"] == data["details"]
+    assert save.call_args.args[0]["ai"]["details"] == data["details"]
     main.io_manager.display_result.assert_called_once_with(result)
     app_boundary.assert_called_once()
 
