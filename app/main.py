@@ -58,7 +58,15 @@ def check_message():
         "file_name": record["file_name"],
         "details": details,
     }
-    data_manager.save(report)
+    try:
+        data_manager.save(report)
+    except OSError:
+        io_manager.show_message(
+            "Could not save the local report; database upload was not attempted."
+        )
+    except RuntimeError as error:
+        # The local write completed before the failed database request.
+        io_manager.show_message("Report saved locally, but database saving failed: " + str(error))
 
     # io_manager.display_result expects the logic result dictionary.
     io_manager.display_result(result)
