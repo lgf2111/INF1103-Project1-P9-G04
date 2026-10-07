@@ -1,6 +1,7 @@
 """Check the four storage requirements independently of implementation details."""
 
 import json
+from unittest.mock import MagicMock
 
 import data_manager
 import main
@@ -77,9 +78,56 @@ def test_save(storage, monkeypatch):
         "link": None,
         "file_name": None,
         "details": details,
+        "score": 20,
+        "priority": "LOW",
     }]
     assert len(displayed) == 1
     assert len(api_calls) == 2
+
+
+def test_upload_and_fetch_score_and_priority(monkeypatch):
+    """Persist scores and priorities as PostgreSQL columns and return them."""
+    cursor = MagicMock()
+    cursor_context = MagicMock()
+    cursor_context.__enter__.return_value = cursor
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    connection.cursor.return_value = cursor_context
+    fetched = [{
+        "channel": "email",
+        "sender": "demo@example.test",
+        "message": "A fictional report",
+        "link": None,
+        "file_name": None,
+        "details": {"emails": []},
+        "score": 72,
+        "priority": "HIGH",
+    }]
+    cursor.fetchall.return_value = fetched
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example.invalid/test")
+    monkeypatch.setattr(
+        data_manager.psycopg, "connect", lambda *args, **kwargs: connection
+    )
+
+    record = {
+        "channel": "email",
+        "sender": "demo@example.test",
+        "message": "A fictional report",
+        "link": None,
+        "file_name": None,
+        "details": {"emails": []},
+        "score": 72,
+        "priority": "HIGH",
+    }
+    assert data_manager.upload([record]) == 1
+    insert_sql, values = cursor.executemany.call_args.args
+    assert "(channel, sender, message, link, file_name, details, score, priority)" in insert_sql
+    assert values[0][-2:] == (72, "HIGH")
+
+    assert data_manager.fetch() == fetched
+    select_sql = cursor.execute.call_args.args[0]
+    assert "score, priority" in select_sql
 
 
 @pytest.mark.parametrize(
