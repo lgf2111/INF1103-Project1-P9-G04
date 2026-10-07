@@ -5,6 +5,7 @@ import json
 import os
 
 import psycopg
+from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 FILE = "reports.json"
@@ -27,7 +28,7 @@ def save(record):
 
 
 def upload(records: list[dict]) -> int:
-    """Insert six-field reports into PostgreSQL without changing the local file.
+    """Insert reports into six PostgreSQL columns without changing the local file.
 
     Creates the reports table if absent and inserts the batch in one transaction.
     Returns the number inserted. Repeating an upload inserts another copy.
@@ -55,17 +56,63 @@ def upload(records: list[dict]) -> int:
                 cursor.execute(
                     "CREATE TABLE IF NOT EXISTS reports ("
                     "id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, "
-                    "payload JSONB NOT NULL)"
+                    "channel TEXT NOT NULL, "
+                    "sender TEXT, "
+                    "message TEXT NOT NULL, "
+                    "link TEXT, "
+                    "file_name TEXT, "
+                    "details JSONB NOT NULL)"
                 )
                 # Bind report values separately from SQL, including nested details.
                 cursor.executemany(
-                    "INSERT INTO reports (payload) VALUES (%s)",
-                    [(Jsonb(record),) for record in records],
+                    "INSERT INTO reports "
+                    "(channel, sender, message, link, file_name, details) "
+                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    [
+                        (
+                            record["channel"],
+                            record["sender"],
+                            record["message"],
+                            record["link"],
+                            record["file_name"],
+                            Jsonb(record["details"]),
+                        )
+                        for record in records
+                    ],
                 )
     except psycopg.Error as error:
         raise RuntimeError("Could not save reports to PostgreSQL.") from error
 
     return len(records)
+
+
+def fetch() -> list[dict]:
+    """Read the six report fields from PostgreSQL in insertion order.
+
+    Returns:
+        Report dictionaries compatible with the existing I/O history display.
+
+    Raises:
+        RuntimeError: If configuration is missing or the database read fails.
+    """
+    # Read current settings without revealing the connection URL in errors.
+    database_url = os.environ.get("DATABASE_URL", "").strip().strip("\"'")
+    if not database_url:
+        raise RuntimeError("Set DATABASE_URL before viewing PostgreSQL reports.")
+
+    try:
+        with psycopg.connect(
+            database_url, connect_timeout=10, row_factory=dict_row
+        ) as connection:
+            with connection.cursor() as cursor:
+                # JSONB details are decoded by the driver into Python dictionaries.
+                cursor.execute(
+                    "SELECT channel, sender, message, link, file_name, details "
+                    "FROM reports ORDER BY id"
+                )
+                return cursor.fetchall()
+    except psycopg.Error as error:
+        raise RuntimeError("Could not load reports from PostgreSQL.") from error
 
 
 def load():

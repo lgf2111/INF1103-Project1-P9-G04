@@ -1,6 +1,8 @@
 # Pinned test dependencies generated with pip freeze.
 # The Groq API call uses Python's standard-library urllib; no API SDK is needed.
-# The packages below support offline tests, not the application's runtime.
+# PostgreSQL driver used by the Data Manager.
+psycopg[binary]==3.3.6
+# The packages below support offline tests.
 iniconfig==2.3.0
 packaging==26.3
 pluggy==1.6.0

@@ -72,8 +72,13 @@ def check_message():
     io_manager.display_result(result)
 
 def view_reports():
-    """Load saved reports and send them to the I/O Manager for display."""
-    records = data_manager.load()
+    """Fetch PostgreSQL reports and send them to the I/O Manager for display."""
+    try:
+        records = data_manager.fetch()
+    except RuntimeError as error:
+        # Report database failures through I/O without switching to local history.
+        io_manager.show_message("Sorry, could not view saved reports: " + str(error))
+        return
     io_manager.display_list(records)
 
 def main():
