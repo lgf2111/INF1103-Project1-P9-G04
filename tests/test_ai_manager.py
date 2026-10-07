@@ -4,6 +4,7 @@
 # We never call the real Groq API here.
 
 import json
+import logging
 import urllib.error
 from http.client import IncompleteRead
 from unittest.mock import MagicMock, Mock
@@ -343,3 +344,82 @@ def test_call_api_rejects_blank_model_before_http(provider_transport, monkeypatc
     with pytest.raises(RuntimeError, match="GROQ_MODEL"):
         ai_manager.call_api("Fictional phishing assessment")
     provider_transport.assert_not_called()
+
+
+@pytest.mark.parametrize("stage, argument", [
+    ("build_prompt", {"message": None, "private": "PRIVATE_EMAIL"}),
+    ("parse_response", "PRIVATE_RESPONSE"),
+    ("parse_response", '```python\nPRIVATE_RESPONSE\n```'),
+    ("parse_response", '["PRIVATE_RESPONSE"]'),
+    ("parse_response", '{"PRIVATE_RESPONSE": 1, "PRIVATE_RESPONSE": 2}'),
+    ("parse_response", '{"PRIVATE_RESPONSE": NaN}'),
+    ("validate_response", {"PRIVATE_RESPONSE": True}),
+    ("validate_response", {"credential_request": "PRIVATE_RESPONSE",
+                           "suspicious": False, "insufficient_context": False}),
+])
+def test_validation_failure_logs_one_sanitised_diagnostic(caplog, stage, argument):
+    with caplog.at_level(logging.WARNING, logger="ai_manager"):
+        with pytest.raises(ValueError):
+            getattr(ai_manager, stage)(argument)
+    records = [r for r in caplog.records if r.name == "ai_manager"]
+    assert len(records) == 1
+    assert "stage=" + stage in records[0].getMessage()
+    assert "PRIVATE_" not in caplog.text
+    assert records[0].exc_info is None
+    assert records[0].stack_info is None
+
+
+@pytest.mark.parametrize("failure", ["timeout", "http", "json", "envelope", "key", "model"])
+def test_api_failure_logs_once_without_sensitive_data(
+    provider_transport, monkeypatch, caplog, failure,
+):
+    if failure == "timeout":
+        provider_transport.side_effect = TimeoutError("PRIVATE_EXCEPTION")
+    elif failure == "http":
+        provider_transport.side_effect = urllib.error.HTTPError(
+            "https://example.test/PRIVATE_URL", 429, "PRIVATE_EXCEPTION", {}, None,
+        )
+    elif failure == "json":
+        provider_transport.return_value.__enter__.return_value.read.return_value = b"PRIVATE_BODY"
+    elif failure == "envelope":
+        provider_transport.return_value.__enter__.return_value.read.return_value = (
+            b'{"error": "PRIVATE_BODY"}'
+        )
+    elif failure == "key":
+        monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    else:
+        monkeypatch.setenv("GROQ_MODEL", " ")
+    with caplog.at_level(logging.WARNING, logger="ai_manager"):
+        with pytest.raises(RuntimeError):
+            ai_manager.call_api("PRIVATE_PROMPT")
+    records = [r for r in caplog.records if r.name == "ai_manager"]
+    assert len(records) == 1
+    assert "stage=call_api" in records[0].getMessage()
+    assert "PRIVATE_" not in caplog.text
+    assert "fictional-test-key" not in caplog.text
+    assert records[0].exc_info is None
+    assert records[0].stack_info is None
+
+
+def test_successful_ai_operations_do_not_log_email_content(provider_transport, caplog):
+    findings = {"credential_request": False, "suspicious": True, "insufficient_context": False}
+    content = json.dumps(findings)
+    envelope = {"choices": [{"finish_reason": "stop", "message": {"content": content}}]}
+    provider_transport.return_value.__enter__.return_value.read.return_value = (
+        json.dumps(envelope).encode()
+    )
+    with caplog.at_level(logging.DEBUG, logger="ai_manager"):
+        prompt = ai_manager.build_prompt({"message": "PRIVATE_EMAIL"})
+        raw = ai_manager.call_api(prompt)
+        assert ai_manager.validate_response(ai_manager.parse_response(raw)) == findings
+    assert not [r for r in caplog.records if r.name == "ai_manager"]
+
+
+def test_unconfigured_ai_logging_does_not_write_to_terminal(monkeypatch, capsys):
+    # Remove application/test capture handlers to exercise logging's fallback path.
+    monkeypatch.setattr(logging.getLogger(), "handlers", [])
+    with pytest.raises(ValueError):
+        ai_manager.parse_response("PRIVATE_RESPONSE")
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""

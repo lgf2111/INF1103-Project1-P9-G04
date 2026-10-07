@@ -10,9 +10,14 @@
 
 import http.client
 import json
+import logging
 import os
 import urllib.error
 import urllib.request
+
+# The application configures the destination; importing AI must not print or open files.
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 # Groq's API is OpenAI-style. Change the model with the GROQ_MODEL env var.
 # (Run the /models endpoint or check the Groq console to see what your key can use.)
@@ -31,10 +36,10 @@ def build_prompt(record: dict) -> str:
     The input layer owns file reading and email decoding.
     """
     if not isinstance(record, dict):
-        raise ValueError("AI input must be a record dictionary.")
+        raise _failure("build_prompt", "AI input must be a record dictionary.", ValueError)
     message = record.get("message")
     if not isinstance(message, str) or not message.strip():
-        raise ValueError("AI input must contain nonblank message text.")
+        raise _failure("build_prompt", "AI input must contain nonblank message text.", ValueError)
     return (
         "You are a phishing checker. Assess the supplied message and reply with ONLY "
         "a JSON object (no extra text) with exactly these boolean keys:\n"
@@ -62,11 +67,11 @@ def call_api(prompt: str) -> str:
     """
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
-        raise RuntimeError("Set the GROQ_API_KEY environment variable first.")
+        raise _failure("call_api", "Set the GROQ_API_KEY environment variable first.", RuntimeError)
 
     model = os.environ.get("GROQ_MODEL", DEFAULT_MODEL)
     if not model.strip():
-        raise RuntimeError("GROQ_MODEL must not be blank.")
+        raise _failure("call_api", "GROQ_MODEL must not be blank.", RuntimeError)
 
     body = json.dumps({
         "model": model,
@@ -89,39 +94,43 @@ def call_api(prompt: str) -> str:
         with urllib.request.urlopen(request, timeout=30) as response:
             raw = response.read()
     except urllib.error.HTTPError as error:
-        raise RuntimeError(f"AI provider returned HTTP {error.code}.") from None
+        raise _failure(
+            "call_api", f"AI provider returned HTTP {error.code}.", RuntimeError,
+        ) from None
     except TimeoutError:
-        raise RuntimeError("The AI request timed out.") from None
+        raise _failure("call_api", "The AI request timed out.", RuntimeError) from None
     except (urllib.error.URLError, OSError, http.client.HTTPException):
-        raise RuntimeError("Could not complete the AI request.") from None
+        raise _failure("call_api", "Could not complete the AI request.", RuntimeError) from None
 
     try:
         data = json.loads(raw, object_pairs_hook=_unique_object, parse_constant=_reject_constant)
     except ValueError:
-        raise RuntimeError("AI provider returned invalid JSON.") from None
+        raise _failure("call_api", "AI provider returned invalid JSON.", RuntimeError) from None
     return _completed_content(data)
 
 
 def _completed_content(data):
     """Validate each envelope container before consuming the model's content."""
     if not isinstance(data, dict) or data.get("error") is not None:
-        raise RuntimeError("AI provider returned an invalid response envelope.")
+        raise _failure(
+            "call_api", "AI provider returned an invalid response envelope.", RuntimeError,
+        )
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
-        raise RuntimeError("AI provider response has no valid choices.")
+        raise _failure("call_api", "AI provider response has no valid choices.", RuntimeError)
     choice = choices[0]
     if not isinstance(choice, dict):
-        raise RuntimeError("AI provider returned an invalid choice.")
+        raise _failure("call_api", "AI provider returned an invalid choice.", RuntimeError)
     if choice.get("finish_reason") != "stop":
-        raise RuntimeError("AI provider did not return a completed answer.")
+        raise _failure("call_api", "AI provider did not return a completed answer.", RuntimeError)
     message = choice.get("message")
     if not isinstance(message, dict):
-        raise RuntimeError("AI provider returned an invalid message.")
+        raise _failure("call_api", "AI provider returned an invalid message.", RuntimeError)
     if message.get("refusal") is not None:
-        raise RuntimeError("AI provider refused the assessment.")
+        raise _failure("call_api", "AI provider refused the assessment.", RuntimeError)
     content = message.get("content")
     if not isinstance(content, str) or not content.strip():
-        raise RuntimeError("AI provider returned no usable response text.")
+        raise _failure("call_api", "AI provider returned no usable response text.", RuntimeError)
     return content
 
 
@@ -147,19 +156,23 @@ def parse_response(raw: str) -> dict:
     non-text input, unsupported wrappers, invalid JSON or a non-object root.
     """
     if not isinstance(raw, str):
-        raise ValueError("AI reply must be text.")
+        raise _failure("parse_response", "AI reply must be text.", ValueError)
     text = raw.strip()
     if text.startswith("```"):
         lines = text.splitlines()
         if len(lines) < 3 or lines[0] not in ("```", "```json") or lines[-1] != "```":
-            raise ValueError("AI reply has an invalid code fence.")
+            raise _failure("parse_response", "AI reply has an invalid code fence.", ValueError)
         text = "\n".join(lines[1:-1])
     try:
         data = json.loads(text, object_pairs_hook=_unique_object, parse_constant=_reject_constant)
     except json.JSONDecodeError:
-        raise ValueError("AI reply is not valid JSON.") from None
+        raise _failure("parse_response", "AI reply is not valid JSON.", ValueError) from None
+    except ValueError:
+        raise _failure(
+            "parse_response", "AI reply contains invalid JSON fields or constants.", ValueError,
+        ) from None
     if not isinstance(data, dict):
-        raise ValueError("AI reply must be a JSON object.")
+        raise _failure("parse_response", "AI reply must be a JSON object.", ValueError)
     return data
 
 
@@ -170,10 +183,26 @@ def validate_response(data: dict) -> dict:
     This checks structure only; the logic layer interprets field combinations.
     """
     if not isinstance(data, dict):
-        raise ValueError("AI reply must be a JSON object.")
+        raise _failure("validate_response", "AI reply must be a JSON object.", ValueError)
     if set(data) != set(REQUIRED_KEYS):
-        raise ValueError("AI reply must contain exactly: " + ", ".join(REQUIRED_KEYS))
+        raise _failure(
+            "validate_response",
+            "AI reply must contain exactly: " + ", ".join(REQUIRED_KEYS), ValueError,
+        )
     for key in REQUIRED_KEYS:
         if not isinstance(data[key], bool):
-            raise ValueError("AI reply key is not true/false: " + key)
+            raise _failure(
+                "validate_response", "AI reply key is not true/false: " + key, ValueError,
+            )
     return data
+
+
+def _failure(stage, message, error_type):
+    """Log a developer-controlled reason and construct the existing public error.
+
+    Call only with fixed messages or known schema fields/status codes. Never pass
+    record content, raw provider output or exception text. Log at one boundary
+    only, without traceback data; the caller decides how to continue.
+    """
+    logger.warning("stage=%s reason=%s", stage, message)
+    return error_type(message)
