@@ -9,6 +9,7 @@ import data_manager
 import io_manager
 import logic_manager
 
+
 def load_env():
     """Load project environment values without replacing existing settings."""
     if not os.path.exists(".env"):
