@@ -36,24 +36,29 @@ def check_message():
         # Logic Manager validates extracted details unchanged.
         details = logic_manager.hold_details(details)
 
-        # Logic Manager computes the logic-layer result for display and saving.
+        # Logic Manager computes the logic-layer result for display.
         result = logic_manager.evaluate(record, details)
 
         # Second AI request: format the validated details as a response string.
         prompt = ai_manager.response_prompt(details)
         raw = ai_manager.call_api(prompt)
         reply = ai_manager.parse_response(raw)
-        response = ai_manager.validate_reply(reply, details)
+        ai_manager.validate_reply(reply, details)
 
     except (RuntimeError, ValueError, KeyError, TypeError) as error:
         io_manager.show_message("Sorry, the check failed: " + str(error))
         return
 
-    # Save all successful outputs.
-    record["details"] = details
-    record["result"] = result
-    record["response"] = response
-    data_manager.save(record)
+    # Store only the agreed input fields and extracted contact details.
+    report = {
+        "channel": record["channel"],
+        "sender": record["sender"],
+        "message": record["message"],
+        "link": record["link"],
+        "file_name": record["file_name"],
+        "details": details,
+    }
+    data_manager.save(report)
 
     # io_manager.display_result expects the logic result dictionary.
     io_manager.display_result(result)
