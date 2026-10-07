@@ -142,22 +142,62 @@ def collect_user_actions(has_link, has_file):
     }
 
 def display_result(result):
-    print()
-    print("Priority:", result["priority"])
-    print("Score:", result["score"])
-    print("What to do:")
-    for step in result["checklist"]:
-        print(" -", step)
+    if not result:
+        print("\nNo assessment available.")
+        return
+
+    priority = result.get("priority", "unavailable").replace("_", " ").title()
+    print("\n=== Assessment ===")
+    print("Priority:", priority)
+    print("Rule-based score:", result.get("score", "Unavailable"))
+
+    if result.get("reasons"):
+        print("Reasons:")
+        for reason in result["reasons"]:
+            print(" -", reason)
+
+    print("Recommended actions:")
+    for number, step in enumerate(result.get("checklist", []), start=1):
+        print(f"{number}. {step}")
+
+
+def display_record(record):
+    print("\n=== Report details ===")
+    channels = {"email": "Email", "sms": "SMS", "chat": "Chat"}
+    print("Channel:", channels.get(record.get("channel"), "Unknown"))
+    print("Sender:", record.get("sender") or "Unknown")
+    print("Message:")
+    print(record.get("message") or "No message recorded.")
+    print("Included link:", record.get("link") or "None reported")
+    print("Included file:", record.get("file_name") or "None reported")
+
+    answers = {True: "Yes", False: "No", None: "Not recorded"}
+    print("Clicked link:", answers[record.get("clicked")])
+    print("Downloaded file:", answers[record.get("downloaded")])
+    submitted = record.get("submitted_category")
+    labels = {"password": "Password", "otp": "One-time code"}
+    print("Information submitted:", labels.get(submitted, submitted or "None reported"))
+
+    display_result(record.get("result") or {})
 
 
 def display_list(records):
     if not records:
         print("No saved reports yet.")
         return
-    print()
-    for i, record in enumerate(records, start=1):
-        result = record.get("result", {})
-        print(i, "-", result.get("priority", "?"), "-", record.get("message", "")[:50])
+
+    print("\n=== Saved reports ===")
+    for number, record in enumerate(records, start=1):
+        result = record.get("result") or {}
+        priority = result.get("priority", "unavailable").replace("_", " ").title()
+        channels = {"email": "Email", "sms": "SMS", "chat": "Chat"}
+        channel = channels.get(record.get("channel"), "Unknown")
+        score = result.get("score", "Unavailable")
+        preview = " ".join((record.get("message") or "").split())
+        if len(preview) > 50:
+            preview = preview[:47] + "..."
+        print(f"{number}. {channel} | {priority} | Score: {score}")
+        print(f"   {preview}")
 
 
 def show_message(text):

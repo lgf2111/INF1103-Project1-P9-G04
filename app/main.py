@@ -43,12 +43,15 @@ def check_new_message():
 
     # 4. save it and show the result
     data_manager.save(record)
-    io_manager.display_result(result)
+    io_manager.display_record(record)
 
 
 def view_saved_reports():
     records = data_manager.load()
     io_manager.display_list(records)
+    for number, record in enumerate(records, start=1):
+        io_manager.show_message(f"\nReport {number}")
+        io_manager.display_record(record)
 
 
 def main():
