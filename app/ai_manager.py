@@ -8,6 +8,7 @@
 #
 # Get a free key at https://console.groq.com (no credit card needed).
 
+import http.client
 import json
 import os
 import urllib.error
@@ -36,8 +37,13 @@ def build_prompt(record):
     )
 
 
-def call_api(prompt):
-    # send the prompt to Groq and return the raw text reply.
+def call_api(prompt: str) -> str:
+    """Send one request and return content from a completed provider response.
+
+    Raise RuntimeError for missing credentials, HTTP/connection/read failures,
+    invalid provider JSON, malformed envelopes or incomplete/refused answers.
+    Error messages exclude provider bodies and underlying exception details.
+    """
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         raise RuntimeError("Set the GROQ_API_KEY environment variable first.")
@@ -61,13 +67,42 @@ def call_api(prompt):
     )
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
-            data = json.loads(response.read())
-    except (urllib.error.URLError, TimeoutError) as error:
-        # log and stop - do not pretend we got an answer
-        raise RuntimeError("Could not reach the AI: " + str(error)) from error
+            raw = response.read()
+    except urllib.error.HTTPError as error:
+        raise RuntimeError(f"AI provider returned HTTP {error.code}.") from None
+    except TimeoutError:
+        raise RuntimeError("The AI request timed out.") from None
+    except (urllib.error.URLError, OSError, http.client.HTTPException):
+        raise RuntimeError("Could not complete the AI request.") from None
 
-    # pull the text out of Groq's (OpenAI-style) response shape
-    return data["choices"][0]["message"]["content"]
+    try:
+        data = json.loads(raw, object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+    except ValueError:
+        raise RuntimeError("AI provider returned invalid JSON.") from None
+    return _completed_content(data)
+
+
+def _completed_content(data):
+    """Validate each envelope container before consuming the model's content."""
+    if not isinstance(data, dict) or data.get("error") is not None:
+        raise RuntimeError("AI provider returned an invalid response envelope.")
+    choices = data.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise RuntimeError("AI provider response has no valid choices.")
+    choice = choices[0]
+    if not isinstance(choice, dict):
+        raise RuntimeError("AI provider returned an invalid choice.")
+    if choice.get("finish_reason") != "stop":
+        raise RuntimeError("AI provider did not return a completed answer.")
+    message = choice.get("message")
+    if not isinstance(message, dict):
+        raise RuntimeError("AI provider returned an invalid message.")
+    if message.get("refusal") is not None:
+        raise RuntimeError("AI provider refused the assessment.")
+    content = message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise RuntimeError("AI provider returned no usable response text.")
+    return content
 
 
 def _unique_object(pairs):
