@@ -16,10 +16,11 @@ def app_boundary(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GROQ_API_KEY", "fictional-integration-key")
     monkeypatch.setenv("GROQ_MODEL", "fictional/integration-model")
-    logger = logging.getLogger("ai_manager")
-    monkeypatch.setattr(logger, "handlers", [logging.NullHandler()])
-    monkeypatch.setattr(logger, "level", logger.level)
-    monkeypatch.setattr(logger, "propagate", logger.propagate)
+    for name in ("ai_manager", "data_manager"):
+        logger = logging.getLogger(name)
+        monkeypatch.setattr(logger, "handlers", [logging.NullHandler()])
+        monkeypatch.setattr(logger, "level", logger.level)
+        monkeypatch.setattr(logger, "propagate", logger.propagate)
     transport = MagicMock()
     monkeypatch.setattr(ai_manager.urllib.request, "urlopen", transport)
     monkeypatch.setattr(main.io_manager, "show_message", Mock())
@@ -30,8 +31,9 @@ def app_boundary(tmp_path, monkeypatch):
         side_effect=AssertionError("Offline tests must not connect to PostgreSQL"),
     ))
     yield transport
-    for handler in list(logger.handlers):
-        handler.close()
+    for name in ("ai_manager", "data_manager"):
+        for handler in list(logging.getLogger(name).handlers):
+            handler.close()
 
 
 def _completed_reply(transport, data):
@@ -259,3 +261,17 @@ def test_combined_caller_uses_ai_findings_for_the_same_unexposed_input(app_bound
         assert main.io_manager.display_result.call_args.args[0]["score"] == expected
     assert app_boundary.call_count == 2  # two records, one request each
     assert len(data_manager.load()) == 2
+
+
+
+def test_configured_storage_logging_uses_application_file_and_is_closed(
+    app_boundary, tmp_path, monkeypatch
+):
+    (tmp_path / "reports.json").write_text('{PRIVATE_BROKEN')
+    monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="3"))
+    main.main()
+    text = (tmp_path / "phishreport.log").read_text(encoding="utf-8")
+    assert "data_manager" in text and "Could not read local report history" in text
+    assert "PRIVATE" not in text
+    assert not any(isinstance(h, logging.FileHandler) for h in data_manager.logger.handlers)
+    assert (tmp_path / "reports.json").read_text() == '{PRIVATE_BROKEN'

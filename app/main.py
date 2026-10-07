@@ -68,7 +68,7 @@ def load_reports() -> list[dict] | None:
 
     # A failed upload can leave newer reports only in the local copy.
     try:
-        local_records = data_manager.load()
+        local_records = data_manager.load(strict=True)
     except (OSError, ValueError):
         io_manager.show_message("Could not load local report history; existing file preserved.")
         return records if records else None
@@ -85,14 +85,15 @@ def _log_write_failed(record):
     io_manager.show_message("Warning: could not write the diagnostic log.")
 
 def configure_logging():
-    """Connect AI diagnostics to an append-only UTF-8 file for this application run.
+    """Connect AI/storage diagnostics to an append-only UTF-8 application log.
 
     Return the handler for cleanup, or None if opening fails. Logging failure is
     reported through I/O and does not prevent the menu or AI error handling.
     """
-    logger = logging.getLogger("ai_manager")
-    logger.setLevel(logging.WARNING)
-    logger.propagate = False
+    loggers = [logging.getLogger(name) for name in ("ai_manager", "data_manager")]
+    for logger in loggers:
+        logger.setLevel(logging.WARNING)
+        logger.propagate = False
     try:
         handler = logging.FileHandler("phishreport.log", encoding="utf-8")
     except OSError:
@@ -101,7 +102,8 @@ def configure_logging():
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
     # Phase 1 uses a function callback rather than a FileHandler subclass.
     handler.handleError = _log_write_failed
-    logger.addHandler(handler)
+    for logger in loggers:
+        logger.addHandler(handler)
     return handler
 
 
@@ -124,7 +126,8 @@ def main():
                 io_manager.show_message("Please choose 1, 2 or 3.")
     finally:
         if log_handler is not None:
-            logging.getLogger("ai_manager").removeHandler(log_handler)
+            for name in ("ai_manager", "data_manager"):
+                logging.getLogger(name).removeHandler(log_handler)
             try:
                 log_handler.close()
             except OSError:

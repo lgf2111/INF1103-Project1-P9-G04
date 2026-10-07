@@ -1,6 +1,7 @@
 """Check the four storage requirements independently of implementation details."""
 
 import json
+import logging
 from copy import deepcopy
 from unittest.mock import MagicMock, Mock
 
@@ -140,10 +141,10 @@ def test_startup(storage, monkeypatch, database_records, local_records, failed):
     local_load = data_manager.load
     messages = []
 
-    def loader():
+    def loader(*, strict=False):
         """Record local fallback and read the temporary JSON file."""
         events.append("local")
-        return local_load()
+        return local_load(strict=strict)
 
     def fetch():
         """Record the database attempt and simulate its configured outcome."""
@@ -196,7 +197,7 @@ def test_file_errors(storage):
     assert data_manager.load() == []
     storage.write_text("{invalid JSON")
     with pytest.raises(ValueError):
-        data_manager.load()
+        data_manager.load(strict=True)
 
 
 def _complete_report():
@@ -233,7 +234,7 @@ def test_corrupt_history_is_preserved_and_never_uploaded(storage, monkeypatch, c
     upload = Mock()
     monkeypatch.setattr(data_manager, "upload", upload)
     with pytest.raises(ValueError):
-        data_manager.load()
+        data_manager.load(strict=True)
     with pytest.raises(ValueError):
         data_manager.save(_complete_report())
     assert storage.read_text() == content
@@ -440,3 +441,25 @@ def test_unreadable_local_history_is_reported_even_with_database(
     monkeypatch.setattr(data_manager, "load", Mock(side_effect=PermissionError("Read denied")))
     assert main.load_reports() == (records if database_available else None)
     assert "Could not load local report history" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("content", ['{PRIVATE_BROKEN', '{}', '[null]', '[{"schema_version":2}]'])
+def test_default_load_logs_and_returns_empty_without_damaging_history(
+    storage, caplog, capsys, content
+):
+    storage.write_text(content)
+    with caplog.at_level(logging.WARNING, logger="data_manager"):
+        assert data_manager.load() == []
+    assert storage.read_text() == content
+    messages = [record.getMessage() for record in caplog.records if record.name == "data_manager"]
+    assert len(messages) == 1
+    assert "Could not read local report history" in messages[0]
+    assert "PRIVATE" not in messages[0] and "Traceback" not in messages[0]
+    assert capsys.readouterr().out == ""
+
+
+def test_default_load_handles_read_error_without_exposing_exception(monkeypatch, caplog):
+    monkeypatch.setattr("builtins.open", Mock(side_effect=PermissionError("PRIVATE_PATH")))
+    with caplog.at_level(logging.WARNING, logger="data_manager"):
+        assert data_manager.load() == []
+    assert "PRIVATE_PATH" not in caplog.text

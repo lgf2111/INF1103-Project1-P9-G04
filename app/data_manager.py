@@ -2,11 +2,15 @@
 # Saves reports locally and in PostgreSQL. OWNER: Pair C.
 
 import json
+import logging
 import os
 import tempfile
 
 import psycopg
 from psycopg.rows import dict_row
+
+logger = logging.getLogger(__name__)
+logger.addHandler(logging.NullHandler())
 
 FILE = "reports.json"
 
@@ -121,7 +125,7 @@ def save(record):
     Single-process CLI only: concurrent writers are not supported.
     """
     _database_record(record)  # Reject invalid new records before touching history.
-    records = load()
+    records = load(strict=True)
     records.append(record)
     temporary = None
     try:
@@ -220,8 +224,24 @@ def fetch() -> list[dict]:
         raise RuntimeError("Could not load reports from PostgreSQL.") from error
 
 
-def load():
-    """Missing history is empty; unreadable/malformed history must not be overwritten."""
+def load(*, strict=False):
+    """Read history; log and return [] on failure by default, as required in Phase 1.
+
+    Internal save/history callers use strict=True to distinguish failed reads from
+    empty files and preserve corrupt history. Missing files are empty in either mode.
+    No terminal output or exception details enter diagnostics.
+    """
+    try:
+        return _read_records()
+    except (OSError, ValueError):
+        logger.warning("Could not read local report history; existing file preserved.")
+        if strict:
+            raise
+        return []
+
+
+def _read_records():
+    """Read and validate the file without converting failures into empty history."""
     try:
         with open(FILE, encoding="utf-8") as stream:
             records = json.load(stream)

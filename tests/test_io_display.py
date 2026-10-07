@@ -107,7 +107,7 @@ def test_view_saved_reports_displays_full_details(monkeypatch, capsys):
 
     monkeypatch.setattr(main.data_manager, "fetch",
                        lambda: (_ for _ in ()).throw(RuntimeError("PostgreSQL unavailable")))
-    monkeypatch.setattr(main.data_manager, "load", lambda: [record])
+    monkeypatch.setattr(main.data_manager, "load", lambda **kwargs: [record])
 
     main.view_reports()
     output = capsys.readouterr().out
