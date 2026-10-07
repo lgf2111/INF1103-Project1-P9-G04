@@ -1,5 +1,8 @@
 # Local coursework references
 .local/
+# Project spec PDFs (not shared in the repo)
+documents/
+*.pdf
 
 # API keys and other machine-specific settings
 .env
