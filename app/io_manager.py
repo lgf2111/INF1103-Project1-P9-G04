@@ -146,17 +146,19 @@ def display_result(result):
         print("\nNo assessment available.")
         return
 
-    priority = result.get("priority", "unavailable").replace("_", " ").title()
+    priority = (result.get("priority") or "unavailable").replace(
+        "_", " "
+    ).title()
     print("\n=== Assessment ===")
     print("Priority:", priority)
     print("Rule-based score:", result.get("score", "Unavailable"))
 
     if result.get("reasons"):
-        print("Reasons:")
+        print("\nReasons:")
         for reason in result["reasons"]:
             print(" -", reason)
 
-    print("Recommended actions:")
+    print("\nRecommended actions:")
     for number, step in enumerate(result.get("checklist", []), start=1):
         print(f"{number}. {step}")
 
@@ -188,11 +190,15 @@ def display_list(records):
 
     print("\n=== Saved reports ===")
     for number, record in enumerate(records, start=1):
-        result = record.get("result") or {}
-        priority = result.get("priority", "unavailable").replace("_", " ").title()
+        result = record.get("result") or record
+        priority = (result.get("priority") or "unavailable").replace(
+            "_", " "
+        ).title()
         channels = {"email": "Email", "sms": "SMS", "chat": "Chat"}
         channel = channels.get(record.get("channel"), "Unknown")
-        score = result.get("score", "Unavailable")
+        score = result.get("score")
+        if score is None:
+            score = "Unavailable"
         preview = " ".join((record.get("message") or "").split())
         if len(preview) > 50:
             preview = preview[:47] + "..."

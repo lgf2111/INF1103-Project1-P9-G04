@@ -1,70 +1,181 @@
 # logic_manager.py
-# The business rules. Works out a priority, a score and a checklist from the
-# AI output plus what the user did. OWNER: Pair B.
-#
-# Rules (checked top to bottom, from the proposal):
-#   1. high   - AI saw a credential request AND user submitted a password/OTP
-#   2. medium - AI saw something suspicious AND user clicked or downloaded
-#   3. review - suspicious, but nothing above matched
-#   4. insufficient - AI could not tell
-#   5. none   - nothing above (not a promise that it's safe)
+# Holds extracted details for the AI-to-Logic-to-AI flow
+# and computes deterministic logic results for display.
 
+def hold_details(details):
+    """
+    Validate extracted contact details and return them unchanged.
 
-def route(record):
-    ai = record.get("ai", {})
-
-    credential_request = ai.get("credential_request", False)
-    suspicious = ai.get("suspicious", False)
-    insufficient = ai.get("insufficient_context", False)
-
-    submitted = record.get("submitted_category")
-    clicked = record.get("clicked", False)
-    downloaded = record.get("downloaded", False)
-
-    # rule 1: needs two things at once (this is the multi-condition rule)
-    if credential_request and submitted in ("password", "otp"):
-        return "high"
-    # rule 2
-    if suspicious and (clicked or downloaded):
-        return "medium"
-    # rule 3
-    if suspicious:
-        return "review"
-    # rule 4
-    if insufficient:
-        return "insufficient_information"
-    # rule 5
-    return "no_clear_indicators"
-
-
-def score(record):
-    # simple score so we can rank/threshold. higher = more urgent.
-    points = {
-        "high": 90,
-        "medium": 70,
-        "review": 50,
-        "insufficient_information": 30,
-        "no_clear_indicators": 10,
+    This must remain compatible with ai_manager.response_prompt(details),
+    which expects exactly:
+    {
+        "emails": [...],
+        "phone_numbers": [...],
+        "ip_addresses": [...]
     }
-    return points[route(record)]
+    """
+    required_keys = {
+        "emails",
+        "phone_numbers",
+        "ip_addresses",
+    }
 
+    if not isinstance(details, dict):
+        raise ValueError("Details must be a dictionary.")
 
-def evaluate(record):
-    priority = route(record)
+    if set(details) != required_keys:
+        raise ValueError(
+            "Details must contain exactly: "
+            + ", ".join(sorted(required_keys))
+        )
+
+    for key in required_keys:
+        if not isinstance(details[key], list):
+            raise ValueError(f"{key} must be a list.")
+
+        for value in details[key]:
+            if not isinstance(value, str):
+                raise ValueError(f"Each value in {key} must be a string.")
+
+    return details
+
+def evaluate(record, details):
+    """
+    Evaluate the full user record and extracted details.
+
+    Returns:
+        {
+            "priority": "LOW" | "MEDIUM" | "HIGH",
+            "score": int,
+            "checklist": [str, ...]
+        }
+    """
+    _validate_record(record)
+    hold_details(details)
+
+    score = 0
+    reasons = []
+
+    if record.get("has_link") is True:
+        score += 10
+        reasons.append("The message included a link.")
+
+    if record.get("clicked") is True:
+        score += 20
+        reasons.append("The user clicked the link.")
+
+    if record.get("has_file") is True:
+        score += 15
+        reasons.append("The message included a file.")
+
+    if record.get("downloaded") is True:
+        score += 25
+        reasons.append("The user downloaded the file.")
+
+    if record.get("submitted_category") == "password":
+        score += 40
+        reasons.append("The user submitted a password.")
+
+    elif record.get("submitted_category") == "otp":
+        score += 35
+        reasons.append("The user submitted an OTP.")
+
+    if not record.get("sender"):
+        score += 5
+        reasons.append("Sender information was not available.")
+
+    if details.get("emails"):
+        score += 5
+        reasons.append("The message contains an email address.")
+
+    if details.get("phone_numbers"):
+        score += 5
+        reasons.append("The message contains a phone number.")
+
+    if details.get("ip_addresses"):
+        score += 10
+        reasons.append("The message contains an IP address.")
+
+    # Cap the score at 100 no matter how many factors apply.
+    score = min(score, 100)
+
+    if score >= 70:
+        priority = "HIGH"
+        checklist = [
+            "Stop all contact with the sender.",
+            "Do not click links or open files from this message.",
+            "Change any affected passwords immediately.",
+            "Report the message to your supervisor or security team.",
+            "Monitor your accounts for suspicious activity.",
+        ]
+    elif score >= 35:
+        priority = "MEDIUM"
+        checklist = [
+            "Avoid further interaction with the message.",
+            "Verify the sender through an official channel.",
+            "Do not submit passwords or OTPs.",
+            "Report the message if it appears suspicious.",
+        ]
+    else:
+        priority = "LOW"
+        checklist = [
+            "Remain cautious.",
+            "Verify unusual requests independently.",
+            "Report the message if additional warning signs appear.",
+        ]
+
     return {
         "priority": priority,
-        "score": score(record),
-        "checklist": checklist_for(priority),
+        "score": score,
+        "checklist": checklist,
+        "reasons": reasons,
     }
 
+def _validate_record(record):
+    """Validate the record shape produced by io_manager.collect_input()."""
+    required_keys = {
+        "channel",
+        "sender",
+        "message",
+        "has_link",
+        "link",
+        "has_file",
+        "file_name",
+        "clicked",
+        "downloaded",
+        "submitted_category",
+    }
 
-def checklist_for(priority):
-    if priority == "high":
-        return ["Recover your account through the official website.", "Tell IT."]
-    if priority == "medium":
-        return ["Stop replying to the message.", "Ask IT what to do."]
-    if priority == "review":
-        return ["Check the sender another way.", "Report the message."]
-    if priority == "insufficient_information":
-        return ["Give more details so it can be checked."]
-    return ["No clear signs found. This does not mean it is safe."]
+    if not isinstance(record, dict):
+        raise ValueError("Record must be a dictionary.")
+
+    missing = required_keys - set(record)
+    if missing:
+        raise ValueError(
+            "Record is missing required fields: "
+            + ", ".join(sorted(missing))
+        )
+
+    if not isinstance(record["channel"], str):
+        raise ValueError("channel must be text.")
+
+    if record["sender"] is not None and not isinstance(record["sender"], str):
+        raise ValueError("sender must be text or None.")
+
+    if not isinstance(record["message"], str) or not record["message"].strip():
+        raise ValueError("message must be non-empty text.")
+
+    for key in ("has_link", "has_file", "clicked", "downloaded"):
+        if not isinstance(record[key], bool):
+            raise ValueError(f"{key} must be true or false.")
+
+    if record["link"] is not None and not isinstance(record["link"], str):
+        raise ValueError("link must be text or None.")
+
+    if record["file_name"] is not None and not isinstance(record["file_name"], str):
+        raise ValueError("file_name must be text or None.")
+
+    if record["submitted_category"] not in (None, "password", "otp"):
+        raise ValueError(
+            "submitted_category must be None, 'password', or 'otp'."
+        )

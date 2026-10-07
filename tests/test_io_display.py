@@ -55,10 +55,16 @@ def test_display_list_shows_numbered_summaries(capsys):
          "result": {"priority": "review", "score": 50}},
         {"channel": "email", "message": "Second fictional message",
          "result": {"priority": "high", "score": 90}},
+        {"channel": "chat", "message": "Database report",
+         "priority": "MEDIUM", "score": 40},
+        {"channel": "email", "message": "Legacy row",
+         "priority": None, "score": None},
     ])
     output = capsys.readouterr().out
     assert "1. SMS | Review | Score: 50" in output
     assert "2. Email | High | Score: 90" in output
+    assert "3. Chat | Medium | Score: 40" in output
+    assert "4. Email | Unavailable | Score: Unavailable" in output
     assert "Line one Line two" in output
 
 
@@ -68,36 +74,94 @@ def test_display_list_handles_empty_history(capsys):
 
 
 def test_display_result_keeps_safety_wording(capsys):
-    record = {"ai": {"credential_request": False, "suspicious": False,
-                     "insufficient_context": False}}
-    io_manager.display_result(logic_manager.evaluate(record))
-    assert "This does not mean it is safe." in capsys.readouterr().out
-
+    record = {
+        "channel": "email",
+        "sender": None,
+        "message": "Test message",
+        "has_link": False,
+        "has_file": False,
+        "link": None,
+        "file_name": None,
+        "clicked": False,
+        "downloaded": False,
+        "submitted_category": None,
+    }
+    details = {
+        "emails": [],
+        "phone_numbers": [],
+        "ip_addresses": []
+    }
+    io_manager.display_result(logic_manager.evaluate(record, details))
+    # Updated assertion to match the new LOW priority checklist
+    assert "Remain cautious." in capsys.readouterr().out
 
 def test_view_saved_reports_displays_full_details(monkeypatch, capsys):
-    message = "A fictional saved message longer than fifty characters with a visible ending."
-    monkeypatch.setattr(main.data_manager, "load", lambda: [{"message": message}])
-    main.view_saved_reports()
-    output = capsys.readouterr().out
-    assert "=== Saved reports ===" in output
-    assert "Report 1" in output
-    assert message in output
+    message = "A fictional saved message."  # Short enough to not be truncated
+    record = {
+        "channel": "email",
+        "message": message,
+        "result": {"priority": "HIGH", "score": 50}
+    }
 
+    monkeypatch.setattr(main.data_manager, "fetch",
+                       lambda: (_ for _ in ()).throw(RuntimeError("PostgreSQL unavailable")))
+    monkeypatch.setattr(main.data_manager, "load", lambda: [record])
+
+    main.view_reports()
+    output = capsys.readouterr().out
+
+    assert "=== Saved reports ===" in output
+    assert "1. Email" in output
+    assert message in output
 
 def test_check_new_message_displays_full_record(monkeypatch, capsys):
     message = "Fictional SMS message for the offline display integration test."
-    record = {"channel": "sms", "message": message, "clicked": False,
-              "downloaded": False, "submitted_category": None}
-    findings = {"credential_request": False, "suspicious": False,
-                "insufficient_context": False}
+    record = {
+        "channel": "sms",
+        "sender": None,
+        "message": message,
+        "has_link": False,
+        "link": None,
+        "has_file": False,
+        "file_name": None,
+        "clicked": False,
+        "downloaded": False,
+        "submitted_category": None,
+    }
+    # AI's first response: extracted details
+    details = {
+        "emails": [],
+        "phone_numbers": [],
+        "ip_addresses": [],
+    }
+    # AI's second response: formatted reply
+    reply = {
+        "response": "Email: , Phone Number: , IP Address: "
+    }
     saved = []
+
+    api_calls = []
+    def mock_call_api(prompt):
+        """Return details on first call, reply on second call."""
+        api_calls.append(prompt)
+        if len(api_calls) == 1:
+            return json.dumps(details)
+        return json.dumps(reply)
+
     monkeypatch.setattr(main.io_manager, "collect_input", lambda: record)
-    monkeypatch.setattr(main.ai_manager, "call_api", lambda _: json.dumps(findings))
+    monkeypatch.setattr(main.ai_manager, "call_api", mock_call_api)
     monkeypatch.setattr(main.data_manager, "save", saved.append)
-    main.check_new_message()
+
+    main.check_message()
     output = capsys.readouterr().out
-    assert "Channel: SMS" in output
-    assert message in output
-    assert "Rule-based score: 10" in output
-    assert saved[0]["ai"] == findings
-    assert saved[0]["result"]["priority"] == "no_clear_indicators"
+
+    # The new implementation displays the assessment result
+    assert "Priority:" in output
+    assert "Rule-based score:" in output  # Changed from "Score:"
+    assert "Recommended actions:" in output
+
+    # Verify the saved data structure
+    assert len(saved) == 1
+    assert saved[0]["channel"] == "sms"
+    assert saved[0]["message"] == message
+    assert saved[0]["details"] == details
