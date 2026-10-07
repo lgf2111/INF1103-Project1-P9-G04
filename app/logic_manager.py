@@ -39,6 +39,46 @@ def hold_details(details):
 
     return details
 
+def score(record):
+    """Return a response-priority score using the first matching rule.
+
+    The caller must supply AI findings validated against the original input.
+    Check the fields consumed here without coercing values or mutating the record.
+    Contact/link/file presence does not establish phishing. Scores are priorities,
+    not calibrated phishing probabilities.
+    """
+    _validate_record(record)
+    findings = record.get("ai")
+    if not isinstance(findings, dict):
+        raise ValueError("Record must contain validated AI findings.")
+    for key in ("credential_request", "suspicious", "insufficient_context"):
+        if not isinstance(findings.get(key), bool):
+            raise ValueError("AI finding must be true or false: " + key)
+
+    # Reported disclosure takes precedence even if the AI misses the threat.
+    if record["submitted_category"] in ("password", "otp"):
+        return 90
+    if findings["suspicious"] and (record["clicked"] or record["downloaded"]):
+        return 80
+    if findings["suspicious"] and findings["credential_request"]:
+        return 60
+    if findings["suspicious"]:
+        return 45
+    if findings["insufficient_context"]:
+        return 35
+    return 10
+
+
+def route(record):
+    """Route an assessed record using the logic score and agreed thresholds."""
+    value = score(record)
+    if value >= 70:
+        return "HIGH"
+    if value >= 35:
+        return "MEDIUM"
+    return "LOW"
+
+
 def evaluate(record, details):
     """
     Evaluate the full user record and extracted details.
