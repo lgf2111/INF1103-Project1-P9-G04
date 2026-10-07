@@ -2,6 +2,7 @@
 # Ties the four managers together:
 #   user -> io_manager -> ai_manager -> logic_manager -> data_manager
 
+import logging
 import os
 
 import ai_manager
@@ -28,8 +29,8 @@ def check_new_message():
     record = io_manager.collect_input()
 
     # 2. send it through the AI
-    prompt = ai_manager.build_prompt(record)
     try:
+        prompt = ai_manager.build_prompt(record)
         raw = ai_manager.call_api(prompt)
         reply = ai_manager.parse_response(raw)
         record["ai"] = ai_manager.validate_response(reply)
@@ -51,19 +52,54 @@ def view_saved_reports():
     io_manager.display_list(records)
 
 
+def _log_write_failed(record):
+    """FileHandler's procedural error callback; keep traceback output out of the CLI."""
+    io_manager.show_message("Warning: could not write the diagnostic log.")
+
+
+def configure_logging():
+    """Connect AI diagnostics to an append-only UTF-8 file for this application run.
+
+    Return the handler for cleanup, or None if opening fails. Logging failure is
+    reported through I/O and does not prevent the menu or AI error handling.
+    """
+    logger = logging.getLogger("ai_manager")
+    logger.setLevel(logging.WARNING)
+    logger.propagate = False
+    try:
+        handler = logging.FileHandler("phishreport.log", encoding="utf-8")
+    except OSError:
+        io_manager.show_message("Warning: diagnostic logging is unavailable.")
+        return None
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
+    # Phase 1 uses a function callback rather than a FileHandler subclass.
+    handler.handleError = _log_write_failed
+    logger.addHandler(handler)
+    return handler
+
+
 def main():
     load_env()
-    while True:
-        choice = io_manager.main_menu()
-        if choice == "1":
-            check_new_message()
-        elif choice == "2":
-            view_saved_reports()
-        elif choice == "3":
-            io_manager.show_message("Bye!")
-            break
-        else:
-            io_manager.show_message("Please choose 1, 2 or 3.")
+    log_handler = configure_logging()
+    try:
+        while True:
+            choice = io_manager.main_menu()
+            if choice == "1":
+                check_new_message()
+            elif choice == "2":
+                view_saved_reports()
+            elif choice == "3":
+                io_manager.show_message("Bye!")
+                break
+            else:
+                io_manager.show_message("Please choose 1, 2 or 3.")
+    finally:
+        if log_handler is not None:
+            logging.getLogger("ai_manager").removeHandler(log_handler)
+            try:
+                log_handler.close()
+            except OSError:
+                io_manager.show_message("Warning: could not close the diagnostic log.")
 
 
 if __name__ == "__main__":
