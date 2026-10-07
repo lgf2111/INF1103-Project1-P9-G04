@@ -1,13 +1,13 @@
 # PhishReport Project Roadmap 2.0
 
-> **Draft for team review.** The structure and workflow are ready to propose; team adoption and optional features are still pending.
+> **Team roadmap.** Retains each layer's ownership, deliverables and contribution history. Exact team conventions and optional features still require team adoption.
 >
-> **Progress reviewed:** 27 September 2026 — `main` at `aa5db66`, input branch at `e730274`, extraction branch at `613d4fb`.
+> **Progress reviewed:** 8 October 2026 — main at `74315ac`; merged team contributions are distinguished from the unmerged integration in [PR #25](https://github.com/lgf2111/phish-report/pull/25) at `1977e3f`.
 
 ## Contents
 
 1. [General progress and deliverables](#general-progress-and-deliverables)
-   1. [Email-file assessment workflow](#email-file-assessment-workflow)
+   1. [Expected end product and email-file workflow](#expected-end-product-and-email-file-workflow)
 2. Four-layer architecture
    1. [Input Layer](#input-layer)
    2. [AI Processing Layer](#ai-processing-layer)
@@ -19,7 +19,7 @@
    2. [Task instructions](#task-instructions)
    3. [How we work together (Git)](#how-we-work-together-git)
    4. [Shared changes and completion](#shared-changes-and-completion)
-   5. [Standards rollout](#standards-rollout)
+   5. [Remaining workflow checks](#remaining-workflow-checks)
 5. [Outstanding decisions](#outstanding-decisions)
 6. [References](#references)
 7. [Submission readiness checklist](#submission-readiness-checklist)
@@ -28,68 +28,47 @@
 
 **Objective:** Assess suspicious email, SMS and chat messages with a procedural Python CLI. Use AI findings and phishing rules to produce prioritised JSON reports.
 
-**Current stage:** Week 5 — agree contracts, refactor and integrate the layers. Prepare for Week 7 submission and the Week 8 demonstration.
+**Current stage:** Review PR #25, verify remaining integration risks and prepare the team submission. Confirm calendar deadlines against course announcements.
 
 **Status key**
 
-- **Implemented:** Present on `main`.
-- **Branch work:** Unmerged implementation.
+- **Implemented:** Present on the reviewed `main` commit.
+- **In review:** Implemented in PR #25, not yet merged.
+- **Deferred:** Outside the active scope; not an implementation task until agreed.
 - **Partial:** Some acceptance criteria remain.
 - **Pending:** No completion evidence yet.
 
-Check a deliverable only when its acceptance criteria pass on the submission version; record evidence in its issue or PR.
+Layer tables distinguish implementation from outstanding work. The final G1–G8 checklist applies to the submission version; record evidence in the relevant issue or PR.
 
 ### Project progress
 
 | Area | Status | Current position |
 | --- | --- | --- |
-| Core pipeline | Implemented | Four procedural managers and `main.py` connect input, AI, assessment, display and JSON storage. |
-| Input extension | Branch work | Menu validation and channel/sender/link/file helpers in PR #14; new helpers still need integration. |
-| AI extraction extension | Branch work | Email, phone and IP extraction, validation and a second AI response on `feat/xh-logic-manager`. |
-| Assessment rules | Partial | Five outcomes, fixed scores and checklists exist; two-AI-field rule and exposure/uncertainty cases remain. |
-| Report history | Partial | Save/load/query and basic listing exist; menu filtering, startup loading and status updates remain. |
-| Tests and CI | Implemented | 24 offline tests on `main`; Ruff, source no-class check, tests and Docker build/tests configured. |
-| Docker and release | Partial | Dockerfile, helper and v1.0.0 release exist; persistent report storage and all-laptop verification remain. |
-| Foundation and standards | Pending | Keep the existing `app/` layout. Team adoption of the workflow and branch protection are unverified. |
-| Submission documents | Pending | Final engineering report and submission-version verification evidence remain. |
+| Foundation and DevOps | Implemented | Guan Feng's project wiring, Groq starter, Docker, Ruff, CI, release automation and documentation remain the foundation. See FEATURES.md for original contribution records; release existence alone does not prove final readiness. |
+| Input collection | Implemented | Jeremy's validated typed input and reusable choice helpers merged in PRs #19/#23. collect_input uses the helpers; email/SMS/chat manual entry works. |
+| Output displays | Implemented | Bryan Lee's result, record and history display improvements merged in PR #22. Menu record selection/filter/status controls remain separate tasks. |
+| Logic, extraction and PostgreSQL | Implemented / integration changes in review | Xavier/Bryan's work merged through PR #20. Their extraction rules and PostgreSQL contribution are retained; PR #25 proposes findings-driven rules and a compatible complete-record adapter. |
+| AI hardening and combined assessment | In review | Arvin's original AI work is published on feat/ai-layer. PR #25 integrates it with main, retains extraction in one request, and restores required AI/logic interfaces. It is not merged. |
+| File/history reliability | In review | PR #25 adds complete versioned records, atomic JSON, logged read failures and combined local/database history. Real PostgreSQL round-trip still needs verification. |
+| Automated checks | Implemented; integration CI passed | Existing CI runs lint, no-class, offline tests and Docker. PR #25 has 450 passing offline cases on host/Docker and passing GitHub jobs. |
+| Docker and delivery | Partial | Existing Dockerfile/helper retained. Isolated restart/persistent-mount checks passed for PR #25; all six machines and final submission version remain to verify. |
+| File import and submission documents | Pending | .eml input, final report, instructor clarifications and demo evidence remain team work. |
 
-### Remaining schedule
+**Review in progress:** PR #25 is related to issue #24. Review requested from Tr1ckster10, bryxnox27 and lgf2111; review-focus comments are posted, but no review has been submitted at this snapshot. Scope is four application files and five test files; existing I/O source is retained.
 
-| Checkpoint | PhishReport deliverable |
-| --- | --- |
-| Week 5 — proposed team target | Finalise contracts and rules; adopt standards; refactor and integrate layer work. |
-| Week 6 — proposed team target | Complete features, failure tests, repeatability checks, report and all-laptop Docker verification. |
-| Week 7 | Source code, engineering report, automated test script, Git repository history and Docker delivery. |
-| Week 8 | Demonstration of the submitted application. |
+**Evidence limits:** one fictional live host Groq assessment passed validation and JSON save/reload (60 / MEDIUM); database upload was disabled. CLI/restart checks used mocked AI. No real PostgreSQL result, model-accuracy claim or all-machine verification is implied.
 
-### General deliverables
+### Next checkpoints
 
-- **G1 — Problem, users and measurable scope · Pending**
-  - Record instructor topic sign-off and the required one-paragraph problem statement.
-  - State target users, their problem, supported channels/actions and exclusions in README and the report. Explain the value over unaided checking.
-  - Define success scenarios and expected outcomes in `docs/design.md`.
-- **G2 — Procedural application · Partial**
-  - Keep four functional managers and no team-authored classes; confine `input()` and `print()` to I/O.
-  - Send every processed record through the real API. Validate AI findings before use and make them drive assessment.
-  - Clarify how the API rule applies to operations on existing records.
-- **G3 — Automated tests · Partial**
-  - Test `evaluate`, `score`, `route` and a rule combining at least two AI-response fields with offline fixtures. Pass inside Docker.
-- **G4 — Engineering report · Pending**
-  - Keep the report within five pages. Put the data-flow diagram and exception-handling matrix on one page.
-  - Cover API failure, malformed response, missing/corrupt data and invalid input.
-- **G5 — Git repository · Partial**
-  - Show granular descriptive commits, task branches and reviewed PRs. Verify the submission URL and access for all members and lab-in-charges.
-  - Confirm the Project Initial Details file was committed and submitted through the required channel.
-- **G6 — Docker delivery · Partial**
-  - Provide a root Dockerfile and working output from the submission branch; install dependencies inside the container.
-  - Have all six members verify it locally. Record member, commit, command, date and result for each laptop.
-- **G7 — Integrated app verification · Pending**
-  - Pass normal, exposure, uncertain, API-failure, save/restart/retrieve and priority-filter cases.
-  - Keep container reports across runs; pass D5 repeatability against the recorded instructor interpretation.
-- **G8 — Demonstration · Pending**
-  - Rehearse the full pipeline, failures and offline tests. Every member explains their contribution and the system.
+1. Complete the requested interface/scenario review of PR #25 and address comments.
+2. Verify PostgreSQL save/fetch against an isolated real database.
+3. Obtain instructor clarification on repeatability and API calls for existing-record operations.
+4. Agree the .eml input contract and any additional user-facing scope before implementation.
+5. Verify the final submission commit on all six machines and complete G1–G8 below.
 
-### Requirement labels and proposed scope
+Merged contributions were checked against main `74315ac` and PRs #19/#20/#22/#23. PR #20 contains contributions from both Tr1ckster10 and bryxnox27. Feature existence is based on code; live database operation and unrecorded teammate tests are not assumed.
+
+### Scope and requirements
 
 **Course requirements**
 
@@ -104,12 +83,9 @@ Check a deliverable only when its acceptance criteria pass on the submission ver
 
 Whether viewing, filtering or updating existing records requires another call needs instructor clarification. Do not assume an exemption or use caching to bypass the requirement.
 
-**Team proposals, not professor-mandated features**
+**Active product scope:** manual message assessment, retained extraction, response-priority advice, reliable JSON/history and the planned .eml input workflow. The specific extraction feature and file format are team choices.
 
-- Email/phone/IP extraction (A2/L5) and a second AI formatting call (A3).
-- Handled/ignored report status (I4/D3) and exact issue/commit/review/merge conventions.
-
-Complete the mandatory assessment flow before optional extensions. Record retained proposals in `docs/design.md`.
+**Deferred extensions:** history status updates, additional disclosure categories, stable IDs/deduplication and extra security APIs. Do not treat these as approved implementation tasks. Report selection/filtering requires a separate scope decision (I4/D3).
 
 **Phase 1 exclusions:** Inbox integration, automatic monitoring, opening links or attachments, and claims that a message is guaranteed safe.
 
@@ -125,256 +101,178 @@ Complete the mandatory assessment flow before optional extensions. Record retain
 - Pass every agreed rule case; reject malformed AI output without a successful assessment.
 - Retrieve unchanged saved assessments after restart. Record exclusions and evaluation results in the report.
 
-### Email-file assessment workflow
+## Expected end product and email-file workflow
 
-**Team-agreed input direction:** The user supplies an email file location through the CLI. File import is planned, not implemented by the existing message-entry flow. The supported format (`.eml`, `.msg` or text), file limits and parsed-record schema still need agreement. The earlier email/SMS/chat scope remains to be reconciled with this direction; do not assume those other channels are implemented or removed.
+PhishReport helps a user assess suspicious content and decide what to do after receiving, clicking, downloading or disclosing information. It produces an explained **response priority**, not a guaranteed phishing verdict or calibrated probability.
 
-**Proposed handoffs, subject to layer-owner agreement:**
+**Current CLI input:** check message, view saved reports and quit; pasted email/SMS/chat text, optional sender/link/file information and reported actions. **Integration under review:** PR #25 supplies the combined assessment flow below. It is not yet the main-branch implementation.
 
-| Step | Responsibility | Expected handoff |
-| --- | --- | --- |
-| Select and read email | Input owners: Jeremy & Bryan | Validate the supplied path, readability, supported format and agreed size limit; parse usable email content or display an error and re-prompt. |
-| Prepare input record | Input owners, with AI owners agreeing the contract | Return a typed dictionary of agreed email fields and user-reported actions. Reading an email cannot establish whether the user clicked, downloaded or disclosed credentials. |
-| Obtain AI findings | AI owners: Arvin & Guan Feng | Build a prompt from the dictionary, call the API, parse and validate findings, or return the agreed failure information. AI receives content; it does not open the user's file path. |
-| Assess findings | Logic owners: Bryan & Xavier | Combine validated AI findings and reported actions to determine the outcome, score and response checklist. |
-| Persist and display | Data owners and input owners | Save only evaluated reports; display the assessment and its limitations through I/O. |
+**Planned email workflow:** the user supplies a `.eml` file path in the CLI. `.eml` is the selected development direction; parsing is not implemented by PR #25. Input owners must settle MIME/text handling, limits, parsed fields and how manual SMS/chat input remains available before implementing it. This is a team product direction, not a professor-mandated file format.
 
-AI failures must stop the assessment before evaluation or saving. Email content is untrusted data; importing a file must not open links or execute attachments. Sender/Reply-To comparison, link-label/destination comparison, attachment metadata and evidence quotes are optional proposals requiring agreed fields and ownership, not part of the settled input decision.
+```mermaid
+flowchart TD
+    A[CLI: pasted text today; .eml path planned] --> B[I/O: validate and prepare typed record]
+    B --> C[AI: prompt and one provider request]
+    C --> D[AI: validate envelope, JSON, schema and source occurrences]
+    D --> E[Logic: score, priority, reasons and advice]
+    E --> F[Data: complete JSON save, then PostgreSQL upload]
+    F --> G[I/O: display assessment and storage status]
+    C --> H[On AI failure: main stops assessment]
+    D --> H
+    H --> I[I/O: show error and return to menu]
+```
 
-**Current AI work boundary:** Implement only the AI manager and its tests under an approved contract. File selection, reading/parsing, scoring, storage, displays and shared `main.py` changes remain with their owners unless separately agreed. AI development can use fictional parsed-record fixtures; this does not establish that file import or full integration works.
+Expected user journey:
 
-### Implementation sequence
+1. Choose a new assessment and supply the content. For future `.eml` import, I/O validates and reads the file and re-prompts if unusable.
+2. Report whether a link was clicked, a file downloaded, or a password/OTP disclosed. Collect categories only, never the actual password or code. Reading an email cannot infer these actions.
+3. Send decoded content and agreed unverified metadata to AI. Do not send the local file path or user-action answers as provider input.
+4. Validate the AI response before scoring or storing it. A failed assessment is not saved or displayed as completed.
+5. Display LOW/MEDIUM/HIGH priority, score, reasons and advice. Preserve the complete assessment in JSON; distinguish failed local saving from successful local saving with failed database upload.
+6. View stored history after restart. Current history reads stored results without another API request; instructor interpretation of that behaviour remains unresolved.
 
-- [ ] Agree schemas, interfaces, rule table and ownership of individual tasks in `docs/design.md` and GitHub issues.
-- [ ] Preserve existing tests, DevOps configuration and useful branch work; separate file moves from feature changes.
-- [ ] Keep the agreed `app/` layout; verify imports, test discovery, Docker, CI and README commands against it.
-- [ ] Integrate input helpers and any retained extraction fields without removing phishing assessment.
-- [ ] Complete each layer's deliverables and cross-layer tests.
-- [ ] Verify the submission commit against G1-G8; record member checks and submit.
+Never execute attachments, visit links, fetch remote email images or claim a message is guaranteed safe. Receiving a link or seeing an extracted contact is not, by itself, a risk score increase.
+
+The diagram describes the PR #25 integration plus planned file input. `.eml` parsing remains pending; it is not implied by the presence of a file-name input field.
 
 ## Input Layer
 
-### In charge: Jeremy & Bryan
+### In charge: Jeremy Goh & Bryan Lee
 
 **Purpose:** Collect structured message details and reported user actions. Display assessments, reports, lists and errors.
 
 **Boundary:** All terminal input/output belongs in `io_manager.py`.
 
-### Features and progress
+### Deliverables and progress
 
-| Feature | Status | Scope |
+| ID | Current status | Remaining action |
 | --- | --- | --- |
-| Main menu | Implemented / branch extension | Check message, view reports and quit; PR #14 adds re-prompting inside the menu function. |
-| Message validation | Implemented / branch extension | Reject blank messages; branch adds a reusable `get_message()`. |
-| Yes/no validation | Implemented / branch extension | Main accepts `y/n`; branch accepts `yes/y/no/n` case-insensitively. |
-| Channel | Branch work | `get_channel()` validates Email, SMS or Chat. |
-| Sender | Branch work | `get_sender()` accepts optional sender information and returns `None` when blank. |
-| Included link/file | Branch work | `get_link_information()` and `get_file_information()` collect presence plus a nonblank URL/file name. |
-| User actions | Implemented | Collect clicked, downloaded and submitted category (`password`, `otp` or none). |
-| Results and history | Partial | Priority, score, checklist and short report list exist; full record display, filter controls and status controls remain. |
+| I1 — Complete input record | **Partial:** manual ten-field collector and helper wiring merged in PRs #19/#23. | Agree .eml decoded fields, MIME/text handling and channel scope; implement file import separately. |
+| I2 — Input validation | **Partial:** choices, blanks, optional text and boolean/category conversion implemented; manual re-prompt tests exist. | Agree and test file/read/size limits and any new input constraints. No numeric limit is prescribed by the framework. |
+| I3 — Displays | **Partial:** display_result, display_record and display_list merged in PR #22; result/list are called by main. | Decide how users select full records and whether to present extracted contacts. Do not count those controls as implemented. |
+| I4 — History controls | **Deferred:** no selection/filter/status menu is implemented. | Agree scope before adding controls; coordinate filter/query and any status identity with data owners. |
+| I5 — Tests and integration | **Partial:** manual collection/display tests exist; PR #25 combined handoff tests pass. | Test the future file-input handoff when implemented; preserve application terminal I/O confinement. |
 
-**Source:** [PR #14](https://github.com/lgf2111/phish-report/pull/14). Channel, sender, link and file helpers exist but are not called by `collect_input()`.
-
-### Deliverables
-
-- [ ] **I1 — Complete input record**
-  - Agree the email-file format and parsed-record contract for the workflow above. File import and parsing remain input-owner work; existing manual-input helpers do not implement file import.
-  - Connect helpers to `collect_input()`. Return channel, optional sender, message, included-link/file details and user actions in the agreed dictionary.
-  - Convert flags to booleans and choices to agreed values.
-- [ ] **I2 — Input validation**
-  - Define applicable ranges and length limits in `docs/design.md`. Re-prompt for invalid types, ranges, choices, required values and inconsistent actions.
-  - Test each agreed boundary and adjacent invalid value. The course does not prescribe numeric limits.
-  - Distinguish receiving a link/file from clicking/downloading it. Collect disclosure categories, never actual passwords or OTPs.
-- [ ] **I3 — Displays**
-  - Implement `display_record`, `display_list` and `display_result` with reasons, score, priority, checklist and agreed extracted details.
-  - Display failures through the I/O layer.
-- [ ] **I4 — History controls**
-  - Add report selection and priority filtering.
-  - Add handled/ignored controls only if adopted with agreed values and transitions.
-- [ ] **I5 — Tests and integration**
-  - Test menu choices, case/whitespace handling, blanks, optional fields, links/files and complete returned records.
-  - Keep all application `input()` and `print()` calls in this module.
+**Contribution evidence:** Jeremy — [PR #19](https://github.com/lgf2111/phish-report/pull/19), [PR #23](https://github.com/lgf2111/phish-report/pull/23); Bryan Lee — [PR #22](https://github.com/lgf2111/phish-report/pull/22). The [pushed I/O source](https://github.com/lgf2111/phish-report/blob/74315ac/app/io_manager.py) is retained by PR #25.
 
 ## AI Processing Layer
 
-### In charge: Arvin & Guan Feng
+### In charge: Arvin (Akari-light) & Guan Feng (lgf2111)
 
 **Purpose:** Send processed records through the real AI API; build prompts, parse JSON and validate findings before the logic layer uses them.
 
-**Boundary:** Keep phishing decisions and scoring outside `ai_manager.py`. Clarify API rules for viewing, filtering and updating existing records before implementing those operations.
+**Boundary:** Keep phishing decisions and scoring outside `ai_manager.py`. Existing history viewing uses stored results; clarify the API requirement for existing-record operations with the instructor.
 
-### Features and progress
+### Deliverables and progress
 
-| Feature | Status | Scope |
+| ID | Current status | Remaining action |
 | --- | --- | --- |
-| API access | Implemented | Groq chat-completions request, JSON response mode, environment key, model setting and 30-second timeout. Current default model: `openai/gpt-oss-20b`. |
-| Phishing findings | Implemented | `build_prompt`, `call_api`, `parse_response`, `validate_response`; boolean `credential_request`, `suspicious`, `insufficient_context`. |
-| Response parsing | Implemented | Parse JSON and supported Markdown code fences; check required keys and boolean values. |
-| Contact/IP extraction | Branch work | Extract email addresses, eight-digit phone numbers including `8000 1234`, and IPv4/IPv6 addresses. Preserve order, duplicates and original text. |
-| Extraction validation | Branch work | Validate exact object keys, list/string types, formats and ordered source occurrences; reject invented values. Existing validation does not prove every occurrence was extracted. |
-| Final AI response | Branch work | Second API call formats `Email: ..., Phone Number: ..., IP Address: ...`; validates labels, order and exact values. |
-| Failure handling | Partial | Missing key, connection errors and timeouts report failure; malformed response envelopes, logging and retry policy remain. |
+| A1 — Schema and prompt | **In review:** four required interfaces and combined findings/extraction contract in PR #25. | Review the contract; add future parsed-email fields only through an agreed producer/consumer change. |
+| A2 — Extraction | **In review:** existing teammate extraction retained in one assessment response with syntax and ordered source checks. | Review retained semantics. Source matching is not proof of extraction completeness. |
+| A3 — Formatting call | **Retired in PR #25:** procedural display replaces the second request; obsolete helpers removed. | No separate formatting API feature is planned. |
+| A4 — Failures | **In review:** strict envelopes/JSON/schema, safe logging and no-completion-on-failure are tested. | Address review feedback and verify the submission version. |
+| A5 — Configuration | **In review:** runtime key/model, blank-model rejection, fixed timeout and one-attempt policy. | Retain the configuration/error contract documented below. |
+| A6 — Verification | **Partial:** offline/combined tests and one fictional host API handoff passed. | Final submission checks remain; no model-accuracy or live-container-API claim. |
 
-**Source:** [`feat/xh-logic-manager`](https://github.com/lgf2111/phish-report/tree/feat/xh-logic-manager). Port its AI work into this layer's backlog. The extraction-only flow is a prototype; integration must retain phishing findings and the required manager functions.
-
-### Deliverables
-
-- [ ] **A1 — Shared schema and prompts**
-  - Agree the parsed email dictionary with input owners before adopting new fields. Accept content rather than opening a file path; preserve the four public AI interfaces and keep file parsing outside this layer.
-  - Define phishing findings and any retained extraction fields in `docs/design.md`.
-  - Keep `build_prompt`, `call_api`, `parse_response` and `validate_response` public; map prototype helpers into that interface.
-- [ ] **A2 — Proposed extraction integration**
-  - If adopted, integrate email/phone/IP extraction, validation and completeness checks.
-  - Test absent categories, repeats, order, hyphenated emails, spaced phones, IP labels and invalid source matches.
-- [ ] **A3 — Proposed second AI call**
-  - Decide whether to retain the formatting call. If retained, validate and display its output alongside the procedural assessment.
-- [ ] **A4 — Robust failures**
-  - Reject non-object JSON, missing fields, wrong types, invalid values and malformed API envelopes.
-  - Log failures, return agreed failure information and bound retries under an explicit policy. Never save a failed call as a completed assessment.
-- [ ] **A5 — Configuration**
-  - Read the chosen model after environment loading. Document key/model setup, timeout, retry limit and verified provider access.
-- [ ] **A6 — Verification**
-  - Add offline API mocks and schema/error tests.
-  - Record a successful live request using fictional input and a complete assessment through all managers.
+**Contribution evidence:** Guan Feng's initial Groq foundation; Arvin's published feat/ai-layer and [PR #25](https://github.com/lgf2111/phish-report/pull/25); retained extraction from the logic pair's [PR #20](https://github.com/lgf2111/phish-report/pull/20). Main still uses the earlier flow until PR #25 merges.
 
 ## Logic Layer
 
-### In charge: Bryan & Xavier
+### In charge: Bryan (bryxnox27) & Xavier (Tr1ckster10)
 
 **Purpose:** Combine validated AI findings and reported actions into an assessment, score, outcome and response checklist.
 
 **Boundary:** Keep API requests, terminal interaction and file access outside `logic_manager.py`.
 
-### Features and progress
+### Deliverables and progress
 
-| Feature | Status | Scope |
+| ID | Current status | Remaining action |
 | --- | --- | --- |
-| Evaluation | Implemented | `evaluate(record)` returns priority, score and checklist. |
-| Routing | Implemented | `route(record)` selects high, medium, review, insufficient information or no clear indicators. |
-| Scoring | Partial | `score(record)` maps the route to 90/70/50/30/10; scoring must be used for ranking or thresholds. |
-| Checklists | Implemented | Each outcome has actions; no-clear-indicators text does not claim guaranteed safety. |
-| Rule using two AI fields | Pending | Current rules combine one AI field with user action, not two AI-response fields. |
-| Exposure and uncertainty | Pending | Define credentials submitted without an AI credential finding, suspicious content with insufficient context, and personal-information/payment cases. |
-| Extracted-details handoff | Branch work | `hold_details(details)` preserves extracted data unchanged; branch removes the current assessment functions. |
+| L1 — Decision table | **In review:** explicit first-match response-priority rules, including suspicious AND credential_request. | Logic owners review the rule table and scenarios below. |
+| L2 — Required functions | **In review:** evaluate(record), score(record), route(record) return the agreed decision data. | Confirm the shared record/result interface. Main currently has evaluate(record, details). |
+| L3 — Numeric scoring | **In review:** 10/35/45/60/80/90 scores and 35/70 thresholds tested. | Validate operational priorities; do not describe scores as phishing probabilities. |
+| L4 — Exposure/uncertainty | **In review:** password/OTP disclosure, clicks/downloads, negative AI and uncertainty scenarios tested. | Review advice for supported actions; additional disclosure categories are deferred. |
+| L5 — Extraction compatibility | **In review:** validated extraction retained in the saved assessment; obsolete pass-through-only helper retired. | Confirm compatibility with the retained extraction rules. |
+| L6 — Offline tests | **In review:** fixed AI scenarios, thresholds, precedence, invalid-input and unchanged-input tests pass. | Retest substantive rule changes and the final submission version. |
 
-**Source:** [main logic manager](https://github.com/lgf2111/phish-report/blob/aa5db66/app/logic_manager.py) and [`feat/xh-logic-manager`](https://github.com/lgf2111/phish-report/tree/feat/xh-logic-manager). Retain useful extraction handoff work within a complete assessment flow; a pass-through alone does not complete this layer.
-
-### Deliverables
-
-- [ ] **L1 — Decision table**
-  - Specify inputs, AI fields, conditions, precedence, outcome and checklist for every rule.
-  - Include a rule combining at least two named AI-response fields.
-- [ ] **L2 — Required functions**
-  - Preserve and complete `evaluate`, `score` and `route`.
-  - Return a consistent decision dictionary with reasons, score, priority and checklist.
-- [ ] **L3 — Numeric scoring**
-  - Define score range, calculation and ranking/threshold use. Derive the score from AI findings; call it rule-based, not a probability.
-- [ ] **L4 — Exposure and uncertainty**
-  - Implement agreed outcomes for reported credential disclosure, clicks/downloads, insufficient context and conflicting findings.
-  - Define support for personal information and payments before adding those input choices.
-- [ ] **L5 — Proposed extraction compatibility**
-  - If retained, pass validated details through evaluation and storage without replacing phishing rules with `hold_details()`.
-- [ ] **L6 — Offline tests**
-  - Use hardcoded AI responses to test every route, exact score, boundary, precedence, two-AI-field combination, exposure/uncertainty case and checklist.
-  - Pass inside Docker without API access.
+**Contribution evidence:** Xavier/Bryan's [PR #20](https://github.com/lgf2111/phish-report/pull/20) introduced detail validation/handoff, additive scoring, priorities and guidance. [PR #25](https://github.com/lgf2111/phish-report/pull/25) changes those rules and interfaces for the combined assessment; their original contribution remains in history.
 
 ## Data Layer
 
-### In charge: Bryan & Xavier
+### In charge: Bryan (bryxnox27) & Xavier (Tr1ckster10)
 
 **Purpose:** Save and retrieve evaluated JSON reports across runs; support history, filters and any agreed status updates.
 
 **Boundary:** Keep assessment rules and terminal display outside `data_manager.py`.
 
-### Features and progress
+### Deliverables and progress
 
-| Feature | Status | Scope |
+| ID | Current status | Remaining action |
 | --- | --- | --- |
-| Save | Implemented | `save(record)` appends an evaluated record to `reports.json`. |
-| Load | Partial | `load()` reads records and returns `[]` for missing/malformed files; startup integration and loaded-schema validation remain. |
-| Query | Implemented | `query(filter_fn)` returns matching records; not connected to a menu filter. |
-| Stored assessment | Implemented | Saves user input/actions, validated AI findings and final result. |
-| Priority filtering | Planned in FEATURES.md | Connect `query()` to report-history controls. |
-| Report status | Planned in FEATURES.md | Support handled/ignored updates after agreeing allowed values and transitions. |
-| File failures | Partial | Read errors are caught; warning currently uses `print()` here. Safe writes, corrupt-file preservation and save-error handling remain. |
-| Container storage | Pending | Current Docker helper has no persistent mount for reports. |
+| D1 — Record contract | **In review:** complete versioned input/AI/result replaces the earlier eight-field report; existing PostgreSQL columns retained. | Review JSONB payload and legacy compatibility. Stable IDs/status fields are deferred. |
+| D2 — Persistence/startup | **Implemented baseline; extension in review:** JSON save/load and PostgreSQL upload/fetch/startup exist on main; PR #25 combines local/database history and logs read failures. | Verify full/legacy round-trips in an isolated real database. |
+| D3 — Query/updates | **Implemented helper; controls deferred:** query(filter_fn) exists, but no menu filter/status update. | Coordinate scope with I4 before adding controls. |
+| D4 — Safe file handling | **In review:** validation, atomic writes, corrupt-file preservation and I/O-only notices tested. | Review error contracts and final submission behaviour. |
+| D5 — Compatibility/repeatability | **Partial:** JSON/legacy and mocked DB round-trips pass; saved output survives restart. | Obtain instructor interpretation and test required fresh-assessment repeatability; reload is not equivalent. |
+| D6 — Docker/tests | **Partial:** isolated persistent-mount restart passed; offline data tests pass. | Finalise persistent run instructions and verify on all six machines. |
 
-**Sources:** [data manager](https://github.com/lgf2111/phish-report/blob/aa5db66/app/data_manager.py), [FEATURES.md](https://github.com/lgf2111/phish-report/blob/aa5db66/FEATURES.md). No separate data-layer feature branch was found in the reviewed repository.
-
-### Deliverables
-
-- [ ] **D1 — Record contract**
-  - Define identity, input/actions, validated AI findings, retained extracted details, decision and any adopted report status in the saved schema.
-  - Keep processing state, priority and user status distinct.
-- [ ] **D2 — Persistence and startup**
-  - Save only evaluated reports and load records on startup.
-  - Return `[]` for missing/corrupt files; report errors through the agreed logging/I/O path.
-- [ ] **D3 — Queries and updates**
-  - Connect priority filters to `query(filter_fn)`.
-  - If adopted, update status by report identity without changing the original assessment.
-- [ ] **D4 — Safe file handling**
-  - Validate loaded structure and preserve corrupt files before replacement.
-  - Handle permission/write failures, prevent partial writes from destroying reports and remove terminal output from this module.
-- [ ] **D5 — Compatibility and repeatability**
-  - Define handling for existing main-branch reports and retained extraction-prototype records.
-  - Record the instructor's interpretation of same input/output, including API-call behaviour.
-  - Freeze fictional inputs, configuration and fields to compare. Run them in at least two sessions and compare required outputs exactly.
-  - Record commands, submission commit and results. Test saved-record reload separately; reload alone does not prove fresh-assessment repeatability.
-- [ ] **D6 — Docker and tests**
-  - Configure persistent report storage.
-  - Test round trips, append, queries, updates, missing/corrupt/wrong-shape files, write failures and retrieval after container restart.
+**Contribution evidence:** Xavier/Bryan's [PR #20](https://github.com/lgf2111/phish-report/pull/20) provides JSON/PostgreSQL storage, bound inserts, fetch and startup/fallback handling. PR #25 extends reliability and record completeness without a new SQL schema migration. Code/mocked tests do not establish live database compatibility.
 
 ## Project structure and architecture
 
-**Proposed target:** Keep the existing application layout and useful configuration, tests and contribution history. Create new files only when they contain required content.
+Keep the existing `app/` layout and four manager files, coordinated by `main.py`. Tests remain under `tests/`; existing Docker, lint, CI and release files remain in place. No layout migration or new design-document directory is required by this roadmap.
 
-```text
-phish-report/
-|-- README.md
-|-- ROADMAP.md
-|-- LICENSE
-|-- .env.example
-|-- .gitignore
-|-- .dockerignore               # Add
-|-- Dockerfile
-|-- docker.sh
-|-- requirements.txt
-|-- ruff.toml
-|-- conftest.py
-|-- app/
-|   |-- main.py
-|   |-- io_manager.py
-|   |-- ai_manager.py
-|   |-- logic_manager.py
-|   `-- data_manager.py
-|-- tests/                      # Preserve existing tests; extend by layer
-|-- docs/
-|   |-- design.md               # Schemas, interfaces, rules and failure contracts
-|   `-- report/                 # Engineering report and diagrams
-|-- .local/                     # Ignored: draft roadmap and local course PDFs
-`-- .github/
-    `-- workflows/
-        |-- ci.yml
-        `-- release.yml
-```
+Use functions/dictionaries without authored class definitions. Add helpers to their responsible manager; introduce a new module only for a distinct responsibility. Update shared interfaces, callers and tests together. Keep README run/configuration instructions current and retain FEATURES.md contribution history.
 
-Retain `FEATURES.md` as contribution history or move its records to a documented location during migration. Keep the existing licence. Exclude secrets, `.env`, environments, caches, logs and user reports from Git and Docker build context.
+The proposed integration contract is documented below; record proposed changes and review decisions in the relevant issue/PR. Exclude credentials, private references, logs and user reports from Git and Docker build context.
 
-```text
-Input Layer -> AI Processing Layer -> Logic Layer -> Data Layer
-                    main.py coordinates; Input Layer displays results
-```
+### Responsibility boundaries
 
-| Boundary | Required contract |
-| --- | --- |
-| Input -> AI | Validated dictionary with explicit field names, types and allowed values. |
-| AI -> Logic | Schema-validated findings and agreed extracted details, or a defined failure result. |
-| Logic -> Data | Evaluated record with decision, score, route and checklist. |
-| Managers -> I/O | Structured results/errors; only I/O prompts or prints. |
+I/O means **user interaction** in this architecture. API communication belongs to AI and persistence belongs to data. Detecting an error, deciding whether processing continues and displaying the error are separate responsibilities.
 
-Use functions and dictionaries; no team-authored class definitions in source or tests. Document signatures, return values and failure behaviour in `docs/design.md`. Keep `main.py` limited to coordination.
+| Concern | Owner | Boundary |
+| --- | --- | --- |
+| Menu choices, required user fields, future file existence/readability/MIME parsing | `io_manager.py` | Re-prompt on invalid user input; return a typed dictionary. All application `print()` and `input()` calls live here. |
+| Prompt input contract | `ai_manager.py`, after I/O validation | Enforce valid input even when another caller or test invokes AI directly. AI does not open email paths. |
+| Provider envelope, completion/refusal checks, JSON parsing and response schema | `ai_manager.py` | Validate provider-specific structures before consuming them; I/O need not understand Groq fields. |
+| API errors/timeouts, key/model checks and safe diagnostics | `ai_manager.py` | Consume configuration, emit sanitised logs and signal failure. Do not print, prompt, score or save. |
+| Environment loading and log destination/format | `main.py` at startup | Load settings before processing; attach and clean up AI/data log handlers. |
+| Continue/stop processing and call the next manager | `main.py` | AI failure stops scoring and saving; delegate user messages to I/O. |
+| Score, priority, reasons and response advice | `logic_manager.py` | Apply domain rules to validated AI findings and reported actions. No API, terminal or file operations. |
+| JSON/PostgreSQL access, record structure and history | `data_manager.py` | Preserve evaluated records, validate storage structure and report storage errors. No domain scoring or terminal output. |
+| Display results/failures and return to the menu | I/O, coordinated by `main.py` | Show helpful messages without provider bodies, secrets or raw exception details. |
 
-Add helpers to the responsible manager unless a distinct responsibility needs its own module. Keep the four required manager files and public functions. Update callers, imports, tests, commands and design notes together; avoid circular imports.
+For malformed model JSON: **AI detects, logs and signals failure → main stops this record → I/O shows the failure → menu remains available**. Moving JSON parsing into I/O would contradict the framework's required AI interfaces.
+
+The Phase 1 rule prohibits authored class definitions in application code and tests. Using library objects such as `urllib.request.Request`, logging handlers or mocks does not define a class in this project. Phase 2 class/subclass targets are future work.
+
+### Integration contract under review
+
+These contracts are implemented in PR #25 and await independent interface review. Additional `.eml` fields must be agreed with producers and consumers before use.
+
+- **Input record:** `channel`, `sender`, `message`, `has_link`, `link`, `has_file`, `file_name`, `clicked`, `downloaded`, `submitted_category`. Flags are booleans; optional text is a string or `None`; submitted category is `password`, `otp` or `None`; message is nonblank text.
+- **AI prompt:** `build_prompt(record)` includes message and optional sender/link/file_name as untrusted JSON-encoded data. User actions remain with logic. The other mandatory interfaces are `call_api(prompt)`, `parse_response(raw)` and `validate_response(data)`.
+- **AI output:** exactly `credential_request`, `suspicious`, `insufficient_context` (actual booleans), and `details` containing exactly `emails`, `phone_numbers`, `ip_addresses` (string lists). Source validation checks exact ordered occurrences in message text before logic/storage. It does not prove extraction completeness or model truth.
+- **Retained extraction:** existing email subset, eight-digit phones including grouped digits, and IPv4/IPv6; preserve exact text, order and repeats. No second formatting API call.
+- **Logic:** `evaluate(record)` consumes the input enriched with `ai`, returning `score`, `priority`, `reasons`, `checklist`. `score(record)` and `route(record)` are public functions. Inputs are not mutated.
+- **Storage:** original input fields plus `schema_version: 1`, `ai` and `result`. PostgreSQL retains its columns and stores the complete versioned record inside `details` JSONB. Legacy records keep their recorded fields; missing information is not fabricated.
+- **Read failures:** ordinary `load()` logs and returns `[]`; internal strict reads distinguish failure from empty history and prevent overwrite. A missing file is empty history. Only I/O displays notices.
+- **History:** combine both sources by full-record equality once per occurrence, retaining the greater count. This is display reconciliation, not synchronisation or proof of identity. Repeated uploads can still create database duplicates.
+- **Configuration:** startup loads environment settings. AI reads `GROQ_API_KEY` and `GROQ_MODEL` at request time; default model `openai/gpt-oss-20b`; blank model rejected. One attempt, no automatic retry, fixed 30-second socket timeout (not a total wall-clock deadline). No secrets or raw message/provider content in diagnostics.
+
+Rules use the **first matching row**:
+
+| Condition | Score | Priority |
+| --- | ---: | --- |
+| User reports password or OTP disclosure | 90 | HIGH |
+| AI suspicious AND user clicked/downloaded | 80 | HIGH |
+| AI suspicious AND AI credential_request | 60 | MEDIUM |
+| AI suspicious | 45 | MEDIUM |
+| AI insufficient_context | 35 | MEDIUM |
+| Otherwise | 10 | LOW |
+
+Routing thresholds are HIGH at 70 or above, MEDIUM at 35 or above, otherwise LOW. AI must still succeed before evaluating disclosure. Credential request alone does not establish phishing. Review these as response-priority rules, not probabilities.
+
 
 ## Team standards and task instructions
 
@@ -384,7 +282,7 @@ Add helpers to the responsible manager unless a distinct responsibility needs it
 
 GitHub Actions runs these checks on pushes and pull requests:
 
-1. **No classes.** Phase 1 requires functions only. CI currently searches `app/`; the foundation task extends this to all team-authored Python. A found class definition fails the check.
+1. **No classes.** Phase 1 requires functions only. CI searches all tracked Python files, including tests and root helpers. A found class definition fails the check.
 2. **Lint (Ruff).** Flags unused code, import-order problems and other configured issues. Run it locally if installed:
 
    ```bash
@@ -402,7 +300,7 @@ Create one GitHub issue per focused task using the relevant roadmap ID.
 
 | Field | Required content |
 | --- | --- |
-| Title | Layer and concrete action, e.g. `I1: Connect channel and sender input`. |
+| Title | Layer and concrete action, e.g. `I1: Add validated email-file input`. |
 | Owner / reviewer | One implementer and one reviewer; paired implementers use a third reviewer. |
 | Scope | Functions/files to change and the required behaviour. |
 | Contract | Input fields/types, output fields/types and error behaviour, or a link to the agreed design section. |
@@ -413,13 +311,13 @@ Create one GitHub issue per focused task using the relevant roadmap ID.
 
 Write instructions as **action + expected result**. Use **must** for requirements and **proposed** for unresolved choices. Put explanations and discussion in issue comments; keep the roadmap to scope, status, decisions and acceptance criteria.
 
-Task states: **Backlog -> Ready -> In progress -> In review -> Done**. Move to Ready when scope, contracts and dependencies are settled. Record blockers on the issue. Update the issue and layer checklist when work merges.
+Task states: **Backlog -> Ready -> In progress -> In review -> Done**. Move to Ready when scope, contracts and dependencies are settled. Record blockers on the issue. Update the issue and layer progress table when work merges.
 
 ### How we work together (Git)
 
 #### Branches and commits
 
-Start each task from current `main`. Use short-lived task branches; do not push directly to `main` or use permanent personal branches.
+Normally start each task from current `main`. PR #25 deliberately began from the original AI branch and merged main to preserve both contribution histories. Use short-lived task branches; do not push directly to `main` or use permanent personal branches.
 
 | Item | Format | Example |
 | --- | --- | --- |
@@ -428,7 +326,7 @@ Start each task from current `main`. Use short-lived task branches; do not push 
 
 Types: `feat`, `fix`, `test`, `docs`, `refactor`, `ci`, `chore`. Scopes: `io`, `ai`, `logic`, `data`, `app`, `repo`, `build`. Use lowercase branch names, hyphens and real issue numbers.
 
-Commit coherent changes early and often with accurate authorship. Push and sync task branches regularly, including before handoffs and review. Preserve existing contributor history. Separate unrelated work and behaviour changes from structural moves.
+Complete one meaningful tested block, commit it, then continue. For observed defects, write and demonstrate a failing regression before the fix; do not fabricate failures for documentation or cleanup. Commit coherent changes early and often with accurate authorship. Push and sync task branches regularly, including before handoffs and review. Preserve existing contributor history. Separate unrelated work and behaviour changes from structural moves.
 
 #### Pull requests and merging
 
@@ -443,42 +341,37 @@ Commit coherent changes early and often with accurate authorship. Push and sync 
 
 ### Shared changes and completion
 
-**Proposed DevOps coordinator: Guan Feng.** Coordinate CI/Docker changes, maintain the all-laptop verification record and flag failed checks. Each member runs the submission version on their own laptop. Confirm this assignment during draft adoption.
+Guan Feng's existing DevOps contribution is retained. Agree responsibility for the final CI/Docker verification record; each member runs the submission version on their own machine.
 
 Agree contract changes with affected layer owners before implementation. Update producers, consumers, tests and design documentation together. Assign an owner/reviewer explicitly for shared `main.py`, Docker, CI and documentation tasks.
 
 **Done:** Acceptance criteria met; checks passed; independent review complete; merged into `main`; affected documentation and progress updated.
 
-### Standards rollout
+### Remaining workflow checks
 
-- [ ] Team adopts the draft task, naming, review and merge standards.
-- [ ] Assign individual owners/reviewers for ready tasks in each layer; confirm the proposed DevOps coordinator and verification record.
-- [ ] Configure required checks and review protection on `main`.
-- [ ] Extend CI's no-class check to all team-authored Python and add the I/O-boundary check.
-- [ ] Verify CI paths and commands against `app/`; preserve lint, offline tests, Docker tests and release automation.
-- [ ] Publish configuration/run/test instructions and standards links in README.
-- [ ] Review this roadmap with the team and maintain its progress and decisions as tasks merge.
+- Confirm team adoption of the proposed naming/review/merge conventions and individual task assignments.
+- Confirm required-check/review protection settings; this roadmap does not change repository settings.
+- Existing CI paths, lint, no-class, offline and Docker checks work for PR #25. An automated I/O-boundary CI check is a separate improvement; local verification has passed.
+- Verify final run instructions, persistent storage and all-machine evidence before submission.
 
 ## Outstanding decisions
 
-| Decision | Responsible | Required before |
+| Decision / verification | Responsible | Needed for |
 | --- | --- | --- |
-| Instructor topic sign-off and one-paragraph problem statement | Team coordinator to be assigned | G1 completion |
-| Correct repository URL in the proposal and Project Initial Details | Team coordinator to be assigned | G5 completion |
-| Input, AI, decision and saved-record schemas; error contracts | All layer owners | Cross-layer integration |
-| Email-file format, limits, parsed fields and relationship to earlier SMS/chat scope | Input owners with AI owners; team for channel scope | Email-file import and new AI input contract |
-| Retained extraction fields and second AI formatting call | Arvin & Guan Feng, Bryan & Xavier | Extraction integration |
-| Two-AI-field rule, score use, precedence and exposure outcomes | Bryan & Xavier | Final logic implementation |
-| Personal-information/payment categories and supported user actions | Jeremy & Bryan, Bryan & Xavier | Input/logic extension |
-| Report status values and transitions | Bryan & Xavier, Jeremy & Bryan | Status-update implementation |
-| Timeout/retry policy and live API/model verification | Arvin & Guan Feng | API completion |
-| Repeatability and whether viewing/filtering/status updates require API calls | Instructor clarification; team coordinator to be assigned | Dependent record operations |
-| Week 7/8 calendar deadlines and final submission evidence | Team coordinator to be assigned | Submission readiness |
-| Draft adoption, refactor coordination and proposed DevOps coordinator (Guan Feng) | Team | Week 5 rollout |
+| Review PR #25 contracts, retained extraction, rule table and error handoffs | AI/logic/data reviewers; I/O review where affected | Integration merge |
+| Real PostgreSQL full/legacy save/fetch verification | Data owners; agree an individual tester and isolated database | Live compatibility evidence |
+| .eml parsing, limits, decoded fields and relationship to manual SMS/chat | Input owners with AI/logic owners | File-input implementation |
+| Same-input/same-output interpretation and API requirement for existing-record operations | Instructor clarification; agree who obtains it | Coursework compliance |
+| Evidence of topic sign-off, repository/access details and submission dates | Team; assign coordinator | G1/G5 and delivery |
+| Final report, all-machine Docker record and demo responsibilities | All members with individual assignments | G4/G6/G8 |
+
+No implementation is scheduled for deferred features until its scope is agreed. An in-review implementation is not automatically accepted by its layer owners or the instructor.
 
 ## References
 
-- [Input PR #14](https://github.com/lgf2111/phish-report/pull/14) and [extraction branch snapshot](https://github.com/lgf2111/phish-report/tree/613d4fb): unmerged teammate work.
+- Merged team work: [input PR #19](https://github.com/lgf2111/phish-report/pull/19), [logic/data PR #20](https://github.com/lgf2111/phish-report/pull/20), [display PR #22](https://github.com/lgf2111/phish-report/pull/22), [input refactor PR #23](https://github.com/lgf2111/phish-report/pull/23).
+- In-review integration: [issue #24](https://github.com/lgf2111/phish-report/issues/24), [PR #25](https://github.com/lgf2111/phish-report/pull/25).
+- FEATURES.md retains original foundation/DevOps contribution records; do not use its historical test counts as current integration evidence.
 - Team Project Framework - Phase 1: mandatory functions, constraints and deliverables.
 - Team Project Specification: collaboration, Docker verification and remaining Week 7/8 checkpoints.
 - Project Initial Details: repository access and submission requirements.
