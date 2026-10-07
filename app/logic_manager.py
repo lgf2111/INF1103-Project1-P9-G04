@@ -1,42 +1,6 @@
 # logic_manager.py
 # Computes response priorities and guidance from validated AI findings and reported actions.
 
-def hold_details(details):
-    """
-    Validate extracted contact details and return them unchanged.
-
-    This must remain compatible with ai_manager.response_prompt(details),
-    which expects exactly:
-    {
-        "emails": [...],
-        "phone_numbers": [...],
-        "ip_addresses": [...]
-    }
-    """
-    required_keys = {
-        "emails",
-        "phone_numbers",
-        "ip_addresses",
-    }
-
-    if not isinstance(details, dict):
-        raise ValueError("Details must be a dictionary.")
-
-    if set(details) != required_keys:
-        raise ValueError(
-            "Details must contain exactly: "
-            + ", ".join(sorted(required_keys))
-        )
-
-    for key in required_keys:
-        if not isinstance(details[key], list):
-            raise ValueError(f"{key} must be a list.")
-
-        for value in details[key]:
-            if not isinstance(value, str):
-                raise ValueError(f"Each value in {key} must be a string.")
-
-    return details
 
 def score(record):
     """Return a response-priority score using the first matching rule.
