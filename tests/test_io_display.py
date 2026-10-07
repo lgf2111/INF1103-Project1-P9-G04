@@ -102,14 +102,14 @@ def test_view_saved_reports_displays_full_details(monkeypatch, capsys):
         "message": message,
         "result": {"priority": "HIGH", "score": 50}
     }
-    
-    monkeypatch.setattr(main.data_manager, "fetch", 
+
+    monkeypatch.setattr(main.data_manager, "fetch",
                        lambda: (_ for _ in ()).throw(RuntimeError("PostgreSQL unavailable")))
     monkeypatch.setattr(main.data_manager, "load", lambda: [record])
-    
+
     main.view_reports()
     output = capsys.readouterr().out
-    
+
     assert "=== Saved reports ===" in output
     assert "1. Email" in output
     assert message in output
@@ -139,7 +139,7 @@ def test_check_new_message_displays_full_record(monkeypatch, capsys):
         "response": "Email: , Phone Number: , IP Address: "
     }
     saved = []
-    
+
     api_calls = []
     def mock_call_api(prompt):
         """Return details on first call, reply on second call."""
@@ -147,19 +147,19 @@ def test_check_new_message_displays_full_record(monkeypatch, capsys):
         if len(api_calls) == 1:
             return json.dumps(details)
         return json.dumps(reply)
-    
+
     monkeypatch.setattr(main.io_manager, "collect_input", lambda: record)
     monkeypatch.setattr(main.ai_manager, "call_api", mock_call_api)
     monkeypatch.setattr(main.data_manager, "save", saved.append)
-    
+
     main.check_message()
     output = capsys.readouterr().out
-    
+
     # The new implementation displays the assessment result
     assert "Priority:" in output
     assert "Rule-based score:" in output  # Changed from "Score:"
     assert "Recommended actions:" in output
-    
+
     # Verify the saved data structure
     assert len(saved) == 1
     assert saved[0]["channel"] == "sms"
