@@ -49,7 +49,7 @@ def check_message():
         io_manager.show_message("Sorry, the check failed: " + str(error))
         return
 
-    # Store only the agreed input fields and extracted contact details.
+    # Store the input, extracted contact details, and computed assessment.
     report = {
         "channel": record["channel"],
         "sender": record["sender"],
@@ -57,6 +57,8 @@ def check_message():
         "link": record["link"],
         "file_name": record["file_name"],
         "details": details,
+        "score": result["score"],
+        "priority": result["priority"],
     }
     try:
         data_manager.save(report)
