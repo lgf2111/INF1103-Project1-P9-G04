@@ -6,7 +6,6 @@ import os
 
 import psycopg
 from psycopg.rows import dict_row
-from psycopg.types.json import Jsonb
 
 FILE = "reports.json"
 
@@ -67,7 +66,7 @@ def upload(records: list[dict]) -> int:
                 cursor.executemany(
                     "INSERT INTO reports "
                     "(channel, sender, message, link, file_name, details) "
-                    "VALUES (%s, %s, %s, %s, %s, %s)",
+                    "VALUES (%s, %s, %s, %s, %s, %s::jsonb)",
                     [
                         (
                             record["channel"],
@@ -75,7 +74,7 @@ def upload(records: list[dict]) -> int:
                             record["message"],
                             record["link"],
                             record["file_name"],
-                            Jsonb(record["details"]),
+                            json.dumps(record["details"]),
                         )
                         for record in records
                     ],

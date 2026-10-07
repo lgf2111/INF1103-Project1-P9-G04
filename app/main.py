@@ -71,19 +71,31 @@ def check_message():
     # io_manager.display_result expects the logic result dictionary.
     io_manager.display_result(result)
 
-def view_reports():
-    """Fetch PostgreSQL reports and send them to the I/O Manager for display."""
+def load_reports() -> list[dict]:
+    """Load PostgreSQL history, checking local JSON on failure or empty results."""
     try:
         records = data_manager.fetch()
     except RuntimeError as error:
-        # Report database failures through I/O without switching to local history.
-        io_manager.show_message("Sorry, could not view saved reports: " + str(error))
-        return
-    io_manager.display_list(records)
+        # Explain the unavailable source before reading the local copy.
+        io_manager.show_message("PostgreSQL unavailable; checking reports.json: " + str(error))
+        records = []
+
+    # Prefer database history; consult the local copy if it returned no records.
+    if records:
+        return records
+    return data_manager.load()
+
+
+def view_reports():
+    """Load database or local history and send it to I/O for display."""
+    io_manager.display_list(load_reports())
 
 def main():
     """Load settings and run the application's menu until the user quits."""
     load_env()
+    # Load history before accepting menu input and explain an empty result.
+    if not load_reports():
+        io_manager.show_message("No saved reports found.")
     while True:
         choice = io_manager.main_menu()
         if choice == "1":

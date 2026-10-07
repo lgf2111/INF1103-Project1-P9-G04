@@ -2,8 +2,8 @@
 # Talks to the Groq API (free tier). No business rules here. OWNER: Pair A.
 #
 # Every message goes through here - this is the core of the app.
-# Uses only the Python standard library (urllib) so there is nothing extra to
-# install. The API key is read from the GROQ_API_KEY environment variable so it
+# Uses the Requests function API for HTTP. The API key is read from the
+# GROQ_API_KEY environment variable so it
 # is never written into the code.
 #
 # Get a free key at https://console.groq.com (no credit card needed).
@@ -12,8 +12,8 @@ import ipaddress
 import json
 import os
 import re
-import urllib.error
-import urllib.request
+
+import requests
 
 # Groq's API is OpenAI-style. Change the model with the GROQ_MODEL env var.
 # (Run the /models endpoint or check the Groq console to see what your key can use.)
@@ -229,29 +229,27 @@ def call_api(prompt):
     if not api_key:
         raise RuntimeError("Set the GROQ_API_KEY environment variable first.")
 
-    body = json.dumps(
-        {
-            "model": MODEL,
-            "messages": [{"role": "user", "content": prompt}],
-            "response_format": {"type": "json_object"},
-        }
-    ).encode()
+    body = {
+        "model": MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {"type": "json_object"},
+    }
 
-    request = urllib.request.Request(
-        URL,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + api_key,
-            # A User-Agent is needed or the request gets blocked before it
-            # reaches the API.
-            "User-Agent": "phishreport/1.0",
-        },
-    )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            data = json.loads(response.read())
-    except (urllib.error.URLError, TimeoutError) as error:
+        # Use a function API and close the returned response after reading it.
+        with requests.post(
+            URL,
+            json=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": "Bearer " + api_key,
+                "User-Agent": "phishreport/1.0",
+            },
+            timeout=30,
+        ) as response:
+            response.raise_for_status()
+            data = response.json()
+    except requests.exceptions.RequestException as error:
         # log and stop - do not pretend we got an answer
         raise RuntimeError("Could not reach the AI: " + str(error)) from error
 
