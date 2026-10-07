@@ -236,6 +236,24 @@ def load():
     return records
 
 
+def combine_reports(database_records, local_records):
+    """Show both sources, matching identical copies once per occurrence.
+
+    Without stable report IDs, equality is only a display reconciliation rule.
+    Keep the greater occurrence count of each complete dictionary, preserve
+    database order, then append unmatched local records in local order. Do not
+    merge differently shaped legacy records, modify sources or upload anything.
+    """
+    combined = list(database_records)
+    unmatched = list(database_records)
+    for record in local_records:
+        if record in unmatched:
+            unmatched.remove(record)
+        else:
+            combined.append(record)
+    return combined
+
+
 def query(filter_fn):
     # return only the records that match the given check
     return [record for record in load() if filter_fn(record)]

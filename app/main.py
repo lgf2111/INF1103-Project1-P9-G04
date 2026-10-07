@@ -58,7 +58,7 @@ def check_message():
     io_manager.display_result(result)
 
 def load_reports() -> list[dict] | None:
-    """Load history; return None on local read failure, distinct from empty history."""
+    """Read both histories; return None when local history is unavailable and DB empty."""
     try:
         records = data_manager.fetch()
     except (RuntimeError, ValueError) as error:
@@ -66,14 +66,13 @@ def load_reports() -> list[dict] | None:
         io_manager.show_message("PostgreSQL unavailable; checking reports.json: " + str(error))
         records = []
 
-    # Prefer database history; consult the local copy if it returned no records.
-    if records:
-        return records
+    # A failed upload can leave newer reports only in the local copy.
     try:
-        return data_manager.load()
+        local_records = data_manager.load()
     except (OSError, ValueError):
         io_manager.show_message("Could not load local report history; existing file preserved.")
-        return None
+        return records if records else None
+    return data_manager.combine_reports(records, local_records)
 
 def view_reports():
     """Load database or local history and send it to I/O for display."""

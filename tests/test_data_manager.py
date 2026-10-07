@@ -168,8 +168,7 @@ def test_startup(storage, monkeypatch, database_records, local_records, failed):
 
     # Quitting immediately distinguishes startup loading from history viewing.
     main.main()
-    assert events == (["database", "menu"] if database_records else
-                      ["database", "local", "menu"])
+    assert events == ["database", "local", "menu"]
     assert ("No saved reports found." in messages) == (not database_records and not local_records)
     assert any("PostgreSQL unavailable" in message for message in messages) == failed
 
@@ -380,3 +379,64 @@ def test_saved_complete_report_displays_actions_and_result(storage, capsys):
     assert "Rule-based score: 90" in output
     assert "Password disclosed." in output
     assert "Change the affected password." in output
+
+
+@pytest.mark.parametrize("database,local,expected", [
+    ([{"message": "Shared"}], [{"message": "Shared"}, {"message": "Local only"}],
+     [{"message": "Shared"}, {"message": "Local only"}]),
+    ([{"message": "Shared"}], [{"message": "Shared"}, {"message": "Shared"}],
+     [{"message": "Shared"}, {"message": "Shared"}]),
+    ([{"message": "Shared"}, {"message": "Shared"}], [{"message": "Shared"}],
+     [{"message": "Shared"}, {"message": "Shared"}]),
+    ([], [{"message": "Local only"}], [{"message": "Local only"}]),
+    ([{"message": "Database only"}], [], [{"message": "Database only"}]),
+    ([{"message": "Old", "score": 10}], [{"message": "Old", "result": {"score": 10}}],
+     [{"message": "Old", "score": 10}, {"message": "Old", "result": {"score": 10}}]),
+])
+def test_history_combines_sources_without_losing_repeated_assessments(database, local, expected):
+    before = deepcopy((database, local))
+    assert data_manager.combine_reports(database, local) == expected
+    assert (database, local) == before
+
+
+def test_saved_local_report_remains_visible_with_nonempty_database(storage, monkeypatch):
+    shared = _complete_report()
+    local_only = deepcopy(shared)
+    local_only["message"] = "A separate fictional message"
+    storage.write_text(json.dumps([shared, local_only]))
+    monkeypatch.setattr(data_manager, "fetch", Mock(return_value=[shared]))
+    upload = Mock()
+    monkeypatch.setattr(data_manager, "upload", upload)
+    api = Mock()
+    monkeypatch.setattr(main.ai_manager, "call_api", api)
+    before = storage.read_bytes()
+    assert main.load_reports() == [shared, local_only]
+    display = Mock()
+    monkeypatch.setattr(main.io_manager, "display_list", display)
+    main.view_reports()
+    display.assert_called_once_with([shared, local_only])
+    assert storage.read_bytes() == before
+    api.assert_not_called()
+    upload.assert_not_called()
+
+
+def test_database_history_remains_available_when_local_history_is_corrupt(
+    storage, monkeypatch, capsys
+):
+    storage.write_text('{broken')
+    records = [_complete_report()]
+    monkeypatch.setattr(data_manager, "fetch", Mock(return_value=records))
+    assert main.load_reports() == records
+    assert "Could not load local report history" in capsys.readouterr().out
+    assert storage.read_text() == '{broken'
+
+
+@pytest.mark.parametrize("database_available", [False, True])
+def test_unreadable_local_history_is_reported_even_with_database(
+    storage, monkeypatch, capsys, database_available
+):
+    records = [_complete_report()] if database_available else []
+    monkeypatch.setattr(data_manager, "fetch", Mock(return_value=records))
+    monkeypatch.setattr(data_manager, "load", Mock(side_effect=PermissionError("Read denied")))
+    assert main.load_reports() == (records if database_available else None)
+    assert "Could not load local report history" in capsys.readouterr().out
