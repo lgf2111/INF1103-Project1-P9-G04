@@ -1,5 +1,5 @@
 # io_manager.py
-# All input() and print() live here. OWNER: Lee Guan Feng.
+# All input() and print() live here. OWNER: Jeremy Goh & Bryan Lee.
 
 
 def main_menu():
@@ -8,13 +8,19 @@ def main_menu():
     print("2. View saved reports")
     print("3. Quit")
 
-    choice = input("Choose 1-3: ").strip()
+    return get_valid_choice(
+        "Choose 1-3: ",
+        ("1", "2", "3"),
+        "Invalid choice. Please choose 1-3: ",
+    )
 
-    while choice not in ("1", "2", "3"):
-        choice = input("Invalid choice. Please choose 1-3: ").strip()
+def get_valid_choice(prompt, valid_choices, error_message):
+    choice = input(prompt).strip().lower()
+
+    while choice not in valid_choices:
+        choice = input(error_message).strip().lower()
 
     return choice
-
 
 def collect_input():
     channel = get_channel()
@@ -48,14 +54,11 @@ def ask_yes_no(question):
     return answer in ("y", "yes")
 
 def get_channel():
-    channel = input("Enter channel (Email/SMS/Chat): ").strip().lower()
-
-    while channel not in ("email", "sms", "chat"):
-        channel = input(
-            "Invalid channel. Please enter Email, SMS, or Chat: "
-        ).strip().lower()
-
-    return channel
+    return get_valid_choice(
+        "Enter channel (Email/SMS/Chat): ",
+        ("email", "sms", "chat"),
+        "Invalid channel. Please enter Email, SMS, or Chat: ",
+    )
 
 def get_sender():
     sender = input(
@@ -108,14 +111,11 @@ def get_file_information():
     return True, file_name
 
 def get_submitted_category():
-    submitted = input(
-        "Did you give a password or code? (password/otp/no): "
-    ).strip().lower()
-
-    while submitted not in ("password", "otp", "no"):
-        submitted = input(
-            "Please type password, otp or no: "
-        ).strip().lower()
+    submitted = get_valid_choice(
+        "Did you give a password or code? (password/otp/no): ",
+        ("password", "otp", "no"),
+        "Please type password, otp or no: ",
+    )
 
     if submitted == "no":
         return None

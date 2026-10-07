@@ -254,3 +254,27 @@ def test_collect_input_returns_complete_record(monkeypatch):
     }
 
 
+def test_get_valid_choice_accepts_valid_input(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "  B  ")
+
+    result = io_manager.get_valid_choice(
+        "Choose: ",
+        ("a", "b"),
+        "Invalid: ",
+    )
+
+    assert result == "b"
+
+
+def test_get_valid_choice_reprompts_invalid_input(monkeypatch):
+    answers = iter(["wrong", "A"])
+
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    result = io_manager.get_valid_choice(
+        "Choose: ",
+        ("a", "b"),
+        "Invalid: ",
+    )
+
+    assert result == "a"
