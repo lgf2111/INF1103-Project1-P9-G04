@@ -257,3 +257,48 @@ def test_call_api_requires_key_before_http(monkeypatch):
     with pytest.raises(RuntimeError):
         ai_manager.call_api("Fictional phishing assessment")
     transport.assert_not_called()
+
+
+@pytest.mark.parametrize("configured, expected", [
+    (None, "openai/gpt-oss-20b"),
+    ("fictional/model-override", "fictional/model-override"),
+])
+def test_call_api_selects_model_after_import(provider_transport, monkeypatch, configured, expected):
+    # main loads .env after importing ai_manager; selection must happen at request time.
+    if configured is None:
+        monkeypatch.delenv("GROQ_MODEL", raising=False)
+    else:
+        monkeypatch.setenv("GROQ_MODEL", configured)
+    envelope = {"choices": [{"finish_reason": "stop", "message": {"content": "{}"}}]}
+    provider_transport.return_value.__enter__.return_value.read.return_value = (
+        json.dumps(envelope).encode()
+    )
+
+    ai_manager.call_api("Fictional phishing assessment")
+
+    provider_transport.assert_called_once()
+    assert json.loads(provider_transport.call_args.args[0].data)["model"] == expected
+
+
+def test_call_api_reads_current_model_for_each_request(provider_transport, monkeypatch):
+    envelope = {"choices": [{"finish_reason": "stop", "message": {"content": "{}"}}]}
+    provider_transport.return_value.__enter__.return_value.read.return_value = (
+        json.dumps(envelope).encode()
+    )
+    for model in ("fictional/model-one", "fictional/model-two"):
+        monkeypatch.setenv("GROQ_MODEL", model)
+        ai_manager.call_api("Fictional phishing assessment")
+
+    assert provider_transport.call_count == 2
+    assert [json.loads(call.args[0].data)["model"]
+            for call in provider_transport.call_args_list] == [
+        "fictional/model-one", "fictional/model-two",
+    ]
+
+
+@pytest.mark.parametrize("model", ["", "   "])
+def test_call_api_rejects_blank_model_before_http(provider_transport, monkeypatch, model):
+    monkeypatch.setenv("GROQ_MODEL", model)
+    with pytest.raises(RuntimeError, match="GROQ_MODEL"):
+        ai_manager.call_api("Fictional phishing assessment")
+    provider_transport.assert_not_called()

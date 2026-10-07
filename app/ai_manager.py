@@ -16,7 +16,7 @@ import urllib.request
 
 # Groq's API is OpenAI-style. Change the model with the GROQ_MODEL env var.
 # (Run the /models endpoint or check the Groq console to see what your key can use.)
-MODEL = os.environ.get("GROQ_MODEL", "openai/gpt-oss-20b")
+DEFAULT_MODEL = "openai/gpt-oss-20b"
 URL = "https://api.groq.com/openai/v1/chat/completions"
 
 # The keys we expect back from the AI.
@@ -43,13 +43,19 @@ def call_api(prompt: str) -> str:
     Raise RuntimeError for missing credentials, HTTP/connection/read failures,
     invalid provider JSON, malformed envelopes or incomplete/refused answers.
     Error messages exclude provider bodies and underlying exception details.
+    Read GROQ_MODEL at request time, after the caller has loaded its environment.
+    An unset model uses DEFAULT_MODEL; an explicitly blank setting is rejected.
     """
     api_key = os.environ.get("GROQ_API_KEY")
     if not api_key:
         raise RuntimeError("Set the GROQ_API_KEY environment variable first.")
 
+    model = os.environ.get("GROQ_MODEL", DEFAULT_MODEL)
+    if not model.strip():
+        raise RuntimeError("GROQ_MODEL must not be blank.")
+
     body = json.dumps({
-        "model": MODEL,
+        "model": model,
         "messages": [{"role": "user", "content": prompt}],
         "response_format": {"type": "json_object"},
     }).encode()
