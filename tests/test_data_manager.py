@@ -41,13 +41,10 @@ def test_save(storage, monkeypatch):
         "downloaded": False,
         "submitted_category": None,
     }
-    replies = iter([
-        json.dumps(details),
-        json.dumps({
-            "response": "Email: demo@example.test, Phone Number: 12345678, "
-            "IP Address: 192.0.2.10",
-        }),
-    ])
+    replies = iter([json.dumps({
+        "credential_request": False, "suspicious": False, "insufficient_context": False,
+        "details": details,
+    })])
     api_calls = []
     displayed = []
 
@@ -78,11 +75,11 @@ def test_save(storage, monkeypatch):
         "link": None,
         "file_name": None,
         "details": details,
-        "score": 20,
+        "score": 10,
         "priority": "LOW",
     }]
     assert len(displayed) == 1
-    assert len(api_calls) == 2
+    assert len(api_calls) == 1
 
 
 def test_upload_and_fetch_score_and_priority(monkeypatch):

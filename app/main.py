@@ -1,6 +1,6 @@
 # main.py
 # Ties the four managers together:
-# input -> AI extraction -> Logic Manager -> AI response -> save and display
+# input -> validated AI assessment -> logic -> save and display
 
 import logging
 import os
@@ -24,33 +24,25 @@ def load_env():
                 os.environ.setdefault(key.strip(), value.strip())
 
 def check_message():
-    """Run both AI requests and the Logic Manager handoff for one user message."""
+    """Validate one combined AI response before assessment, saving or display."""
     record = io_manager.collect_input()
 
     try:
-        # First AI request: extract details from the message.
-        prompt = ai_manager.extract_prompt(record)
+        prompt = ai_manager.build_prompt(record)
         raw = ai_manager.call_api(prompt)
         reply = ai_manager.parse_response(raw)
-        details = ai_manager.validate_details(reply, record["message"])
+        findings = ai_manager.validate_response(reply)
+        details = ai_manager.validate_details(findings["details"], record["message"])
 
-        # Logic Manager validates extracted details unchanged.
-        details = logic_manager.hold_details(details)
-
-        # Second AI request: format the validated details as a response string.
-        prompt = ai_manager.response_prompt(details)
-        raw = ai_manager.call_api(prompt)
-        reply = ai_manager.parse_response(raw)
-        ai_manager.validate_reply(reply, details)
-
-        # Only evaluate after every required AI response has passed validation.
-        result = logic_manager.evaluate(record, details)
+        # Enrich a new dictionary only after every AI check passes.
+        assessed_record = {**record, "ai": findings}
+        result = logic_manager.evaluate(assessed_record)
 
     except (RuntimeError, ValueError, KeyError, TypeError) as error:
         io_manager.show_message("Sorry, the check failed: " + str(error))
         return
 
-    # Store the input, extracted contact details, and computed assessment.
+    # Keep the current database contract until complete-record persistence is introduced.
     report = {
         "channel": record["channel"],
         "sender": record["sender"],

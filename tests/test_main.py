@@ -45,13 +45,13 @@ def _details():
     return {"emails": [], "phone_numbers": [], "ip_addresses": []}
 
 
-def _successful_replies(transport):
-    responses = [_details(), {"response": "Email: , Phone Number: , IP Address: "}]
-    transport.return_value.__enter__.return_value.read.side_effect = [
-        json.dumps({"choices": [{"finish_reason": "stop", "message": {
-            "content": json.dumps(data),
-        }}]}).encode() for data in responses
-    ]
+def _findings():
+    return {"credential_request": True, "suspicious": True, "insufficient_context": False,
+            "details": _details()}
+
+
+def _successful_reply(transport):
+    _completed_reply(transport, _findings())
 
 
 def _record():
@@ -68,7 +68,7 @@ def test_failed_assessment_never_reaches_logic_storage_or_success_display(
     app_boundary, monkeypatch, failure,
 ):
     record = _record()
-    _completed_reply(app_boundary, _details())
+    _completed_reply(app_boundary, _findings())
     if failure == "input":
         record["message"] = None
     elif failure == "timeout":
@@ -107,7 +107,7 @@ def test_failed_assessment_never_reaches_logic_storage_or_success_display(
 def test_successful_assessment_reaches_real_logic_and_storage(app_boundary, monkeypatch):
     record = _record()
     original = record.copy()
-    _successful_replies(app_boundary)
+    _successful_reply(app_boundary)
     monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=record))
 
     main.check_message()
@@ -116,22 +116,22 @@ def test_successful_assessment_reaches_real_logic_and_storage(app_boundary, monk
     assert saved == [{
         "channel": "email", "sender": None, "message": record["message"],
         "link": None, "file_name": None, "details": _details(),
-        "score": 45, "priority": "MEDIUM",
+        "score": 90, "priority": "HIGH",
     }]
     assert record == original
     result = main.io_manager.display_result.call_args.args[0]
-    assert result["score"] == 45 and result["priority"] == "MEDIUM"
+    assert result["score"] == 90 and result["priority"] == "HIGH"
     assert result["checklist"]
     main.io_manager.display_result.assert_called_once()
     main.io_manager.show_message.assert_not_called()
     data_manager.upload.assert_called_once_with(saved)
-    assert app_boundary.call_count == 2
+    assert app_boundary.call_count == 1
 
 
 def test_menu_continues_after_bad_record_then_saves_next_assessment(
     app_boundary, monkeypatch, tmp_path,
 ):
-    _successful_replies(app_boundary)
+    _successful_reply(app_boundary)
     monkeypatch.setattr(main.io_manager, "main_menu", Mock(side_effect=["1", "1", "3"]))
     monkeypatch.setattr(main.io_manager, "collect_input", Mock(side_effect=[
         {"message": None}, _record(),
@@ -142,9 +142,9 @@ def test_menu_continues_after_bad_record_then_saves_next_assessment(
     assert main.io_manager.main_menu.call_count == 3
     assert len(data_manager.load()) == 1
     main.io_manager.display_result.assert_called_once()
-    assert app_boundary.call_count == 2
+    assert app_boundary.call_count == 1
     log = (tmp_path / "phishreport.log").read_text(encoding="utf-8")
-    assert log.count("stage=extract_prompt") == 1
+    assert log.count("stage=build_prompt") == 1
     assert "PRIVATE_" not in log and "fictional-integration-key" not in log
     assert not any(isinstance(h, logging.FileHandler) for h in ai_manager.logger.handlers)
 
@@ -192,18 +192,21 @@ def test_failed_log_write_preserves_ai_error_without_traceback(app_boundary, mon
     assert capsys.readouterr().err == ""
 
 
-@pytest.mark.parametrize("failure", ["timeout", "schema"])
-def test_second_request_failure_never_evaluates_or_saves(app_boundary, monkeypatch, failure):
-    first = {"choices": [{"finish_reason": "stop", "message": {
-        "content": json.dumps(_details()),
-    }}]}
-    second = TimeoutError("PRIVATE_ERROR") if failure == "timeout" else json.dumps({
-        "choices": [{"finish_reason": "stop", "message": {"content": "{}"}}],
-    }).encode()
-    app_boundary.return_value.__enter__.return_value.read.side_effect = [
-        json.dumps(first).encode(), second,
-    ]
-    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=_record()))
+@pytest.mark.parametrize("failure", ["missing-findings", "detail-type", "invented-contact"])
+def test_combined_validation_failure_stops_before_logic_and_storage(
+    app_boundary, monkeypatch, failure,
+):
+    data = _findings()
+    if failure == "missing-findings":
+        data = _details()
+    elif failure == "detail-type":
+        data["details"]["emails"] = "PRIVATE_VALUE"
+    else:
+        data["details"]["emails"] = ["fictional@example.test"]
+    _completed_reply(app_boundary, data)
+    record = _record()
+    original = record.copy()
+    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=record))
     evaluate, save = Mock(), Mock()
     monkeypatch.setattr(main.logic_manager, "evaluate", evaluate)
     monkeypatch.setattr(main.data_manager, "save", save)
@@ -215,4 +218,47 @@ def test_second_request_failure_never_evaluates_or_saves(app_boundary, monkeypat
     main.io_manager.display_result.assert_not_called()
     main.io_manager.show_message.assert_called_once()
     assert "PRIVATE_" not in main.io_manager.show_message.call_args.args[0]
-    assert app_boundary.call_count == 2
+    assert app_boundary.call_count == 1
+    assert record == original
+
+
+def test_combined_caller_passes_validated_findings_to_logic_once(app_boundary, monkeypatch):
+    record = _record()
+    data = _findings()
+    record["message"] += "; contact fictional@example.test."
+    data["details"]["emails"] = ["fictional@example.test"]
+    _completed_reply(app_boundary, data)
+    # Any attempted second read would fail; no formatting request is needed.
+    app_boundary.return_value.__enter__.return_value.read.side_effect = [
+        app_boundary.return_value.__enter__.return_value.read.return_value,
+        AssertionError("Unexpected second API response"),
+    ]
+    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=record))
+    result = {"score": 90, "priority": "HIGH", "reasons": [], "checklist": []}
+    evaluate = Mock(return_value=result)
+    save = Mock()
+    monkeypatch.setattr(main.logic_manager, "evaluate", evaluate)
+    monkeypatch.setattr(main.data_manager, "save", save)
+
+    main.check_message()
+
+    evaluate.assert_called_once_with({**record, "ai": data})
+    assert "ai" not in record
+    save.assert_called_once()
+    assert save.call_args.args[0]["details"] == data["details"]
+    main.io_manager.display_result.assert_called_once_with(result)
+    app_boundary.assert_called_once()
+
+
+def test_combined_caller_uses_ai_findings_for_the_same_unexposed_input(app_boundary, monkeypatch):
+    record = _record()
+    record["submitted_category"] = None
+    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=record))
+    for suspicious, credential, expected in ((False, False, 10), (True, True, 60)):
+        data = _findings()
+        data.update(suspicious=suspicious, credential_request=credential)
+        _completed_reply(app_boundary, data)
+        main.check_message()
+        assert main.io_manager.display_result.call_args.args[0]["score"] == expected
+    assert app_boundary.call_count == 2  # two records, one request each
+    assert len(data_manager.load()) == 2

@@ -135,7 +135,7 @@ def test_route_thresholds_use_the_logic_score(monkeypatch, value, priority):
     {"findings": {"insufficient_context": []}},
     {"clicked": "yes"}, {"downloaded": 1}, {"submitted_category": "payment"},
 ])
-@pytest.mark.parametrize("operation", ["score", "route"])
+@pytest.mark.parametrize("operation", ["score", "route", "evaluate"])
 def test_response_priority_rejects_invalid_inputs(changes, operation):
     record = _assessment_record(**deepcopy(changes))
     original = deepcopy(record)
@@ -144,9 +144,58 @@ def test_response_priority_rejects_invalid_inputs(changes, operation):
     assert record == original
 
 
-@pytest.mark.parametrize("operation", ["score", "route"])
+@pytest.mark.parametrize("operation", ["score", "route", "evaluate"])
 def test_disclosure_still_requires_an_ai_assessment(operation):
     record = _assessment_record(submitted_category="password")
     del record["ai"]
     with pytest.raises(ValueError):
         getattr(logic_manager, operation)(record)
+
+
+@pytest.mark.parametrize("changes, expected_score, expected_priority", [
+    ({}, 10, "LOW"),
+    ({"findings": {"insufficient_context": True}}, 35, "MEDIUM"),
+    ({"findings": {"suspicious": True}}, 45, "MEDIUM"),
+    ({"findings": {"suspicious": True, "credential_request": True}}, 60, "MEDIUM"),
+    ({"clicked": True, "findings": {"suspicious": True}}, 80, "HIGH"),
+    ({"submitted_category": "password"}, 90, "HIGH"),
+    ({"submitted_category": "otp"}, 90, "HIGH"),
+])
+def test_evaluate_uses_ai_response_priority_without_mutation(
+    changes, expected_score, expected_priority,
+):
+    record = _assessment_record(**deepcopy(changes))
+    original = deepcopy(record)
+    result = logic_manager.evaluate(record)
+    assert result["score"] == expected_score
+    assert result["priority"] == expected_priority
+    assert result["reasons"] and all(isinstance(r, str) for r in result["reasons"])
+    assert result["checklist"] and all(isinstance(r, str) for r in result["checklist"])
+    assert record == original
+
+
+@pytest.mark.parametrize("category, guidance", [("password", "password"), ("otp", "one-time code")])
+def test_evaluate_addresses_disclosure_despite_negative_ai(category, guidance):
+    result = logic_manager.evaluate(_assessment_record(submitted_category=category))
+    assert result["priority"] == "HIGH"
+    assert any(guidance in reason.lower() for reason in result["reasons"])
+    assert any(guidance in step.lower() for step in result["checklist"])
+
+
+def test_evaluate_uncertainty_and_low_priority_do_not_claim_safety():
+    for findings in ({}, {"insufficient_context": True}):
+        result = logic_manager.evaluate(_assessment_record(findings=findings))
+        text = " ".join(result["reasons"] + result["checklist"]).lower()
+        assert "safe" not in text
+        assert any("verify" in step.lower() for step in result["checklist"])
+        if findings:
+            assert "insufficient context" in text
+
+
+@pytest.mark.parametrize("action, guidance", [("clicked", "link"), ("downloaded", "file")])
+def test_evaluate_guidance_matches_reported_interaction(action, guidance):
+    record = _assessment_record(**{action: True}, findings={"suspicious": True})
+    result = logic_manager.evaluate(record)
+    assert any(guidance in step.lower() for step in result["checklist"])
+    assert not any("change" in step.lower() and "password" in step.lower()
+                   for step in result["checklist"])

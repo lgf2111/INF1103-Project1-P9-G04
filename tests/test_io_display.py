@@ -91,7 +91,9 @@ def test_display_result_keeps_safety_wording(capsys):
         "phone_numbers": [],
         "ip_addresses": []
     }
-    io_manager.display_result(logic_manager.evaluate(record, details))
+    record["ai"] = {"credential_request": False, "suspicious": False,
+                    "insufficient_context": False, "details": details}
+    io_manager.display_result(logic_manager.evaluate(record))
     # Updated assertion to match the new LOW priority checklist
     assert "Remain cautious." in capsys.readouterr().out
 
@@ -128,25 +130,16 @@ def test_check_new_message_displays_full_record(monkeypatch, capsys):
         "downloaded": False,
         "submitted_category": None,
     }
-    # AI's first response: extracted details
-    details = {
-        "emails": [],
-        "phone_numbers": [],
-        "ip_addresses": [],
-    }
-    # AI's second response: formatted reply
-    reply = {
-        "response": "Email: , Phone Number: , IP Address: "
-    }
+    details = {"emails": [], "phone_numbers": [], "ip_addresses": []}
+    findings = {"credential_request": False, "suspicious": False,
+                "insufficient_context": False, "details": details}
     saved = []
-
     api_calls = []
+
     def mock_call_api(prompt):
-        """Return details on first call, reply on second call."""
+        """Return combined findings and extraction from one request."""
         api_calls.append(prompt)
-        if len(api_calls) == 1:
-            return json.dumps(details)
-        return json.dumps(reply)
+        return json.dumps(findings)
 
     monkeypatch.setattr(main.io_manager, "collect_input", lambda: record)
     monkeypatch.setattr(main.ai_manager, "call_api", mock_call_api)
@@ -165,3 +158,5 @@ def test_check_new_message_displays_full_record(monkeypatch, capsys):
     assert saved[0]["channel"] == "sms"
     assert saved[0]["message"] == message
     assert saved[0]["details"] == details
+
+    assert len(api_calls) == 1
