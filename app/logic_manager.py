@@ -96,6 +96,9 @@ def evaluate(record, details):
         score += 10
         reasons.append("The message contains an IP address.")
 
+    # Cap the score at 100 no matter how many factors apply.
+    score = min(score, 100)
+
     if score >= 70:
         priority = "HIGH"
         checklist = [
