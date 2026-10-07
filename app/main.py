@@ -85,7 +85,6 @@ def load_reports() -> list[dict]:
         return records
     return data_manager.load()
 
-
 def view_reports():
     """Load database or local history and send it to I/O for display."""
     io_manager.display_list(load_reports())
