@@ -38,7 +38,10 @@ def check_message():
         assessed_record = {**record, "ai": findings}
         result = logic_manager.evaluate(assessed_record)
 
-    except (RuntimeError, ValueError, KeyError, TypeError) as error:
+    # Only expected runtime/validation failures are user-facing. KeyError and
+    # TypeError would be programming bugs, so let them surface instead of
+    # hiding them behind a generic "check failed" message.
+    except (RuntimeError, ValueError) as error:
         io_manager.show_message("Sorry, the check failed: " + str(error))
         return
 
