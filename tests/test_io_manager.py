@@ -226,15 +226,16 @@ def test_collect_user_actions_without_link_or_file(monkeypatch):
 
 def test_collect_input_returns_complete_record(monkeypatch):
     answers = iter([
-        "Email",
-        "update@micr0soft.com",
-        "Download Update.exe immediately.",
-        "no",
-        "yes",
-        "Update.exe",
-        "yes",
-        "no",
-    ])
+    "Email",
+    "1",
+    "update@micr0soft.com",
+    "Download Update.exe immediately.",
+    "no",
+    "yes",
+    "Update.exe",
+    "yes",
+    "no",
+])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
@@ -278,3 +279,165 @@ def test_get_valid_choice_reprompts_invalid_input(monkeypatch):
     )
 
     assert result == "a"
+
+def test_read_eml_details_extracts_email_content(tmp_path):
+    email_file = tmp_path / "sample.eml"
+
+    email_file.write_text(
+        "From: Microsoft Updates <update@micr0soft.com>\n"
+        "Subject: Private Microsoft Beta\n"
+        "MIME-Version: 1.0\n"
+        'Content-Type: text/plain; charset="utf-8"\n'
+        "\n"
+        "You have been selected for our private Microsoft beta programme.\n"
+        "Download Update.exe immediately.\n",
+        encoding="utf-8",
+    )
+
+    sender, message = io_manager.read_eml_details(email_file)
+
+    assert sender == "Microsoft Updates <update@micr0soft.com>"
+
+    assert message == (
+        "Subject: Private Microsoft Beta\n\n"
+        "You have been selected for our private Microsoft beta programme.\n"
+        "Download Update.exe immediately."
+    )
+
+def test_get_eml_input_reprompts_invalid_path(monkeypatch, tmp_path):
+    email_file = tmp_path / "valid.eml"
+
+    email_file.write_text(
+        "From: test@example.com\n"
+        "Subject: Test Email\n"
+        'Content-Type: text/plain; charset="utf-8"\n'
+        "\n"
+        "This is a test message.\n",
+        encoding="utf-8",
+    )
+
+    answers = iter([
+        "",
+        "invalid.txt",
+        str(tmp_path / "missing.eml"),
+        str(email_file),
+    ])
+
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    sender, message = io_manager.get_eml_input()
+
+    assert sender == "test@example.com"
+    assert message == "Subject: Test Email\n\nThis is a test message."
+
+def test_get_eml_input_reprompts_empty_message(
+    monkeypatch, tmp_path, capsys
+):
+    # Create an email with an empty message body
+    empty_email = tmp_path / "empty.eml"
+
+    empty_email.write_text(
+        "From: sender@example.com\n"
+        "Subject: Empty Message\n"
+        'Content-Type: text/plain; charset="utf-8"\n'
+        "\n",
+        encoding="utf-8",
+    )
+
+    # Create a valid email
+    valid_email = tmp_path / "valid.eml"
+
+    valid_email.write_text(
+        "From: test@example.com\n"
+        "Subject: Test Email\n"
+        'Content-Type: text/plain; charset="utf-8"\n'
+        "\n"
+        "This is a valid message.\n",
+        encoding="utf-8",
+    )
+
+    # First attempt is invalid, second is valid
+    answers = iter([
+        str(empty_email),
+        str(valid_email),
+    ])
+
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _: next(answers)
+    )
+
+    sender, message = io_manager.get_eml_input()
+
+    # Verify the valid email was accepted
+    assert sender == "test@example.com"
+
+    assert message == (
+        "Subject: Test Email\n\n"
+        "This is a valid message."
+    )
+
+    # Verify the first email was rejected
+    output = capsys.readouterr().out
+
+    assert "Unable to read the email file." in output
+    assert "Email loaded successfully." in output
+
+def test_collect_input_eml_with_follow_up_questions(
+    monkeypatch, tmp_path
+):
+    email_file = tmp_path / "suspicious.eml"
+
+    email_file.write_text(
+        "From: update@micr0soft.com\n"
+        "Subject: Private Microsoft Beta\n"
+        'Content-Type: text/plain; charset="utf-8"\n'
+        "\n"
+        "Download Update.exe immediately.\n",
+        encoding="utf-8",
+    )
+
+    answers = iter([
+        "email",                       # Channel
+        "2",                           # Import .eml
+        str(email_file),               # Email file path
+        "yes",                         # Link included?
+        "https://example.com/verify",  # Link
+        "yes",                         # File included?
+        "Update.exe",                  # File name
+        "yes",                         # Clicked link?
+        "no",                          # Downloaded file?
+        "otp",                         # Password/OTP disclosed?
+    ])
+
+    prompts = []
+
+    def fake_input(prompt):
+        prompts.append(prompt)
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    record = io_manager.collect_input()
+
+    assert record == {
+        "channel": "email",
+        "sender": "update@micr0soft.com",
+        "message": (
+            "Subject: Private Microsoft Beta\n\n"
+            "Download Update.exe immediately."
+        ),
+        "has_link": True,
+        "link": "https://example.com/verify",
+        "has_file": True,
+        "file_name": "Update.exe",
+        "clicked": True,
+        "downloaded": False,
+        "submitted_category": "otp",
+    }
+
+    assert any("Was a link included?" in p for p in prompts)
+    assert any("Was a file included?" in p for p in prompts)
+    assert any("Did you click the link?" in p for p in prompts)
+    assert any("Did you download the file?" in p for p in prompts)
+    assert any("Did you give a password or code?" in p for p in prompts)

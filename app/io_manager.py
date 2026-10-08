@@ -1,6 +1,10 @@
 # io_manager.py
 # All input() and print() live here. OWNER: Jeremy Goh & Bryan Lee.
 
+from email import policy
+from email.parser import BytesParser
+from pathlib import Path
+
 
 def main_menu():
     print("\n=== PhishReport ===")
@@ -24,8 +28,22 @@ def get_valid_choice(prompt, valid_choices, error_message):
 
 def collect_input():
     channel = get_channel()
-    sender = get_sender()
-    message = get_message()
+
+    if channel == "email":
+        method = get_valid_choice(
+            "Choose email input method (1 = Manual, 2 =.eml file): ",
+            ("1", "2"),
+            "Invalid choice. Please enter 1 or 2: ",
+        )
+
+        if method == "2":
+            sender, message = get_eml_input()
+        else:
+            sender = get_sender()
+            message = get_message()
+    else:
+        sender = get_sender()
+        message = get_message()
 
     has_link, link = get_link_information()
     has_file, file_name = get_file_information()
@@ -33,17 +51,17 @@ def collect_input():
     user_actions = collect_user_actions(has_link, has_file)
 
     return {
-        "channel": channel,
-        "sender": sender,
-        "message": message,
-        "has_link": has_link,
-        "link": link,
-        "has_file": has_file,
-        "file_name": file_name,
-        "clicked": user_actions["clicked"],
-        "downloaded": user_actions["downloaded"],
-        "submitted_category": user_actions["submitted_category"],
-    }
+            "channel": channel,
+            "sender": sender,
+            "message": message,
+            "has_link": has_link,
+            "link": link,
+            "has_file": has_file,
+            "file_name": file_name,
+            "clicked": user_actions["clicked"],
+            "downloaded": user_actions["downloaded"],
+            "submitted_category": user_actions["submitted_category"],
+        }
 
 def ask_yes_no(question):
     answer = input(question).strip().lower()
@@ -79,6 +97,61 @@ def get_message():
         ).strip()
 
     return message
+
+def read_eml_details(file_path):
+    with Path(file_path).open("rb") as email_file:
+        email_message = BytesParser(
+            policy=policy.default
+        ).parse(email_file)
+
+    sender = str(email_message.get("From") or "").strip() or None
+    subject = str(email_message.get("Subject") or "").strip()
+
+    body_part = email_message.get_body(
+        preferencelist=("plain",)
+    )
+
+    if body_part is None:
+        raise ValueError("No readable plain-text message found.")
+
+    try:
+        body = body_part.get_content()
+    except (UnicodeError, LookupError) as error:
+        raise ValueError("Could not decode email content.") from error
+
+    if not isinstance(body, str) or not body.strip():
+        raise ValueError("Email message cannot be blank.")
+
+    message = body.strip()
+
+    if subject:
+        message = f"Subject: {subject}\n\n{message}"
+
+    return sender, message
+
+def get_eml_input():
+    while True:
+        file_path = input("Enter .eml file path: ").strip().strip('"')
+
+        if not file_path:
+            print("File path cannot be blank.")
+            continue
+
+        if Path(file_path).suffix.lower() != ".eml":
+            print("Invalid file type. Only .eml files are supported.")
+            continue
+
+        try:
+            sender, message = read_eml_details(file_path)
+
+        except (OSError, ValueError):
+            print("Unable to read the email file. Please try again.")
+            continue
+
+        print("Email loaded successfully.")
+
+        return sender, message
+
 
 def get_link_information():
     has_link = ask_yes_no("Was a link included? (yes/no): ")
