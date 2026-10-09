@@ -12,7 +12,9 @@ import http.client
 import ipaddress
 import json
 import os
+import random
 import re
+import time
 import urllib.error
 import urllib.request
 
@@ -62,7 +64,7 @@ def build_prompt(record: dict) -> str:
 
 
 def call_api(prompt: str) -> str:
-    """Send one request and return content from a completed provider response.
+    """Return completed content, retrying a transient transport failure once.
 
     Require nonblank prompt text, otherwise raise ValueError before configuration/HTTP.
     Preserve valid prompt text exactly as supplied.
@@ -71,6 +73,9 @@ def call_api(prompt: str) -> str:
     Error messages exclude provider bodies and underlying exception details.
     Read GROQ_MODEL at request time, after the caller has loaded its environment.
     An unset model uses DEFAULT_MODEL; an explicitly blank setting is rejected.
+    Both attempts use the identical request and a 30-second socket timeout each.
+    Backoff is 0.5-1.5 seconds; this is not a total wall-clock deadline.
+    Rate limits, invalid responses and configuration errors are not retried.
     """
     if not isinstance(prompt, str) or not prompt.strip():
         raise _failure("call_api", "AI prompt must be nonblank text.", ValueError)
@@ -103,17 +108,29 @@ def call_api(prompt: str) -> str:
             "User-Agent": "phishreport/1.0",
         },
     )
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            raw = response.read()
-    except urllib.error.HTTPError as error:
-        raise _failure(
-            "call_api", f"AI provider returned HTTP {error.code}.", RuntimeError,
-        ) from None
-    except TimeoutError:
-        raise _failure("call_api", "The AI request timed out.", RuntimeError) from None
-    except (urllib.error.URLError, OSError, http.client.HTTPException):
-        raise _failure("call_api", "Could not complete the AI request.", RuntimeError) from None
+    for attempt in (1, 2):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                raw = response.read()
+            break
+        except (OSError, http.client.HTTPException) as error:
+            if isinstance(error, urllib.error.HTTPError):
+                retryable = error.code in (500, 502, 503, 504)
+                reason = f"AI provider returned HTTP {error.code}."
+                error.close()
+            else:
+                cause = error.reason if isinstance(error, urllib.error.URLError) else error
+                retryable = isinstance(cause, (
+                    TimeoutError, ConnectionError, http.client.IncompleteRead,
+                    http.client.RemoteDisconnected,
+                ))
+                reason = ("The AI request timed out." if isinstance(cause, TimeoutError)
+                          else "Could not complete the AI request.")
+            if attempt == 2 or not retryable:
+                raise _failure("call_api", reason, RuntimeError) from None
+            # Only fixed diagnostics are logged; never include raw exception/provider data.
+            logger.info("stage=call_api attempt=1 retry=same_model reason=%s", reason)
+            time.sleep(random.uniform(0.5, 1.5))
 
     try:
         data = json.loads(raw, object_pairs_hook=_unique_object, parse_constant=_reject_constant)

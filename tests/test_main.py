@@ -21,6 +21,7 @@ def app_boundary(tmp_path, monkeypatch):
         monkeypatch.setattr(logger, "handlers", [logging.NullHandler()])
         monkeypatch.setattr(logger, "level", logger.level)
         monkeypatch.setattr(logger, "propagate", logger.propagate)
+    monkeypatch.setattr(ai_manager.time, "sleep", Mock())
     transport = MagicMock()
     monkeypatch.setattr(ai_manager.urllib.request, "urlopen", transport)
     monkeypatch.setattr(main.io_manager, "show_message", Mock())
@@ -115,7 +116,8 @@ def test_failed_assessment_never_reaches_logic_storage_or_success_display(
     assert "failed" in main.io_manager.show_message.call_args.args[0]
     assert "PRIVATE_" not in main.io_manager.show_message.call_args.args[0]
     assert record == original
-    assert app_boundary.call_count == (0 if failure == "input" else 1)
+    expected_calls = 0 if failure == "input" else 2 if failure in ("timeout", "http") else 1
+    assert app_boundary.call_count == expected_calls
 
 
 def test_successful_assessment_reaches_real_logic_and_storage(app_boundary, monkeypatch):
@@ -294,3 +296,20 @@ def test_configured_storage_logging_uses_application_file(
     assert "PRIVATE" not in text
     # The corrupt history must be preserved, never overwritten.
     assert (tmp_path / "reports.json").read_text() == '{PRIVATE_BROKEN'
+
+
+def test_recovered_timeout_saves_and_displays_only_one_assessment(app_boundary, monkeypatch):
+    record = _record()
+    _successful_reply(app_boundary)
+    app_boundary.side_effect = [TimeoutError("PRIVATE_ERROR"), app_boundary.return_value]
+    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=record))
+
+    main.check_message()
+
+    assert app_boundary.call_count == 2
+    saved = data_manager.load()
+    assert len(saved) == 1
+    assert saved[0]["ai"] == _findings()
+    main.io_manager.display_result.assert_called_once()
+    main.io_manager.show_message.assert_not_called()
+    data_manager.upload.assert_called_once_with(saved)
