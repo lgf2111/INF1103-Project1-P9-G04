@@ -29,11 +29,12 @@ def main_menu():
     print("1. Check a new message")
     print("2. View saved reports")
     print("3. Quit")
+    print("4. Upload a file to assess")
 
     return get_valid_choice(
-        "Choose 1-3: ",
-        ("1", "2", "3"),
-        "Invalid choice. Please choose 1-3: ",
+        "Choose 1-4: ",
+        ("1", "2", "3", "4"),
+        "Invalid choice. Please choose 1-4: ",
     )
 
 def get_valid_choice(prompt, valid_choices, error_message):
@@ -80,6 +81,26 @@ def collect_input():
             "downloaded": user_actions["downloaded"],
             "submitted_category": user_actions["submitted_category"],
         }
+
+def build_record_from_message(message, channel="email", sender=None):
+    """Build a record from already-obtained message text (e.g. an uploaded file).
+
+    Reuses the normal action questions so the assessment pipeline is unchanged;
+    the message comes from the file instead of a prompt.
+    """
+    user_actions = collect_user_actions(False, False)
+    return {
+        "channel": channel,
+        "sender": sender,
+        "message": message,
+        "has_link": False,
+        "link": None,
+        "has_file": True,
+        "file_name": "uploaded_file",
+        "clicked": user_actions["clicked"],
+        "downloaded": user_actions["downloaded"],
+        "submitted_category": user_actions["submitted_category"],
+    }
 
 def ask_yes_no(question):
     answer = input(question).strip().lower()

@@ -89,8 +89,10 @@ docker run --rm phishreport pytest
 To run the interactive application in Docker, first create `.env` as described above:
 
 ```bash
-docker run --rm -it --env-file .env phishreport
+docker run --rm -it -p 8000:8000 --env-file .env phishreport
 ```
+
+`-p 8000:8000` publishes the file-upload page (menu option 4) so your browser can reach it at http://localhost:8000. (The `./docker.sh run` helper already includes this.)
 
 Reports saved inside this temporary container do not persist after it exits. Persistent container storage and verification on every team laptop remain delivery tasks in the roadmap.
 
