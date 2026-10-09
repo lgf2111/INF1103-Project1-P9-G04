@@ -11,17 +11,16 @@
 import http.client
 import ipaddress
 import json
-import logging
 import os
 import re
 import urllib.error
 import urllib.request
 
+import logging_setup
 from ai_prompts import EXTRACTION_INSTRUCTIONS, FINDINGS_INSTRUCTIONS
 
 # The application configures the destination; importing AI must not print or open files.
-logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
+logger = logging_setup.get_logger(__name__)
 
 # Groq's API is OpenAI-style. Change the model with the GROQ_MODEL env var.
 # (Run the /models endpoint or check the Groq console to see what your key can use.)
@@ -222,10 +221,11 @@ def _failure(stage, message, error_type):
     """Log a developer-controlled reason and construct the existing public error.
 
     Call only with fixed messages or known schema fields/status codes. Never pass
-    record content, raw provider output or exception text. Log at one boundary
-    only, without traceback data; the caller decides how to continue.
+    record content, raw provider output or exception text. By default logs the
+    reason only (no traceback); with LOG_LEVEL=DEBUG it also captures the full
+    traceback to help diagnose failures. The caller decides how to continue.
     """
-    logger.warning("stage=%s reason=%s", stage, message)
+    logging_setup.log_failure(logger, f"stage={stage} reason={message}")
     return error_type(message)
 
 

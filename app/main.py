@@ -2,13 +2,15 @@
 # Ties the four managers together:
 # input -> validated AI assessment -> logic -> save and display
 
-import logging
 import os
 
 import ai_manager
 import data_manager
 import io_manager
+import logging_setup
 import logic_manager
+
+logger = logging_setup.get_logger(__name__)
 
 
 def load_env():
@@ -42,6 +44,7 @@ def check_message():
     # TypeError would be programming bugs, so let them surface instead of
     # hiding them behind a generic "check failed" message.
     except (RuntimeError, ValueError) as error:
+        logging_setup.log_failure(logger, "Assessment failed")
         io_manager.show_message("Sorry, the check failed: " + str(error))
         return
 
@@ -49,12 +52,14 @@ def check_message():
     try:
         data_manager.save(report)
     except (OSError, ValueError):
+        logging_setup.log_failure(logger, "Local report save failed")
         io_manager.show_message(
             "Could not save the local report; existing history preserved "
             "and database upload not attempted."
         )
     except RuntimeError as error:
         # The local write completed before the failed database request.
+        logging_setup.log_failure(logger, "Database upload failed after local save")
         io_manager.show_message("Report saved locally, but database saving failed: " + str(error))
 
     # io_manager.display_result expects the logic result dictionary.
@@ -66,6 +71,7 @@ def load_reports() -> list[dict] | None:
         records = data_manager.fetch()
     except (RuntimeError, ValueError) as error:
         # Explain the unavailable source before reading the local copy.
+        logging_setup.log_failure(logger, "Reading reports from PostgreSQL failed")
         io_manager.show_message("PostgreSQL unavailable; checking reports.json: " + str(error))
         records = []
 
@@ -73,6 +79,7 @@ def load_reports() -> list[dict] | None:
     try:
         local_records = data_manager.load(strict=True)
     except (OSError, ValueError):
+        logging_setup.log_failure(logger, "Reading local report history failed")
         io_manager.show_message("Could not load local report history; existing file preserved.")
         return records if records else None
     return data_manager.combine_reports(records, local_records)
@@ -83,58 +90,28 @@ def view_reports():
     if records is not None:
         io_manager.display_list(records)
 
-def _log_write_failed(record):
-    """FileHandler's procedural error callback; keep traceback output out of the CLI."""
-    io_manager.show_message("Warning: could not write the diagnostic log.")
-
-def configure_logging():
-    """Connect AI/storage diagnostics to an append-only UTF-8 application log.
-
-    Return the handler for cleanup, or None if opening fails. Logging failure is
-    reported through I/O and does not prevent the menu or AI error handling.
-    """
-    loggers = [logging.getLogger(name) for name in ("ai_manager", "data_manager")]
-    for logger in loggers:
-        logger.setLevel(logging.WARNING)
-        logger.propagate = False
-    try:
-        handler = logging.FileHandler("phishreport.log", encoding="utf-8")
-    except OSError:
-        io_manager.show_message("Warning: diagnostic logging is unavailable.")
-        return None
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-    # Phase 1 uses a function callback rather than a FileHandler subclass.
-    handler.handleError = _log_write_failed
-    for logger in loggers:
-        logger.addHandler(handler)
-    return handler
-
-
 def main():
     load_env()
-    log_handler = configure_logging()
-    try:
-        if load_reports() == []:
-            io_manager.show_message("No saved reports found.")
-        while True:
-            choice = io_manager.main_menu()
-            if choice == "1":
-                check_message()
-            elif choice == "2":
-                view_reports()
-            elif choice == "3":
-                io_manager.show_message("Bye!")
-                break
-            else:
-                io_manager.show_message("Please choose 1, 2 or 3.")
-    finally:
-        if log_handler is not None:
-            for name in ("ai_manager", "data_manager"):
-                logging.getLogger(name).removeHandler(log_handler)
-            try:
-                log_handler.close()
-            except OSError:
-                io_manager.show_message("Warning: could not close the diagnostic log.")
+    # Set up behind-the-scenes logging to the logs/ folder before anything else,
+    # so any failure (AI, database, file) is recorded. Set LOG_LEVEL=DEBUG in
+    # .env to also capture full tracebacks while debugging.
+    if not logging_setup.setup_logging():
+        io_manager.show_message("Warning: diagnostic logging is unavailable.")
+    logger.info("Application started")
+    if load_reports() == []:
+        io_manager.show_message("No saved reports found.")
+    while True:
+        choice = io_manager.main_menu()
+        if choice == "1":
+            check_message()
+        elif choice == "2":
+            view_reports()
+        elif choice == "3":
+            io_manager.show_message("Bye!")
+            break
+        else:
+            io_manager.show_message("Please choose 1, 2 or 3.")
+    logger.info("Application exited")
 
 if __name__ == "__main__":
     main()
