@@ -1061,6 +1061,27 @@ def test_transient_failures_stop_after_two_attempts(provider_transport, caplog, 
     assert "attempt=1" in caplog.text
 
 
+def test_groq_max_attempts_env_increases_retries(provider_transport, monkeypatch):
+    # Operators can tell the app to try harder on transient failures.
+    monkeypatch.setenv("GROQ_MAX_ATTEMPTS", "4")
+    provider_transport.side_effect = urllib.error.HTTPError(
+        "https://example.test", 503, "PRIVATE_BODY", {}, None,
+    )
+    with pytest.raises(RuntimeError):
+        ai_manager.call_api("Fictional prompt")
+    assert provider_transport.call_count == 4
+
+
+def test_invalid_groq_max_attempts_falls_back_to_default(provider_transport, monkeypatch):
+    monkeypatch.setenv("GROQ_MAX_ATTEMPTS", "not-a-number")
+    provider_transport.side_effect = urllib.error.HTTPError(
+        "https://example.test", 503, "PRIVATE_BODY", {}, None,
+    )
+    with pytest.raises(RuntimeError):
+        ai_manager.call_api("Fictional prompt")
+    assert provider_transport.call_count == 2  # default
+
+
 def test_retry_does_not_accept_invalid_provider_response(provider_transport):
     response = provider_transport.return_value
     response.__enter__.return_value.read.return_value = b'{"choices": []}'

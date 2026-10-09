@@ -16,6 +16,23 @@ from misc import logging_setup
 logger = logging_setup.get_logger(__name__)
 
 
+def _friendly_ai_error(error):
+    """Turn an AI RuntimeError into a short, actionable message for the user.
+
+    Keeps the word 'failed' so the reason is clear, and adds guidance based on
+    the kind of failure (offline, service error, rate limit).
+    """
+    text = str(error).lower()
+    if "timed out" in text or "could not complete" in text:
+        return ("The check failed: could not reach the AI service. "
+                "Check your internet connection and try again.")
+    if "http 5" in text:
+        return "The check failed: the AI service is temporarily unavailable. Try again shortly."
+    if "http 429" in text:
+        return "The check failed: the AI service is busy (rate limited). Try again shortly."
+    return "The check failed: the AI could not complete the assessment. Please try again."
+
+
 def load_env():
     """Load project environment values without replacing existing settings."""
     if not os.path.exists(".env"):
@@ -48,10 +65,15 @@ def check_message(record=None):
         assessed_record = {**record, "ai": findings}
         result = logic_manager.evaluate(assessed_record)
 
-    # Only expected runtime/validation failures are user-facing. KeyError and
-    # TypeError would be programming bugs, so let them surface instead of
-    # hiding them behind a generic "check failed" message.
-    except (RuntimeError, ValueError) as error:
+    # RuntimeError: the AI could not complete after its retries (service down,
+    # offline, rate limited). Show an actionable message; the AI is never bypassed.
+    except RuntimeError as error:
+        logging_setup.log_failure(logger, "Assessment failed after AI retries")
+        io_manager.show_message(_friendly_ai_error(error))
+        return
+    # ValueError: bad input or an invalid AI reply - not retryable. KeyError and
+    # TypeError would be programming bugs, so let them surface.
+    except ValueError as error:
         logging_setup.log_failure(logger, "Assessment failed")
         io_manager.show_message("Sorry, the check failed: " + str(error))
         return
