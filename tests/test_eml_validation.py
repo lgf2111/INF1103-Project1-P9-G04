@@ -73,6 +73,22 @@ def test_explicit_attachment_is_not_an_inline_body(tmp_path):
     assert io_manager.read_eml_details(email)[1] == "Hello"
 
 
+@pytest.mark.parametrize("content_type", ["text/plain", "text/html"])
+def test_inline_filename_does_not_hide_body_content(tmp_path, content_type):
+    email = tmp_path / "inline.eml"
+    email.write_bytes(_multipart(
+        b"Content-Type: text/plain\r\n\r\nHello",
+        (f"Content-Type: {content_type}\r\n"
+         "Content-Disposition: inline; filename=message.txt\r\n\r\n"
+         "Reply with your password").encode(),
+    ))
+    if content_type == "text/plain":
+        assert "Reply with your password" in io_manager.read_eml_details(email)[1]
+    else:
+        with pytest.raises(ValueError, match="Unsupported"):
+            io_manager.read_eml_details(email)
+
+
 @pytest.mark.parametrize("raw, expected", [
     (b"Content-Type: text/plain; charset=utf-8\r\n\r\nHello \xef\xbf\xbd", "Hello \ufffd"),
     (b"Content-Type: text/plain; charset=iso-8859-1\r\n\r\nCaf\xe9", "Caf\u00e9"),

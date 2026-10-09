@@ -245,7 +245,8 @@ def read_eml_body(email_message):
     stack = [email_message]
     while stack:
         part = stack.pop()
-        if part.get_content_disposition() == "attachment" or part.get_filename():
+        disposition = part.get_content_disposition()
+        if disposition == "attachment" or (disposition is None and part.get_filename()):
             continue
         if part.get_content_maintype() == "multipart":
             if part.get_content_subtype() not in ("mixed", "alternative", "related"):
