@@ -2,7 +2,7 @@
 
 > **Team roadmap.** Retains each layer's ownership, deliverables and contribution history. Exact team conventions and optional features still require team adoption.
 >
-> **Progress reviewed:** 8 October 2026 — main at `74315ac`; merged team contributions are distinguished from the unmerged integration in [PR #25](https://github.com/lgf2111/phish-report/pull/25) at `1977e3f`.
+> **Progress reviewed:** 8 October 2026 — main at `74315ac`; merged team contributions are distinguished from the unmerged integration in [PR #25](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/25) at `1977e3f`.
 
 ## Contents
 
@@ -153,7 +153,7 @@ The diagram describes the PR #25 integration plus planned file input. `.eml` par
 | I4 — History controls | **Deferred:** no selection/filter/status menu is implemented. | Agree scope before adding controls; coordinate filter/query and any status identity with data owners. |
 | I5 — Tests and integration | **Partial:** manual collection/display tests exist; PR #25 combined handoff tests pass. | Test the future file-input handoff when implemented; preserve application terminal I/O confinement. |
 
-**Contribution evidence:** Jeremy — [PR #19](https://github.com/lgf2111/phish-report/pull/19), [PR #23](https://github.com/lgf2111/phish-report/pull/23); Bryan Lee — [PR #22](https://github.com/lgf2111/phish-report/pull/22). The [pushed I/O source](https://github.com/lgf2111/phish-report/blob/74315ac/app/io_manager.py) is retained by PR #25.
+**Contribution evidence:** Jeremy — [PR #19](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/19), [PR #23](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/23); Bryan Lee — [PR #22](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/22). The [pushed I/O source](https://github.com/lgf2111/INF1103-Project1-P9-G04/blob/74315ac/app/io_manager.py) is retained by PR #25.
 
 ## AI Processing Layer
 
@@ -174,7 +174,7 @@ The diagram describes the PR #25 integration plus planned file input. `.eml` par
 | A5 — Configuration | **In review:** runtime key/model, blank-model rejection, fixed timeout and one-attempt policy. | Retain the configuration/error contract documented below. |
 | A6 — Verification | **Partial:** offline/combined tests and one fictional host API handoff passed. | Final submission checks remain; no model-accuracy or live-container-API claim. |
 
-**Contribution evidence:** Guan Feng's initial Groq foundation; Arvin's published feat/ai-layer and [PR #25](https://github.com/lgf2111/phish-report/pull/25); retained extraction from the logic pair's [PR #20](https://github.com/lgf2111/phish-report/pull/20). Main still uses the earlier flow until PR #25 merges.
+**Contribution evidence:** Guan Feng's initial Groq foundation; Arvin's published feat/ai-layer and [PR #25](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/25); retained extraction from the logic pair's [PR #20](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/20). Main still uses the earlier flow until PR #25 merges.
 
 ## Logic Layer
 
@@ -195,7 +195,7 @@ The diagram describes the PR #25 integration plus planned file input. `.eml` par
 | L5 — Extraction compatibility | **In review:** validated extraction retained in the saved assessment; obsolete pass-through-only helper retired. | Confirm compatibility with the retained extraction rules. |
 | L6 — Offline tests | **In review:** fixed AI scenarios, thresholds, precedence, invalid-input and unchanged-input tests pass. | Retest substantive rule changes and the final submission version. |
 
-**Contribution evidence:** Xavier/Bryan's [PR #20](https://github.com/lgf2111/phish-report/pull/20) introduced detail validation/handoff, additive scoring, priorities and guidance. [PR #25](https://github.com/lgf2111/phish-report/pull/25) changes those rules and interfaces for the combined assessment; their original contribution remains in history.
+**Contribution evidence:** Xavier/Bryan's [PR #20](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/20) introduced detail validation/handoff, additive scoring, priorities and guidance. [PR #25](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/25) changes those rules and interfaces for the combined assessment; their original contribution remains in history.
 
 ## Data Layer
 
@@ -216,7 +216,7 @@ The diagram describes the PR #25 integration plus planned file input. `.eml` par
 | D5 — Compatibility/repeatability | **Partial:** JSON/legacy and mocked DB round-trips pass; saved output survives restart. | Obtain instructor interpretation and test required fresh-assessment repeatability; reload is not equivalent. |
 | D6 — Docker/tests | **Partial:** isolated persistent-mount restart passed; offline data tests pass. | Finalise persistent run instructions and verify on all six machines. |
 
-**Contribution evidence:** Xavier/Bryan's [PR #20](https://github.com/lgf2111/phish-report/pull/20) provides JSON/PostgreSQL storage, bound inserts, fetch and startup/fallback handling. PR #25 extends reliability and record completeness without a new SQL schema migration. Code/mocked tests do not establish live database compatibility.
+**Contribution evidence:** Xavier/Bryan's [PR #20](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/20) provides JSON/PostgreSQL storage, bound inserts, fetch and startup/fallback handling. PR #25 extends reliability and record completeness without a new SQL schema migration. Code/mocked tests do not establish live database compatibility.
 
 ## Project structure and architecture
 
@@ -369,8 +369,8 @@ No implementation is scheduled for deferred features until its scope is agreed. 
 
 ## References
 
-- Merged team work: [input PR #19](https://github.com/lgf2111/phish-report/pull/19), [logic/data PR #20](https://github.com/lgf2111/phish-report/pull/20), [display PR #22](https://github.com/lgf2111/phish-report/pull/22), [input refactor PR #23](https://github.com/lgf2111/phish-report/pull/23).
-- In-review integration: [issue #24](https://github.com/lgf2111/phish-report/issues/24), [PR #25](https://github.com/lgf2111/phish-report/pull/25).
+- Merged team work: [input PR #19](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/19), [logic/data PR #20](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/20), [display PR #22](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/22), [input refactor PR #23](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/23).
+- In-review integration: [issue #24](https://github.com/lgf2111/INF1103-Project1-P9-G04/issues/24), [PR #25](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/25).
 - FEATURES.md retains original foundation/DevOps contribution records; do not use its historical test counts as current integration evidence.
 - Team Project Framework - Phase 1: mandatory functions, constraints and deliverables.
 - Team Project Specification: collaboration, Docker verification and remaining Week 7/8 checkpoints.
