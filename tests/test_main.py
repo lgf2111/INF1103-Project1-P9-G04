@@ -184,7 +184,7 @@ def test_menu_continues_after_bad_record_then_saves_next_assessment(
     app_boundary, monkeypatch, tmp_path,
 ):
     _successful_reply(app_boundary)
-    monkeypatch.setattr(main.io_manager, "main_menu", Mock(side_effect=["1", "1", "3"]))
+    monkeypatch.setattr(main.io_manager, "main_menu", Mock(side_effect=["1", "1", "4"]))
     monkeypatch.setattr(main.io_manager, "collect_input", Mock(side_effect=[
         {"message": None}, _record(),
     ]))
@@ -219,7 +219,7 @@ def test_unwritable_log_destination_keeps_menu_available(app_boundary, tmp_path,
     # A file named "logs" makes os.makedirs("logs") fail, so the file log can't
     # open - the app must still run and warn about logging being unavailable.
     (tmp_path / "logs").write_text("not a directory")
-    monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="3"))
+    monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="4"))
 
     main.main()
 
@@ -327,7 +327,7 @@ def test_configured_storage_logging_uses_application_file(
     app_boundary, tmp_path, monkeypatch
 ):
     (tmp_path / "reports.json").write_text('{PRIVATE_BROKEN')
-    monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="3"))
+    monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="4"))
     main.main()
     text = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
     assert "data_manager" in text and "Could not read local report history" in text
