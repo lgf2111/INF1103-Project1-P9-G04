@@ -171,7 +171,7 @@ The diagram describes the PR #25 integration plus planned file input. `.eml` par
 | A2 — Extraction | **In review:** existing teammate extraction retained in one assessment response with syntax and ordered source checks. | Review retained semantics. Source matching is not proof of extraction completeness. |
 | A3 — Formatting call | **Retired in PR #25:** procedural display replaces the second request; obsolete helpers removed. | No separate formatting API feature is planned. |
 | A4 — Failures | **In review:** strict envelopes/JSON/schema, safe logging and no-completion-on-failure are tested. | Address review feedback and verify the submission version. |
-| A5 — Configuration | **In review:** runtime key/model, blank-model rejection, fixed timeout and one-attempt policy. | Retain the configuration/error contract documented below. |
+| A5 — Configuration | **Implemented baseline:** runtime key/model, blank-model rejection and socket timeout merged through PR #25. **Branch work:** bounded retries and optional timeout fallback on feat/ai-fallback. | Review the retry policy below; verify live fallback availability, latency and assessment quality before recommending a model pair. |
 | A6 — Verification | **Partial:** offline/combined tests and one fictional host API handoff passed. | Final submission checks remain; no model-accuracy or live-container-API claim. |
 
 **Contribution evidence:** Guan Feng's initial Groq foundation; Arvin's published feat/ai-layer and [PR #25](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/25); retained extraction from the logic pair's [PR #20](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/20). Main still uses the earlier flow until PR #25 merges.
@@ -258,7 +258,16 @@ These contracts are implemented in PR #25 and await independent interface review
 - **Storage:** original input fields plus `schema_version: 1`, `ai` and `result`. PostgreSQL retains its columns and stores the complete versioned record inside `details` JSONB. Legacy records keep their recorded fields; missing information is not fabricated.
 - **Read failures:** ordinary `load()` logs and returns `[]`; internal strict reads distinguish failure from empty history and prevent overwrite. A missing file is empty history. Only I/O displays notices.
 - **History:** combine both sources by full-record equality once per occurrence, retaining the greater count. This is display reconciliation, not synchronisation or proof of identity. Repeated uploads can still create database duplicates.
-- **Configuration:** startup loads environment settings. AI reads `GROQ_API_KEY` and `GROQ_MODEL` at request time; default model `openai/gpt-oss-20b`; blank model rejected. One attempt, no automatic retry, fixed 30-second socket timeout (not a total wall-clock deadline). No secrets or raw message/provider content in diagnostics.
+- **Configuration:** startup loads environment settings. AI reads `GROQ_API_KEY` and `GROQ_MODEL` at request time; default model `openai/gpt-oss-20b`; blank model rejected. The merged PR #25 baseline used one attempt. The unmerged feat/ai-fallback policy is described below. No secrets or raw message/provider content in normal AI diagnostics.
+
+**Retry policy — feat/ai-fallback, pending review (9 October 2026)**
+
+- Maximum two provider requests per assessment, each with a 30-second socket timeout. This is not a total wall-clock deadline; a timed-out request may already have consumed provider quota.
+- A timeout retries using optional `GROQ_FALLBACK_MODEL`; unset means the same primary model. A configured fallback must be nonblank and different from the primary. The complete prompt and response settings are preserved.
+- Recognised transient connection/read failures and HTTP 500/502/503/504 retry the same model after 0.5–1.5 seconds of backoff. HTTP 504 alone does not prove model slowness.
+- HTTP 429 retries the same model only when `Retry-After` supplies valid seconds or an HTTP date with a wait of at most five seconds. Missing, invalid or longer waits fail safely; the model is not rotated to bypass a limit.
+- Invalid credentials/configuration, other HTTP errors, refusal, malformed responses and invalid assessment fields are not automatically retried. Exhaustion uses the existing failure path before scoring or saving.
+- The optional fallback implements the reported suggestion to try another model after excessive waiting. Older/smaller does not guarantee faster or equivalent findings. The example model pair is illustrative; live availability, latency and quality remain unverified. No default fallback is enabled.
 
 Rules use the **first matching row**:
 
