@@ -262,6 +262,8 @@ These contracts are implemented in PR #25 and await independent interface review
 
 **Retry policy — feat/ai-fallback, pending review (9 October 2026)**
 
+The retry transport lives in `app/ai_manager/client.py`, on top of the package refactor merged through PRs #42/#43. Public AI interfaces remain available from `ai_manager`; the old flat module is not restored.
+
 - Maximum two provider requests per assessment, each with a 30-second socket timeout. This is not a total wall-clock deadline; a timed-out request may already have consumed provider quota.
 - A timeout retries using optional `GROQ_FALLBACK_MODEL`; unset means the same primary model. A configured fallback must be nonblank and different from the primary. The complete prompt and response settings are preserved.
 - Recognised transient connection/read failures and HTTP 500/502/503/504 retry the same model after 0.5–1.5 seconds of backoff. HTTP 504 alone does not prove model slowness.

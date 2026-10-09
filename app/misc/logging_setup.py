@@ -1,4 +1,5 @@
 # logging_setup.py
+# misc/logging_setup.py
 # One place that sets up logging for the whole app. OWNER: Lee Guan Feng.
 #
 # Goal: a behind-the-scenes log file that helps debug failures (e.g. the

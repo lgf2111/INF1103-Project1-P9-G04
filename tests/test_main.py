@@ -5,6 +5,7 @@ import urllib.error
 from unittest.mock import MagicMock, Mock
 
 import ai_manager
+import ai_manager.client as ai_client
 import data_manager
 import main
 import pytest
@@ -22,7 +23,7 @@ def app_boundary(tmp_path, monkeypatch):
         monkeypatch.setattr(logger, "handlers", [logging.NullHandler()])
         monkeypatch.setattr(logger, "level", logger.level)
         monkeypatch.setattr(logger, "propagate", logger.propagate)
-    monkeypatch.setattr(ai_manager.time, "sleep", Mock())
+    monkeypatch.setattr(ai_client.time, "sleep", Mock())
     transport = MagicMock()
     monkeypatch.setattr(ai_manager.urllib.request, "urlopen", transport)
     monkeypatch.setattr(main.io_manager, "show_message", Mock())
