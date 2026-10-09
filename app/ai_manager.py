@@ -17,6 +17,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+from email.utils import parsedate_to_datetime
 
 import logging_setup
 from ai_prompts import EXTRACTION_INSTRUCTIONS, FINDINGS_INSTRUCTIONS
@@ -28,6 +29,7 @@ logger = logging_setup.get_logger(__name__)
 # (Run the /models endpoint or check the Groq console to see what your key can use.)
 DEFAULT_MODEL = "openai/gpt-oss-20b"
 URL = "https://api.groq.com/openai/v1/chat/completions"
+MAX_RATE_LIMIT_WAIT = 5
 
 # The keys we expect back from the AI.
 FINDING_KEYS = ("credential_request", "suspicious", "insufficient_context")
@@ -77,7 +79,8 @@ def call_api(prompt: str) -> str:
     Other transient failures retry the same model. At most two requests are sent,
     preserving the full prompt and settings with a 30-second socket timeout each.
     Backoff is 0.5-1.5 seconds; this is not a total wall-clock deadline.
-    Rate limits, invalid responses and configuration errors are not retried.
+    HTTP 429 retries only with a valid Retry-After wait of at most five seconds.
+    Invalid responses and configuration errors are not retried.
     """
     if not isinstance(prompt, str) or not prompt.strip():
         raise _failure("call_api", "AI prompt must be nonblank text.", ValueError)
@@ -126,8 +129,12 @@ def call_api(prompt: str) -> str:
             break
         except (OSError, http.client.HTTPException) as error:
             timed_out = False
+            retry_delay = None
             if isinstance(error, urllib.error.HTTPError):
                 retryable = error.code in (500, 502, 503, 504)
+                if error.code == 429:
+                    retry_delay = _rate_limit_delay(error.headers)
+                    retryable = retry_delay is not None
                 reason = f"AI provider returned HTTP {error.code}."
                 error.close()
             else:
@@ -151,13 +158,33 @@ def call_api(prompt: str) -> str:
                 )
                 retry_model = "fallback_model"
             logger.info("stage=call_api attempt=1 retry=%s reason=%s", retry_model, reason)
-            time.sleep(random.uniform(0.5, 1.5))
+            time.sleep(random.uniform(0.5, 1.5) if retry_delay is None else retry_delay)
 
     try:
         data = json.loads(raw, object_pairs_hook=_unique_object, parse_constant=_reject_constant)
     except ValueError:
         raise _failure("call_api", "AI provider returned invalid JSON.", RuntimeError) from None
     return _completed_content(data)
+
+
+
+def _rate_limit_delay(headers):
+    """Return a permitted Retry-After delay, or None rather than retrying too early."""
+    value = headers.get("Retry-After") if headers is not None else None
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    try:
+        if re.fullmatch(r"[0-9]+", value):
+            delay = int(value)
+        else:
+            deadline = parsedate_to_datetime(value)
+            if deadline.tzinfo is None:
+                return None
+            delay = max(0, deadline.timestamp() - time.time())
+    except (ValueError, TypeError, OverflowError):
+        return None
+    return delay if delay <= MAX_RATE_LIMIT_WAIT else None
 
 
 def _completed_content(data):

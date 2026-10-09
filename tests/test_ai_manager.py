@@ -8,6 +8,7 @@ import logging
 import time
 import urllib.error
 from copy import deepcopy
+from email.utils import formatdate
 from http.client import IncompleteRead
 from unittest.mock import MagicMock, Mock
 
@@ -1142,3 +1143,52 @@ def test_invalid_fallback_response_is_rejected(provider_transport, monkeypatch):
     with pytest.raises(RuntimeError, match="choices"):
         ai_manager.call_api("Fictional prompt")
     assert provider_transport.call_count == 2
+
+
+@pytest.mark.parametrize("header, expected_wait", [
+    ("0", 0), ("2", 2), ("5", 5), (formatdate(1003, usegmt=True), 3),
+])
+def test_short_rate_limit_wait_retries_same_model(
+    provider_transport, monkeypatch, header, expected_wait,
+):
+    monkeypatch.setattr(time, "time", Mock(return_value=1000))
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    response = provider_transport.return_value
+    response.__enter__.return_value.read.return_value = json.dumps({
+        "choices": [{"finish_reason": "stop", "message": {"content": "{}"}}],
+    }).encode()
+    provider_transport.side_effect = [urllib.error.HTTPError(
+        "https://example.test", 429, "PRIVATE_BODY", {"Retry-After": header}, None,
+    ), response]
+
+    assert ai_manager.call_api("Fictional complete prompt") == "{}"
+    assert provider_transport.call_count == 2
+    assert provider_transport.call_args_list[0] == provider_transport.call_args_list[1]
+    time.sleep.assert_called_once_with(expected_wait)
+
+
+@pytest.mark.parametrize("header", [None, "", "PRIVATE_HEADER", "-1", "1.5", "6", "NaN",
+                                    formatdate(1006, usegmt=True)])
+def test_unusable_rate_limit_wait_fails_without_sleep(
+    provider_transport, monkeypatch, caplog, header,
+):
+    monkeypatch.setattr(time, "time", Mock(return_value=1000))
+    headers = {} if header is None else {"Retry-After": header}
+    provider_transport.side_effect = urllib.error.HTTPError(
+        "https://example.test", 429, "PRIVATE_BODY", headers, None,
+    )
+    with pytest.raises(RuntimeError, match="429"):
+        ai_manager.call_api("PRIVATE_PROMPT")
+    provider_transport.assert_called_once()
+    time.sleep.assert_not_called()
+    assert "PRIVATE_" not in caplog.text
+
+
+def test_repeated_rate_limit_stops_after_two_requests(provider_transport):
+    provider_transport.side_effect = urllib.error.HTTPError(
+        "https://example.test", 429, "PRIVATE_BODY", {"Retry-After": "1"}, None,
+    )
+    with pytest.raises(RuntimeError, match="429"):
+        ai_manager.call_api("Fictional prompt")
+    assert provider_transport.call_count == 2
+    time.sleep.assert_called_once_with(1)
