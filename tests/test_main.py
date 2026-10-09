@@ -1,4 +1,5 @@
 # Offline integration tests: real AI/logic/JSON; fictional input, mocked HTTP and database.
+import base64
 import json
 import logging
 import urllib.error
@@ -78,6 +79,42 @@ def _record():
         "has_link": False, "link": None, "has_file": False, "file_name": None,
         "submitted_category": "password", "clicked": False, "downloaded": False,
     }
+
+
+@pytest.mark.parametrize("invented_contact", [False, True])
+def test_eml_retry_and_decoded_source_reach_real_pipeline(
+    app_boundary, monkeypatch, tmp_path, invented_contact,
+):
+    bad = tmp_path / "malformed.eml"
+    bad.write_bytes(b"Content-Type: text/plain; charset=utf-8\r\n\r\nInvalid \xff")
+    good = tmp_path / "encoded.eml"
+    body = "Fictional contact a1@example.test asks for a password."
+    good.write_bytes(
+        b"From: fictional@example.test\r\nSubject: Fictional request\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"Content-Transfer-Encoding: base64\r\n\r\n" + base64.b64encode(body.encode())
+    )
+    findings = _findings()
+    findings["details"]["emails"] = [
+        "absent@example.test" if invented_contact else "a1@example.test"
+    ]
+    _completed_reply(app_boundary, findings)
+    answers = iter(["email", "2", str(bad), str(good), "no", "no", "no"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    main.check_message()
+    assert app_boundary.call_count == 1
+    prompt = json.loads(app_boundary.call_args.args[0].data)["messages"][0]["content"]
+    assert str(good) not in prompt
+    records = data_manager.load()
+    if invented_contact:
+        assert records == []
+        main.io_manager.display_result.assert_not_called()
+        data_manager.upload.assert_not_called()
+    else:
+        assert len(records) == 1
+        assert records[0]["message"] == "Subject: Fictional request\n\n" + body
+        assert records[0]["result"]["score"] == 60
+        main.io_manager.display_result.assert_called_once_with(records[0]["result"])
 
 
 @pytest.mark.parametrize("failure", ["input", "timeout", "http", "incomplete", "json", "schema"])
