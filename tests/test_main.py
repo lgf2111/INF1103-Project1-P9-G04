@@ -16,6 +16,7 @@ def app_boundary(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GROQ_API_KEY", "fictional-integration-key")
     monkeypatch.setenv("GROQ_MODEL", "fictional/integration-model")
+    monkeypatch.delenv("GROQ_FALLBACK_MODEL", raising=False)
     for name in ("ai_manager", "data_manager"):
         logger = logging.getLogger(name)
         monkeypatch.setattr(logger, "handlers", [logging.NullHandler()])
@@ -310,6 +311,23 @@ def test_recovered_timeout_saves_and_displays_only_one_assessment(app_boundary, 
     saved = data_manager.load()
     assert len(saved) == 1
     assert saved[0]["ai"] == _findings()
+    main.io_manager.display_result.assert_called_once()
+    main.io_manager.show_message.assert_not_called()
+    data_manager.upload.assert_called_once_with(saved)
+
+
+def test_timeout_fallback_reaches_real_logic_and_saves_once(app_boundary, monkeypatch):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    _successful_reply(app_boundary)
+    app_boundary.side_effect = [TimeoutError(), app_boundary.return_value]
+    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=_record()))
+
+    main.check_message()
+
+    assert app_boundary.call_count == 2
+    assert json.loads(app_boundary.call_args.args[0].data)["model"] == "fictional/faster"
+    saved = data_manager.load()
+    assert len(saved) == 1 and saved[0]["ai"] == _findings()
     main.io_manager.display_result.assert_called_once()
     main.io_manager.show_message.assert_not_called()
     data_manager.upload.assert_called_once_with(saved)

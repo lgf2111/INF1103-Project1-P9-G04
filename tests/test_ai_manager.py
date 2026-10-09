@@ -183,6 +183,7 @@ def test_validate_response_preserves_findings_without_applying_business_rules():
 def provider_transport(monkeypatch):
     """Replace only HTTP transport; keep real API request and response handling."""
     monkeypatch.setenv("GROQ_API_KEY", "fictional-test-key")
+    monkeypatch.delenv("GROQ_FALLBACK_MODEL", raising=False)
     monkeypatch.setattr(time, "sleep", Mock())
     transport = MagicMock()
     monkeypatch.setattr(ai_manager.urllib.request, "urlopen", transport)
@@ -1060,6 +1061,81 @@ def test_transient_failures_stop_after_two_attempts(provider_transport, caplog, 
 
 
 def test_retry_does_not_accept_invalid_provider_response(provider_transport):
+    response = provider_transport.return_value
+    response.__enter__.return_value.read.return_value = b'{"choices": []}'
+    provider_transport.side_effect = [TimeoutError(), response]
+    with pytest.raises(RuntimeError, match="choices"):
+        ai_manager.call_api("Fictional prompt")
+    assert provider_transport.call_count == 2
+
+
+@pytest.mark.parametrize("error", [TimeoutError(), urllib.error.URLError(TimeoutError())])
+def test_timeout_uses_configured_fallback_with_identical_prompt(
+    provider_transport, monkeypatch, caplog, error,
+):
+    monkeypatch.setenv("GROQ_MODEL", "fictional/primary")
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    response = provider_transport.return_value
+    response.__enter__.return_value.read.return_value = json.dumps({
+        "choices": [{"finish_reason": "stop", "message": {"content": "{}"}}],
+    }).encode()
+    provider_transport.side_effect = [error, response]
+    with caplog.at_level(logging.INFO, logger="ai_manager"):
+        assert ai_manager.call_api("PRIVATE_PROMPT") == "{}"
+    first, second = [json.loads(c.args[0].data) for c in provider_transport.call_args_list]
+    assert first.pop("model") == "fictional/primary"
+    assert second.pop("model") == "fictional/faster"
+    assert first == second
+    assert first["messages"][0]["content"] == "PRIVATE_PROMPT"
+    assert "retry=fallback_model" in caplog.text
+    assert "PRIVATE_PROMPT" not in caplog.text
+
+
+@pytest.mark.parametrize("fallback", ["", "  ", "fictional/primary"])
+def test_invalid_fallback_configuration_fails_before_http(
+    provider_transport, monkeypatch, fallback,
+):
+    monkeypatch.setenv("GROQ_MODEL", "fictional/primary")
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", fallback)
+    with pytest.raises(RuntimeError, match="GROQ_FALLBACK_MODEL"):
+        ai_manager.call_api("Fictional prompt")
+    provider_transport.assert_not_called()
+
+
+def test_fallback_timeout_stops_after_second_request(provider_transport, monkeypatch):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    provider_transport.side_effect = TimeoutError()
+    with pytest.raises(RuntimeError):
+        ai_manager.call_api("Fictional prompt")
+    assert provider_transport.call_count == 2
+    models = [json.loads(c.args[0].data)["model"] for c in provider_transport.call_args_list]
+    assert models[1] == "fictional/faster" and models[0] != models[1]
+
+
+def test_non_timeout_failure_keeps_primary_model(provider_transport, monkeypatch):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    provider_transport.side_effect = ConnectionResetError()
+    with pytest.raises(RuntimeError):
+        ai_manager.call_api("Fictional prompt")
+    assert provider_transport.call_count == 2
+    assert provider_transport.call_args_list[0] == provider_transport.call_args_list[1]
+
+
+@pytest.mark.parametrize("code", [401, 403, 429])
+def test_configured_fallback_does_not_bypass_http_errors(
+    provider_transport, monkeypatch, code,
+):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    provider_transport.side_effect = urllib.error.HTTPError(
+        "https://example.test", code, "PRIVATE_BODY", {}, None,
+    )
+    with pytest.raises(RuntimeError):
+        ai_manager.call_api("Fictional prompt")
+    provider_transport.assert_called_once()
+
+
+def test_invalid_fallback_response_is_rejected(provider_transport, monkeypatch):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
     response = provider_transport.return_value
     response.__enter__.return_value.read.return_value = b'{"choices": []}'
     provider_transport.side_effect = [TimeoutError(), response]

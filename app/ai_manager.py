@@ -73,7 +73,9 @@ def call_api(prompt: str) -> str:
     Error messages exclude provider bodies and underlying exception details.
     Read GROQ_MODEL at request time, after the caller has loaded its environment.
     An unset model uses DEFAULT_MODEL; an explicitly blank setting is rejected.
-    Both attempts use the identical request and a 30-second socket timeout each.
+    A timeout uses GROQ_FALLBACK_MODEL when configured, otherwise the same model.
+    Other transient failures retry the same model. At most two requests are sent,
+    preserving the full prompt and settings with a 30-second socket timeout each.
     Backoff is 0.5-1.5 seconds; this is not a total wall-clock deadline.
     Rate limits, invalid responses and configuration errors are not retried.
     """
@@ -87,6 +89,15 @@ def call_api(prompt: str) -> str:
     model = os.environ.get("GROQ_MODEL", DEFAULT_MODEL)
     if not model.strip():
         raise _failure("call_api", "GROQ_MODEL must not be blank.", RuntimeError)
+
+    fallback_model = os.environ.get("GROQ_FALLBACK_MODEL")
+    if fallback_model is not None:
+        fallback_model = fallback_model.strip()
+        if not fallback_model or fallback_model == model.strip():
+            raise _failure(
+                "call_api", "GROQ_FALLBACK_MODEL must be nonblank and differ from GROQ_MODEL.",
+                RuntimeError,
+            )
 
     body = json.dumps({
         "model": model,
@@ -114,6 +125,7 @@ def call_api(prompt: str) -> str:
                 raw = response.read()
             break
         except (OSError, http.client.HTTPException) as error:
+            timed_out = False
             if isinstance(error, urllib.error.HTTPError):
                 retryable = error.code in (500, 502, 503, 504)
                 reason = f"AI provider returned HTTP {error.code}."
@@ -124,12 +136,21 @@ def call_api(prompt: str) -> str:
                     TimeoutError, ConnectionError, http.client.IncompleteRead,
                     http.client.RemoteDisconnected,
                 ))
-                reason = ("The AI request timed out." if isinstance(cause, TimeoutError)
+                timed_out = isinstance(cause, TimeoutError)
+                reason = ("The AI request timed out." if timed_out
                           else "Could not complete the AI request.")
             if attempt == 2 or not retryable:
                 raise _failure("call_api", reason, RuntimeError) from None
             # Only fixed diagnostics are logged; never include raw exception/provider data.
-            logger.info("stage=call_api attempt=1 retry=same_model reason=%s", reason)
+            retry_model = "same_model"
+            if timed_out and fallback_model is not None:
+                payload = json.loads(body)
+                payload["model"] = fallback_model
+                request = urllib.request.Request(
+                    URL, data=json.dumps(payload).encode(), headers=dict(request.header_items()),
+                )
+                retry_model = "fallback_model"
+            logger.info("stage=call_api attempt=1 retry=%s reason=%s", retry_model, reason)
             time.sleep(random.uniform(0.5, 1.5))
 
     try:
