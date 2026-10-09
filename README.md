@@ -1,6 +1,6 @@
 # PhishReport
 
-[![CI](https://github.com/lgf2111/phish-report/actions/workflows/ci.yml/badge.svg)](https://github.com/lgf2111/phish-report/actions/workflows/ci.yml)
+[![CI](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml/badge.svg)](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml)
 
 PhishReport is a procedural Python CLI for checking suspicious messages. It sends each new message to the Groq API, validates the AI findings, and applies rules using those findings and the user's reported actions. It displays a priority, a rule-based score and a response checklist, then saves the assessment as JSON.
 
