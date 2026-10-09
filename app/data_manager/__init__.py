@@ -5,8 +5,8 @@ import json
 import os
 import tempfile
 
-import logging_setup
 import psycopg
+from misc import logging_setup
 from psycopg.rows import dict_row
 
 logger = logging_setup.get_logger(__name__)

@@ -17,7 +17,7 @@ import re
 import urllib.error
 import urllib.request
 
-import logging_setup
+from misc import logging_setup
 
 from .prompts import EXTRACTION_INSTRUCTIONS, FINDINGS_INSTRUCTIONS
 

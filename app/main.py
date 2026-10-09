@@ -7,8 +7,8 @@ import os
 import ai_manager
 import data_manager
 import io_manager
-import logging_setup
 import logic_manager
+from misc import logging_setup
 
 logger = logging_setup.get_logger(__name__)
 
