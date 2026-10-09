@@ -308,7 +308,7 @@ def test_complete_postgresql_roundtrip_without_schema_migration(monkeypatch):
 def test_coordinator_handles_broken_local_history(storage, monkeypatch, capsys, operation):
     storage.write_text('{broken')
     monkeypatch.setattr(data_manager, "fetch", Mock(side_effect=RuntimeError("Unavailable")))
-    monkeypatch.setattr(main, "configure_logging", lambda: None)
+    monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
     monkeypatch.setattr(main.io_manager, "main_menu", lambda: "3")
     if operation == "save":
         record = _complete_report()
