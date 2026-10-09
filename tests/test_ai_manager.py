@@ -5,8 +5,10 @@
 
 import json
 import logging
+import time
 import urllib.error
 from copy import deepcopy
+from email.utils import formatdate
 from http.client import IncompleteRead
 from unittest.mock import MagicMock, Mock
 
@@ -182,6 +184,8 @@ def test_validate_response_preserves_findings_without_applying_business_rules():
 def provider_transport(monkeypatch):
     """Replace only HTTP transport; keep real API request and response handling."""
     monkeypatch.setenv("GROQ_API_KEY", "fictional-test-key")
+    monkeypatch.delenv("GROQ_FALLBACK_MODEL", raising=False)
+    monkeypatch.setattr(time, "sleep", Mock())
     transport = MagicMock()
     monkeypatch.setattr(ai_manager.urllib.request, "urlopen", transport)
     return transport
@@ -199,6 +203,7 @@ def test_call_api_returns_completed_content(provider_transport):
 
     assert ai_manager.call_api("Fictional phishing assessment") == content
     provider_transport.assert_called_once()
+    time.sleep.assert_not_called()
     request = provider_transport.call_args.args[0]
     body = json.loads(request.data)
     assert request.full_url == "https://api.groq.com/openai/v1/chat/completions"
@@ -273,7 +278,7 @@ def test_call_api_rejects_invalid_provider_json(provider_transport, raw):
     provider_transport.assert_called_once()
 
 
-@pytest.mark.parametrize("code", [401, 429, 503])
+@pytest.mark.parametrize("code", [400, 401, 403, 404, 429])
 def test_call_api_reports_http_failure_without_retry(provider_transport, code):
     provider_transport.side_effect = urllib.error.HTTPError(
         "https://example.test/fictional-sensitive-marker", code,
@@ -295,7 +300,7 @@ def test_call_api_sanitises_connection_errors(provider_transport, error):
     with pytest.raises(RuntimeError) as failure:
         ai_manager.call_api("Fictional phishing assessment")
     assert "fictional-sensitive-marker" not in str(failure.value)
-    provider_transport.assert_called_once()
+    assert provider_transport.call_count == (2 if isinstance(error, TimeoutError) else 1)
 
 
 @pytest.mark.parametrize("error", [
@@ -307,7 +312,7 @@ def test_call_api_handles_failed_response_reads(provider_transport, error):
     with pytest.raises(RuntimeError) as failure:
         ai_manager.call_api("Fictional phishing assessment")
     assert "fictional-sensitive-marker" not in str(failure.value)
-    provider_transport.assert_called_once()
+    assert provider_transport.call_count == (2 if isinstance(error, IncompleteRead) else 1)
 
 
 def test_call_api_requires_key_before_http(monkeypatch):
@@ -550,7 +555,8 @@ def test_ai_pipeline_rejects_failures_without_fallback_findings(
 
     assert record == original
     assert "ai" not in record
-    assert provider_transport.call_count == (0 if failure == "input" else 1)
+    expected_calls = 0 if failure == "input" else 2 if failure == "timeout" else 1
+    assert provider_transport.call_count == expected_calls
     diagnostics = [r for r in caplog.records if r.name == "ai_manager"]
     assert len(diagnostics) == 1
     assert "stage=" + expected_stage in diagnostics[0].getMessage()
@@ -568,6 +574,7 @@ def test_ai_pipeline_can_process_next_record_after_provider_failure(provider_tra
     )
     # The second invocation is a new record, not an automatic retry of the first.
     provider_transport.side_effect = [TimeoutError("PRIVATE_EXCEPTION"),
+                                      TimeoutError("PRIVATE_EXCEPTION"),
                                       provider_transport.return_value]
     first = {"message": "Fictional first message"}
     second = {"message": "Fictional next message"}
@@ -576,11 +583,11 @@ def test_ai_pipeline_can_process_next_record_after_provider_failure(provider_tra
         _run_ai_pipeline(first)
     assert _run_ai_pipeline(second) == findings
 
-    assert provider_transport.call_count == 2
+    assert provider_transport.call_count == 3
     prompts = [json.loads(call.args[0].data)["messages"][0]["content"]
                for call in provider_transport.call_args_list]
     assert [json.loads(prompt.split("Message (JSON string):\n", 1)[1])
-            for prompt in prompts] == [first["message"], second["message"]]
+            for prompt in prompts] == [first["message"], first["message"], second["message"]]
     assert "ai" not in first and "ai" not in second
 
 
@@ -1013,3 +1020,175 @@ def test_combined_source_check_rejects_metadata_only_or_invented_contact(caplog)
     diagnostics = [r for r in caplog.records if r.name == "ai_manager"]
     assert len(diagnostics) == 1
     assert "stage=validate_details" in diagnostics[0].getMessage()
+
+
+@pytest.mark.parametrize("error", [
+    TimeoutError("PRIVATE_EXCEPTION"),
+    ConnectionResetError("PRIVATE_EXCEPTION"),
+    urllib.error.URLError(TimeoutError("PRIVATE_EXCEPTION")),
+    urllib.error.URLError(ConnectionRefusedError("PRIVATE_EXCEPTION")),
+    IncompleteRead(b"PRIVATE_BODY", 100),
+    *[urllib.error.HTTPError("https://example.test", code, "PRIVATE_BODY", {}, None)
+      for code in (500, 502, 503, 504)],
+])
+def test_transient_failure_retries_identical_request_once(provider_transport, error):
+    response = provider_transport.return_value
+    response.__enter__.return_value.read.return_value = json.dumps({
+        "choices": [{"finish_reason": "stop", "message": {"content": "{}"}}],
+    }).encode()
+    provider_transport.side_effect = [error, response]
+
+    assert ai_manager.call_api("  Fictional full prompt\n") == "{}"
+    assert provider_transport.call_count == 2
+    first, second = provider_transport.call_args_list
+    assert first == second  # Full payload, model, headers and timeout are preserved.
+    time.sleep.assert_called_once()
+    assert 0.5 <= time.sleep.call_args.args[0] <= 1.5
+
+
+@pytest.mark.parametrize("error", [
+    TimeoutError("PRIVATE_EXCEPTION"),
+    urllib.error.HTTPError("https://example.test", 503, "PRIVATE_BODY", {}, None),
+])
+def test_transient_failures_stop_after_two_attempts(provider_transport, caplog, error):
+    provider_transport.side_effect = error
+    with caplog.at_level(logging.INFO, logger="ai_manager"):
+        with pytest.raises(RuntimeError):
+            ai_manager.call_api("PRIVATE_PROMPT")
+    assert provider_transport.call_count == 2
+    time.sleep.assert_called_once()
+    assert "PRIVATE_" not in caplog.text
+    assert "attempt=1" in caplog.text
+
+
+def test_retry_does_not_accept_invalid_provider_response(provider_transport):
+    response = provider_transport.return_value
+    response.__enter__.return_value.read.return_value = b'{"choices": []}'
+    provider_transport.side_effect = [TimeoutError(), response]
+    with pytest.raises(RuntimeError, match="choices"):
+        ai_manager.call_api("Fictional prompt")
+    assert provider_transport.call_count == 2
+
+
+@pytest.mark.parametrize("error", [TimeoutError(), urllib.error.URLError(TimeoutError())])
+def test_timeout_uses_configured_fallback_with_identical_prompt(
+    provider_transport, monkeypatch, caplog, error,
+):
+    monkeypatch.setenv("GROQ_MODEL", "fictional/primary")
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    response = provider_transport.return_value
+    response.__enter__.return_value.read.return_value = json.dumps({
+        "choices": [{"finish_reason": "stop", "message": {"content": "{}"}}],
+    }).encode()
+    provider_transport.side_effect = [error, response]
+    with caplog.at_level(logging.INFO, logger="ai_manager"):
+        assert ai_manager.call_api("PRIVATE_PROMPT") == "{}"
+    first, second = [json.loads(c.args[0].data) for c in provider_transport.call_args_list]
+    assert first.pop("model") == "fictional/primary"
+    assert second.pop("model") == "fictional/faster"
+    assert first == second
+    assert first["messages"][0]["content"] == "PRIVATE_PROMPT"
+    assert "retry=fallback_model" in caplog.text
+    assert "PRIVATE_PROMPT" not in caplog.text
+
+
+@pytest.mark.parametrize("fallback", ["", "  ", "fictional/primary"])
+def test_invalid_fallback_configuration_fails_before_http(
+    provider_transport, monkeypatch, fallback,
+):
+    monkeypatch.setenv("GROQ_MODEL", "fictional/primary")
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", fallback)
+    with pytest.raises(RuntimeError, match="GROQ_FALLBACK_MODEL"):
+        ai_manager.call_api("Fictional prompt")
+    provider_transport.assert_not_called()
+
+
+def test_fallback_timeout_stops_after_second_request(provider_transport, monkeypatch):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    provider_transport.side_effect = TimeoutError()
+    with pytest.raises(RuntimeError):
+        ai_manager.call_api("Fictional prompt")
+    assert provider_transport.call_count == 2
+    models = [json.loads(c.args[0].data)["model"] for c in provider_transport.call_args_list]
+    assert models[1] == "fictional/faster" and models[0] != models[1]
+
+
+def test_non_timeout_failure_keeps_primary_model(provider_transport, monkeypatch):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    provider_transport.side_effect = ConnectionResetError()
+    with pytest.raises(RuntimeError):
+        ai_manager.call_api("Fictional prompt")
+    assert provider_transport.call_count == 2
+    assert provider_transport.call_args_list[0] == provider_transport.call_args_list[1]
+
+
+@pytest.mark.parametrize("code", [401, 403, 429])
+def test_configured_fallback_does_not_bypass_http_errors(
+    provider_transport, monkeypatch, code,
+):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    provider_transport.side_effect = urllib.error.HTTPError(
+        "https://example.test", code, "PRIVATE_BODY", {}, None,
+    )
+    with pytest.raises(RuntimeError):
+        ai_manager.call_api("Fictional prompt")
+    provider_transport.assert_called_once()
+
+
+def test_invalid_fallback_response_is_rejected(provider_transport, monkeypatch):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    response = provider_transport.return_value
+    response.__enter__.return_value.read.return_value = b'{"choices": []}'
+    provider_transport.side_effect = [TimeoutError(), response]
+    with pytest.raises(RuntimeError, match="choices"):
+        ai_manager.call_api("Fictional prompt")
+    assert provider_transport.call_count == 2
+
+
+@pytest.mark.parametrize("header, expected_wait", [
+    ("0", 0), ("2", 2), ("5", 5), (formatdate(1003, usegmt=True), 3),
+])
+def test_short_rate_limit_wait_retries_same_model(
+    provider_transport, monkeypatch, header, expected_wait,
+):
+    monkeypatch.setattr(time, "time", Mock(return_value=1000))
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    response = provider_transport.return_value
+    response.__enter__.return_value.read.return_value = json.dumps({
+        "choices": [{"finish_reason": "stop", "message": {"content": "{}"}}],
+    }).encode()
+    provider_transport.side_effect = [urllib.error.HTTPError(
+        "https://example.test", 429, "PRIVATE_BODY", {"Retry-After": header}, None,
+    ), response]
+
+    assert ai_manager.call_api("Fictional complete prompt") == "{}"
+    assert provider_transport.call_count == 2
+    assert provider_transport.call_args_list[0] == provider_transport.call_args_list[1]
+    time.sleep.assert_called_once_with(expected_wait)
+
+
+@pytest.mark.parametrize("header", [None, "", "PRIVATE_HEADER", "-1", "1.5", "6", "NaN",
+                                    formatdate(1006, usegmt=True)])
+def test_unusable_rate_limit_wait_fails_without_sleep(
+    provider_transport, monkeypatch, caplog, header,
+):
+    monkeypatch.setattr(time, "time", Mock(return_value=1000))
+    headers = {} if header is None else {"Retry-After": header}
+    provider_transport.side_effect = urllib.error.HTTPError(
+        "https://example.test", 429, "PRIVATE_BODY", headers, None,
+    )
+    with pytest.raises(RuntimeError, match="429"):
+        ai_manager.call_api("PRIVATE_PROMPT")
+    provider_transport.assert_called_once()
+    time.sleep.assert_not_called()
+    assert "PRIVATE_" not in caplog.text
+
+
+def test_repeated_rate_limit_stops_after_two_requests(provider_transport):
+    provider_transport.side_effect = urllib.error.HTTPError(
+        "https://example.test", 429, "PRIVATE_BODY", {"Retry-After": "1"}, None,
+    )
+    with pytest.raises(RuntimeError, match="429"):
+        ai_manager.call_api("Fictional prompt")
+    assert provider_transport.call_count == 2
+    time.sleep.assert_called_once_with(1)
