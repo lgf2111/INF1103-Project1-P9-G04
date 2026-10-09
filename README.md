@@ -1,6 +1,6 @@
 # PhishReport
 
-[![CI](https://github.com/lgf2111/phish-report/actions/workflows/ci.yml/badge.svg)](https://github.com/lgf2111/phish-report/actions/workflows/ci.yml)
+[![CI](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml/badge.svg)](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml)
 
 PhishReport is a procedural Python CLI for checking suspicious messages. It sends each new message to the Groq API, validates the AI findings, and applies rules using those findings and the user's reported actions. It displays a priority, a rule-based score and a response checklist, then saves the assessment as JSON.
 
@@ -55,6 +55,27 @@ python -m pytest
 ```
 
 The app lets you assess a message, view saved reports or quit. It writes `reports.json` in the directory from which you run it. The tests use sample AI responses and do not need network access.
+
+### Import an email
+
+Choose **Email**, then **2 (.eml file)** and enter the file path. We include the
+subject and every inline plain-text body part in the text sent for assessment.
+Valid Base64, quoted-printable and declared character sets are decoded without
+silently replacing invalid characters. Missing sender/subject headers are allowed;
+duplicate or malformed sender/subject headers are rejected.
+
+We support plain-text bodies, including nested mixed, alternative and related
+containers whose inline parts are all plain text. HTML bodies (including a
+plain-text/HTML alternative) and other inline content are rejected instead of
+assessing only part of the message. Attachments are excluded from assessment.
+For unsupported emails, restart the input flow and choose manual input to provide
+the relevant message text. We still ask separately about links, files, clicks,
+downloads and password/code disclosure; these actions are never inferred.
+
+Imports are limited to regular files of 2 MiB, 100 MIME parts, 32 nesting levels
+and 50,000 final message characters (including the subject). Invalid imports
+display an error and ask for another file. These limits are our implementation
+choices, not additional coursework requirements.
 
 ## Check the Docker build
 

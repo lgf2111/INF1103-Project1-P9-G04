@@ -22,6 +22,7 @@ __pycache__/
 # Reports and logs created while running the app
 reports.json
 *.log
+logs/
 
 # Operating-system metadata
 .DS_Store

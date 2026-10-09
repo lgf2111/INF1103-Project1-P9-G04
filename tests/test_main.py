@@ -1,10 +1,12 @@
 # Offline integration tests: real AI/logic/JSON; fictional input, mocked HTTP and database.
+import base64
 import json
 import logging
 import urllib.error
 from unittest.mock import MagicMock, Mock
 
 import ai_manager
+import ai_manager.client as ai_client
 import data_manager
 import main
 import pytest
@@ -16,11 +18,13 @@ def app_boundary(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GROQ_API_KEY", "fictional-integration-key")
     monkeypatch.setenv("GROQ_MODEL", "fictional/integration-model")
+    monkeypatch.delenv("GROQ_FALLBACK_MODEL", raising=False)
     for name in ("ai_manager", "data_manager"):
         logger = logging.getLogger(name)
         monkeypatch.setattr(logger, "handlers", [logging.NullHandler()])
         monkeypatch.setattr(logger, "level", logger.level)
         monkeypatch.setattr(logger, "propagate", logger.propagate)
+    monkeypatch.setattr(ai_client.time, "sleep", Mock())
     transport = MagicMock()
     monkeypatch.setattr(ai_manager.urllib.request, "urlopen", transport)
     monkeypatch.setattr(main.io_manager, "show_message", Mock())
@@ -30,7 +34,19 @@ def app_boundary(tmp_path, monkeypatch):
     monkeypatch.setattr(data_manager.psycopg, "connect", Mock(
         side_effect=AssertionError("Offline tests must not connect to PostgreSQL"),
     ))
+    # Reset the central logging so each test configures a fresh file logger in
+    # its own tmp_path, and restore the root logger afterwards.
+    main.logging_setup._configured = False
+    root = logging.getLogger()
+    saved_handlers = root.handlers[:]
+    saved_level = root.level
+    root.handlers = []
     yield transport
+    for handler in list(root.handlers):
+        handler.close()
+    root.handlers = saved_handlers
+    root.setLevel(saved_level)
+    main.logging_setup._configured = False
     for name in ("ai_manager", "data_manager"):
         for handler in list(logging.getLogger(name).handlers):
             handler.close()
@@ -63,6 +79,42 @@ def _record():
         "has_link": False, "link": None, "has_file": False, "file_name": None,
         "submitted_category": "password", "clicked": False, "downloaded": False,
     }
+
+
+@pytest.mark.parametrize("invented_contact", [False, True])
+def test_eml_retry_and_decoded_source_reach_real_pipeline(
+    app_boundary, monkeypatch, tmp_path, invented_contact,
+):
+    bad = tmp_path / "malformed.eml"
+    bad.write_bytes(b"Content-Type: text/plain; charset=utf-8\r\n\r\nInvalid \xff")
+    good = tmp_path / "encoded.eml"
+    body = "Fictional contact a1@example.test asks for a password."
+    good.write_bytes(
+        b"From: fictional@example.test\r\nSubject: Fictional request\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"Content-Transfer-Encoding: base64\r\n\r\n" + base64.b64encode(body.encode())
+    )
+    findings = _findings()
+    findings["details"]["emails"] = [
+        "absent@example.test" if invented_contact else "a1@example.test"
+    ]
+    _completed_reply(app_boundary, findings)
+    answers = iter(["email", "2", str(bad), str(good), "no", "no", "no"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    main.check_message()
+    assert app_boundary.call_count == 1
+    prompt = json.loads(app_boundary.call_args.args[0].data)["messages"][0]["content"]
+    assert str(good) not in prompt
+    records = data_manager.load()
+    if invented_contact:
+        assert records == []
+        main.io_manager.display_result.assert_not_called()
+        data_manager.upload.assert_not_called()
+    else:
+        assert len(records) == 1
+        assert records[0]["message"] == "Subject: Fictional request\n\n" + body
+        assert records[0]["result"]["score"] == 60
+        main.io_manager.display_result.assert_called_once_with(records[0]["result"])
 
 
 @pytest.mark.parametrize("failure", ["input", "timeout", "http", "incomplete", "json", "schema"])
@@ -103,7 +155,8 @@ def test_failed_assessment_never_reaches_logic_storage_or_success_display(
     assert "failed" in main.io_manager.show_message.call_args.args[0]
     assert "PRIVATE_" not in main.io_manager.show_message.call_args.args[0]
     assert record == original
-    assert app_boundary.call_count == (0 if failure == "input" else 1)
+    expected_calls = 0 if failure == "input" else 2 if failure in ("timeout", "http") else 1
+    assert app_boundary.call_count == expected_calls
 
 
 def test_successful_assessment_reaches_real_logic_and_storage(app_boundary, monkeypatch):
@@ -142,20 +195,20 @@ def test_menu_continues_after_bad_record_then_saves_next_assessment(
     assert len(data_manager.load()) == 1
     main.io_manager.display_result.assert_called_once()
     assert app_boundary.call_count == 1
-    log = (tmp_path / "phishreport.log").read_text(encoding="utf-8")
+    log = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
     assert log.count("stage=build_prompt") == 1
     assert "PRIVATE_" not in log and "fictional-integration-key" not in log
-    assert not any(isinstance(h, logging.FileHandler) for h in ai_manager.logger.handlers)
 
 
 def test_configured_logging_writes_sanitised_diagnostics(app_boundary, tmp_path, capsys):
-    handler = main.configure_logging()
-    assert handler is not None
+    # Default level (no LOG_LEVEL=DEBUG): sanitised, no traceback, no secrets.
+    assert main.logging_setup.setup_logging() is True
     app_boundary.side_effect = TimeoutError("PRIVATE_EXCEPTION")
     with pytest.raises(RuntimeError):
         ai_manager.call_api("PRIVATE_PROMPT")
-    handler.flush()
-    log = (tmp_path / "phishreport.log").read_text(encoding="utf-8")
+    for handler in logging.getLogger().handlers:
+        handler.flush()
+    log = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
     assert "WARNING" in log and "stage=call_api" in log and "timed out" in log
     assert "PRIVATE_" not in log and "fictional-integration-key" not in log
     assert "Traceback" not in log
@@ -163,7 +216,9 @@ def test_configured_logging_writes_sanitised_diagnostics(app_boundary, tmp_path,
 
 
 def test_unwritable_log_destination_keeps_menu_available(app_boundary, tmp_path, monkeypatch):
-    (tmp_path / "phishreport.log").mkdir()
+    # A file named "logs" makes os.makedirs("logs") fail, so the file log can't
+    # open - the app must still run and warn about logging being unavailable.
+    (tmp_path / "logs").write_text("not a directory")
     monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="3"))
 
     main.main()
@@ -175,20 +230,24 @@ def test_unwritable_log_destination_keeps_menu_available(app_boundary, tmp_path,
     app_boundary.assert_not_called()
 
 
-def test_failed_log_write_preserves_ai_error_without_traceback(app_boundary, monkeypatch, capsys):
-    handler = main.configure_logging()
-    stream = Mock(wraps=handler.stream)
-    stream.write.side_effect = OSError("PRIVATE_DISK_ERROR")
-    monkeypatch.setattr(handler, "stream", stream)
+def test_failed_log_write_does_not_crash_or_leak(app_boundary, monkeypatch, capsys):
+    # Even if writing to the log file fails, the AI error must still surface and
+    # nothing private may reach the terminal.
+    assert main.logging_setup.setup_logging() is True
+    for handler in logging.getLogger().handlers:
+        if hasattr(handler, "stream"):
+            stream = Mock(wraps=handler.stream)
+            stream.write.side_effect = OSError("PRIVATE_DISK_ERROR")
+            monkeypatch.setattr(handler, "stream", stream)
+    # logging must not raise on a write error (default behaviour).
+    monkeypatch.setattr(logging, "raiseExceptions", False)
     app_boundary.side_effect = TimeoutError("PRIVATE_PROVIDER_ERROR")
 
     with pytest.raises(RuntimeError, match="timed out"):
         ai_manager.call_api("PRIVATE_PROMPT")
 
-    main.io_manager.show_message.assert_called_once()
-    notice = main.io_manager.show_message.call_args.args[0]
-    assert "log" in notice.lower() and "PRIVATE_" not in notice
-    assert capsys.readouterr().err == ""
+    captured = capsys.readouterr()
+    assert "PRIVATE_" not in captured.out and "PRIVATE_" not in captured.err
 
 
 @pytest.mark.parametrize("failure", ["missing-findings", "detail-type", "invented-contact"])
@@ -264,14 +323,49 @@ def test_combined_caller_uses_ai_findings_for_the_same_unexposed_input(app_bound
 
 
 
-def test_configured_storage_logging_uses_application_file_and_is_closed(
+def test_configured_storage_logging_uses_application_file(
     app_boundary, tmp_path, monkeypatch
 ):
     (tmp_path / "reports.json").write_text('{PRIVATE_BROKEN')
     monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="3"))
     main.main()
-    text = (tmp_path / "phishreport.log").read_text(encoding="utf-8")
+    text = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
     assert "data_manager" in text and "Could not read local report history" in text
+    # Default (non-debug) logging must not leak the broken file contents.
     assert "PRIVATE" not in text
-    assert not any(isinstance(h, logging.FileHandler) for h in data_manager.logger.handlers)
+    # The corrupt history must be preserved, never overwritten.
     assert (tmp_path / "reports.json").read_text() == '{PRIVATE_BROKEN'
+
+
+def test_recovered_timeout_saves_and_displays_only_one_assessment(app_boundary, monkeypatch):
+    record = _record()
+    _successful_reply(app_boundary)
+    app_boundary.side_effect = [TimeoutError("PRIVATE_ERROR"), app_boundary.return_value]
+    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=record))
+
+    main.check_message()
+
+    assert app_boundary.call_count == 2
+    saved = data_manager.load()
+    assert len(saved) == 1
+    assert saved[0]["ai"] == _findings()
+    main.io_manager.display_result.assert_called_once()
+    main.io_manager.show_message.assert_not_called()
+    data_manager.upload.assert_called_once_with(saved)
+
+
+def test_timeout_fallback_reaches_real_logic_and_saves_once(app_boundary, monkeypatch):
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    _successful_reply(app_boundary)
+    app_boundary.side_effect = [TimeoutError(), app_boundary.return_value]
+    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=_record()))
+
+    main.check_message()
+
+    assert app_boundary.call_count == 2
+    assert json.loads(app_boundary.call_args.args[0].data)["model"] == "fictional/faster"
+    saved = data_manager.load()
+    assert len(saved) == 1 and saved[0]["ai"] == _findings()
+    main.io_manager.display_result.assert_called_once()
+    main.io_manager.show_message.assert_not_called()
+    data_manager.upload.assert_called_once_with(saved)

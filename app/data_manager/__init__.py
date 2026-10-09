@@ -2,15 +2,14 @@
 # Saves reports locally and in PostgreSQL. OWNER: Pair C.
 
 import json
-import logging
 import os
 import tempfile
 
 import psycopg
+from misc import logging_setup
 from psycopg.rows import dict_row
 
-logger = logging.getLogger(__name__)
-logger.addHandler(logging.NullHandler())
+logger = logging_setup.get_logger(__name__)
 
 FILE = "reports.json"
 
@@ -188,6 +187,9 @@ def upload(records: list[dict]) -> int:
                     ],
                 )
     except psycopg.Error as error:
+        # Safe by default (reason only); full traceback with the real cause when
+        # LOG_LEVEL=DEBUG. The public message stays generic so no URL is shown.
+        logging_setup.log_failure(logger, "PostgreSQL upload failed")
         raise RuntimeError("Could not save reports to PostgreSQL.") from error
 
     return len(records)
@@ -221,6 +223,7 @@ def fetch() -> list[dict]:
                 )
                 return [_restore_record(row) for row in cursor.fetchall()]
     except psycopg.Error as error:
+        logging_setup.log_failure(logger, "PostgreSQL read failed")
         raise RuntimeError("Could not load reports from PostgreSQL.") from error
 
 
@@ -234,7 +237,9 @@ def load(*, strict=False):
     try:
         return _read_records()
     except (OSError, ValueError):
-        logger.warning("Could not read local report history; existing file preserved.")
+        logging_setup.log_failure(
+            logger, "Could not read local report history; existing file preserved."
+        )
         if strict:
             raise
         return []
