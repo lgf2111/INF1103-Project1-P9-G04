@@ -1,4 +1,5 @@
 # ai_manager.py
+# ai_manager package (entry point)
 # Talks to the Groq API (free tier). No business rules here. OWNER: Pair A.
 #
 # Every message goes through here - this is the core of the app.
@@ -16,8 +17,9 @@ import re
 import urllib.error
 import urllib.request
 
-import logging_setup
-from ai_prompts import EXTRACTION_INSTRUCTIONS, FINDINGS_INSTRUCTIONS
+from misc import logging_setup
+
+from .prompts import EXTRACTION_INSTRUCTIONS, FINDINGS_INSTRUCTIONS
 
 # The application configures the destination; importing AI must not print or open files.
 logger = logging_setup.get_logger(__name__)
