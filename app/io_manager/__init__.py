@@ -28,8 +28,8 @@ def main_menu():
     print("\n=== PhishReport ===")
     print("1. Check a new message")
     print("2. View saved reports")
-    print("3. Quit")
-    print("4. Upload a file to assess")
+    print("3. Upload a file to assess")
+    print("4. Quit")
 
     return get_valid_choice(
         "Choose 1-4: ",

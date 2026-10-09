@@ -135,10 +135,10 @@ def main():
             elif choice == "2":
                 view_reports()
             elif choice == "3":
+                upload_file()
+            elif choice == "4":
                 io_manager.show_message("Bye!")
                 break
-            elif choice == "4":
-                upload_file()
             else:
                 io_manager.show_message("Please choose 1, 2, 3 or 4.")
     except (KeyboardInterrupt, EOFError):

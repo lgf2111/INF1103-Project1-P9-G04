@@ -156,7 +156,7 @@ def test_startup(storage, monkeypatch, database_records, local_records, failed):
     def menu():
         """Record the first menu and immediately quit."""
         events.append("menu")
-        return "3"
+        return "4"
 
     def notice(message):
         """Capture notices without printing during the test."""
@@ -309,7 +309,7 @@ def test_coordinator_handles_broken_local_history(storage, monkeypatch, capsys, 
     storage.write_text('{broken')
     monkeypatch.setattr(data_manager, "fetch", Mock(side_effect=RuntimeError("Unavailable")))
     monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
-    monkeypatch.setattr(main.io_manager, "main_menu", lambda: "3")
+    monkeypatch.setattr(main.io_manager, "main_menu", lambda: "4")
     if operation == "save":
         record = _complete_report()
         monkeypatch.setattr(main.io_manager, "collect_input", lambda: {
