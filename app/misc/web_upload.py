@@ -124,8 +124,10 @@ def start_and_wait_for_upload():
     print(f"\nOpen http://{DISPLAY_HOST}:{PORT} in your browser to upload a file.")
     print("Waiting for upload... (Ctrl+C to cancel)")
 
-    while not _result["done"]:
-        server.handle_request()  # handles one request at a time
-
-    server.server_close()
+    try:
+        while not _result["done"]:
+            server.handle_request()  # handles one request at a time
+    finally:
+        # Always release the port, even if the user pressed Ctrl+C to cancel.
+        server.server_close()
     return _result["text"]

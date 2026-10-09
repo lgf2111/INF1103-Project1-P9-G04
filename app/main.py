@@ -125,21 +125,25 @@ def main():
     if not logging_setup.setup_logging():
         io_manager.show_message("Warning: diagnostic logging is unavailable.")
     logger.info("Application started")
-    if load_reports() == []:
-        io_manager.show_message("No saved reports found.")
-    while True:
-        choice = io_manager.main_menu()
-        if choice == "1":
-            check_message()
-        elif choice == "2":
-            view_reports()
-        elif choice == "3":
-            io_manager.show_message("Bye!")
-            break
-        elif choice == "4":
-            upload_file()
-        else:
-            io_manager.show_message("Please choose 1, 2, 3 or 4.")
+    try:
+        if load_reports() == []:
+            io_manager.show_message("No saved reports found.")
+        while True:
+            choice = io_manager.main_menu()
+            if choice == "1":
+                check_message()
+            elif choice == "2":
+                view_reports()
+            elif choice == "3":
+                io_manager.show_message("Bye!")
+                break
+            elif choice == "4":
+                upload_file()
+            else:
+                io_manager.show_message("Please choose 1, 2, 3 or 4.")
+    except (KeyboardInterrupt, EOFError):
+        # Ctrl+C (interrupt) or Ctrl+D (end of input): exit cleanly, no traceback.
+        io_manager.show_message("\nInterrupted. Goodbye!")
     logger.info("Application exited")
 
 if __name__ == "__main__":
