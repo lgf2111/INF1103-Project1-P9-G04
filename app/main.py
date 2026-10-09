@@ -10,6 +10,9 @@ import io_manager
 import logic_manager
 from misc import logging_setup
 
+# web_upload is imported lazily inside upload_file() so the web server code only
+# loads when the user actually chooses to upload a file.
+
 logger = logging_setup.get_logger(__name__)
 
 
@@ -25,9 +28,14 @@ def load_env():
                 key, value = line.split("=", 1)
                 os.environ.setdefault(key.strip(), value.strip())
 
-def check_message():
-    """Validate one combined AI response before assessment, saving or display."""
-    record = io_manager.collect_input()
+def check_message(record=None):
+    """Validate one combined AI response before assessment, saving or display.
+
+    If no record is given, collect one interactively. A caller (e.g. the file
+    upload option) may pass a pre-built record instead.
+    """
+    if record is None:
+        record = io_manager.collect_input()
 
     try:
         prompt = ai_manager.build_prompt(record)
@@ -64,6 +72,25 @@ def check_message():
 
     # io_manager.display_result expects the logic result dictionary.
     io_manager.display_result(result)
+
+def upload_file():
+    """Get a file's text via the one-shot web uploader, then assess it."""
+    # Lazy import: the web server code only loads when this option is used.
+    from misc import web_upload
+
+    try:
+        text = web_upload.start_and_wait_for_upload()
+    except (OSError, RuntimeError) as error:
+        logging_setup.log_failure(logger, "File upload failed")
+        io_manager.show_message("Upload failed: " + str(error))
+        return
+
+    if not text or not text.strip():
+        io_manager.show_message("No usable text in the uploaded file.")
+        return
+
+    record = io_manager.build_record_from_message(text.strip())
+    check_message(record)
 
 def load_reports() -> list[dict] | None:
     """Read both histories; return None when local history is unavailable and DB empty."""
@@ -109,8 +136,10 @@ def main():
         elif choice == "3":
             io_manager.show_message("Bye!")
             break
+        elif choice == "4":
+            upload_file()
         else:
-            io_manager.show_message("Please choose 1, 2 or 3.")
+            io_manager.show_message("Please choose 1, 2, 3 or 4.")
     logger.info("Application exited")
 
 if __name__ == "__main__":

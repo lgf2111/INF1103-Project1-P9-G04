@@ -29,8 +29,9 @@ elif [ "$command" = "run" ]; then
         exit 1
     fi
     echo "Starting the app (Ctrl+C to quit)..."
-    # --env-file passes your key into the container; -it lets you type answers
-    docker run --rm -it --env-file .env "$IMAGE"
+    # --env-file passes your key into the container; -it lets you type answers;
+    # -p publishes the file-upload page (option 3) so your browser can reach it.
+    docker run --rm -it -p 8000:8000 --env-file .env "$IMAGE"
 
 elif [ "$command" = "test" ]; then
     echo "Running the tests inside the container..."
