@@ -1,6 +1,7 @@
 import io_manager
 import pytest
 
+
 def test_ask_yes_no_accepts_yes(monkeypatch):
     monkeypatch.setattr("builtins.input", lambda _: "YES")
 
