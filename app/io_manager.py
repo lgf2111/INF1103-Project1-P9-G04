@@ -1,10 +1,22 @@
 # io_manager.py
 # All input() and print() live here. OWNER: Jeremy Goh & Bryan Lee.
 
+import os
+import stat
 from email import policy
+from email.errors import (
+    CloseBoundaryNotFoundDefect,
+    InvalidBase64CharactersDefect,
+    InvalidBase64PaddingDefect,
+    MissingHeaderBodySeparatorDefect,
+)
 from email.parser import BytesParser
 from pathlib import Path
 
+MAX_EML_BYTES = 2 * 1024 * 1024
+MAX_MIME_PARTS = 100
+MAX_MIME_DEPTH = 32
+MAX_MESSAGE_CHARS = 50_000
 
 def main_menu():
     print("\n=== PhishReport ===")
@@ -98,34 +110,128 @@ def get_message():
 
     return message
 
+def validate_mime_limits(email_message):
+    stack = [(email_message, 0)]
+    part_count = 0
+
+    while stack:
+        part, depth = stack.pop()
+        part_count += 1
+
+        # Reject emails containing more than 100 MIME parts.
+        if part_count > MAX_MIME_PARTS:
+            raise ValueError("Email has too many MIME parts.")
+
+        # Reject MIME nesting deeper than 32 levels.
+        if depth > MAX_MIME_DEPTH:
+            raise ValueError("Email MIME nesting is too deep.")
+
+        # Reject malformed MIME structures.
+        for defect in part.defects:
+            if isinstance(
+                defect,
+                (
+                    CloseBoundaryNotFoundDefect,
+                    MissingHeaderBodySeparatorDefect,
+                ),
+            ):
+                raise ValueError("Malformed MIME structure detected.")
+
+        # Inspect child MIME parts without recursion.
+        if part.is_multipart():
+            for child in part.iter_parts():
+                stack.append((child, depth + 1))
+
 def read_eml_details(file_path):
     with Path(file_path).open("rb") as email_file:
+
+        # Ensure the opened path is a regular file.
+        file_info = os.fstat(email_file.fileno())
+
+        if not stat.S_ISREG(file_info.st_mode):
+            raise ValueError("Email path must be a regular file.")
+
+        # Read only up to the maximum allowed size + 1 byte.
+        raw_email = email_file.read(MAX_EML_BYTES + 1)
+
+    # Reject email files larger than 2 MiB.
+    if len(raw_email) > MAX_EML_BYTES:
+        raise ValueError("Email file exceeds the size limit.")
+
+    # Parse the email and validate its MIME structure.
+    try:
         email_message = BytesParser(
             policy=policy.default
-        ).parse(email_file)
+        ).parsebytes(raw_email)
 
+        # Validate MIME part count and nesting depth.
+        validate_mime_limits(email_message)
+
+        # Extract the plain-text email body.
+        body_part = email_message.get_body(
+            preferencelist=("plain",)
+        )
+
+    except RecursionError as error:
+        raise ValueError(
+            "Email MIME structure is too deeply nested."
+        ) from error
+
+    # Check for duplicate From headers.
+    from_headers = email_message.get_all("From", [])
+
+    if len(from_headers) > 1:
+        raise ValueError("Duplicate From header detected.")
+
+    # Check for duplicate Subject headers.
+    subject_headers = email_message.get_all("Subject", [])
+
+    if len(subject_headers) > 1:
+        raise ValueError("Duplicate Subject header detected.")
+
+    # Extract the sender and subject.
     sender = str(email_message.get("From") or "").strip() or None
     subject = str(email_message.get("Subject") or "").strip()
 
-    body_part = email_message.get_body(
-        preferencelist=("plain",)
-    )
-
+    # Reject emails without a readable plain-text body.
     if body_part is None:
         raise ValueError("No readable plain-text message found.")
 
     try:
         body = body_part.get_content()
-    except (UnicodeError, LookupError) as error:
-        raise ValueError("Could not decode email content.") from error
 
+    except RecursionError as error:
+        raise ValueError(
+            "Email MIME structure is too deeply nested."
+        ) from error
+
+    except (UnicodeError, LookupError) as error:
+        raise ValueError(
+            "Could not decode email content."
+        ) from error
+
+    # Check for invalid Base64 characters after decoding.
+    # Check for invalid Base64 characters or padding after decoding.
+    for defect in body_part.defects:
+        if isinstance(
+            defect,
+            (InvalidBase64CharactersDefect, InvalidBase64PaddingDefect),
+        ):
+            raise ValueError("Invalid Base64 content detected.")
+    # Reject empty messages.
     if not isinstance(body, str) or not body.strip():
         raise ValueError("Email message cannot be blank.")
 
-    message = body.strip()
+    # Normalize Windows and other line endings.
+    message = body.replace("\r\n", "\n").replace("\r", "\n").strip()
 
+    # Include the subject in the message for analysis.
     if subject:
         message = f"Subject: {subject}\n\n{message}"
+
+    # Reject messages exceeding 50,000 characters.
+    if len(message) > MAX_MESSAGE_CHARS:
+        raise ValueError("Email exceeds the message length limit.")
 
     return sender, message
 
