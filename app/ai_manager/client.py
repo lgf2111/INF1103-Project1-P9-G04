@@ -25,6 +25,22 @@ from .parsing import reject_constant, unique_object
 DEFAULT_MODEL = "openai/gpt-oss-20b"
 URL = "https://api.groq.com/openai/v1/chat/completions"
 MAX_RATE_LIMIT_WAIT = 5
+# Default total attempts for a transient failure (service 5xx, 429, timeout,
+# offline). Override with GROQ_MAX_ATTEMPTS to make the app try harder; the AI is
+# required (C2), so we never bypass it, we just retry more before giving up.
+DEFAULT_MAX_ATTEMPTS = 2
+
+
+def _max_attempts():
+    """Read GROQ_MAX_ATTEMPTS (>=1) at request time; fall back to the default."""
+    value = os.environ.get("GROQ_MAX_ATTEMPTS")
+    if value is None:
+        return DEFAULT_MAX_ATTEMPTS
+    try:
+        parsed = int(value)
+    except ValueError:
+        return DEFAULT_MAX_ATTEMPTS
+    return parsed if parsed >= 1 else DEFAULT_MAX_ATTEMPTS
 
 
 def call_api(prompt: str) -> str:
@@ -38,11 +54,11 @@ def call_api(prompt: str) -> str:
     Read GROQ_MODEL at request time, after the caller has loaded its environment.
     An unset model uses DEFAULT_MODEL; an explicitly blank setting is rejected.
     A timeout uses GROQ_FALLBACK_MODEL when configured, otherwise the same model.
-    Other transient failures retry the same model. At most two requests are sent,
-    preserving the full prompt and settings with a 30-second socket timeout each.
-    Backoff is 0.5-1.5 seconds; this is not a total wall-clock deadline.
-    HTTP 429 retries only with a valid Retry-After wait of at most five seconds.
-    Invalid responses and configuration errors are not retried.
+    Other transient failures retry the same model. Up to GROQ_MAX_ATTEMPTS requests
+    are sent (default 2), preserving the full prompt and settings with a 30-second
+    socket timeout each. Backoff is 0.5-1.5 seconds between attempts; this is not a
+    total wall-clock deadline. HTTP 429 retries only with a valid Retry-After wait of
+    at most five seconds. Invalid responses and configuration errors are not retried.
     """
     if not isinstance(prompt, str) or not prompt.strip():
         raise failure("call_api", "AI prompt must be nonblank text.", ValueError)
@@ -84,7 +100,8 @@ def call_api(prompt: str) -> str:
             "User-Agent": "phishreport/1.0",
         },
     )
-    for attempt in (1, 2):
+    max_attempts = _max_attempts()
+    for attempt in range(1, max_attempts + 1):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 raw = response.read()
@@ -108,7 +125,7 @@ def call_api(prompt: str) -> str:
                 timed_out = isinstance(cause, TimeoutError)
                 reason = ("The AI request timed out." if timed_out
                           else "Could not complete the AI request.")
-            if attempt == 2 or not retryable:
+            if attempt == max_attempts or not retryable:
                 raise failure("call_api", reason, RuntimeError) from None
             # Only fixed diagnostics are logged; never include raw exception/provider data.
             retry_model = "same_model"
@@ -119,7 +136,9 @@ def call_api(prompt: str) -> str:
                     URL, data=json.dumps(payload).encode(), headers=dict(request.header_items()),
                 )
                 retry_model = "fallback_model"
-            logger.info("stage=call_api attempt=1 retry=%s reason=%s", retry_model, reason)
+            logger.info(
+                "stage=call_api attempt=%s retry=%s reason=%s", attempt, retry_model, reason
+            )
             time.sleep(random.uniform(0.5, 1.5) if retry_delay is None else retry_delay)
 
     try:
