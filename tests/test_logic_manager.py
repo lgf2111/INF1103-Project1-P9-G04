@@ -163,7 +163,7 @@ def test_evaluate_guidance_matches_reported_interaction(action, guidance):
     result = logic_manager.evaluate(record)
     assert any(guidance in step.lower() for step in result["checklist"])
     assert not any("change" in step.lower() and "password" in step.lower()
-                for step in result["checklist"])
+                   for step in result["checklist"])
 
 def test_evaluate_scores_once(monkeypatch):
     """Ensure an assessment calculates its score exactly once."""
