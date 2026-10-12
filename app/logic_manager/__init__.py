@@ -32,9 +32,9 @@ def score(record):
     return 10
 
 
-def route(record):
-    """Route an assessed record using the logic score and agreed thresholds."""
-    value = score(record)
+def route(value):
+    """Return the priority for a calculated score."""
+    # Apply the agreed priority thresholds.
     if value >= 70:
         return "HIGH"
     if value >= 35:
@@ -49,7 +49,7 @@ def evaluate(record):
     persistence operations belong here. Preserve the original record unchanged.
     """
     value = score(record)
-    priority = route(record)
+    priority = route(value)
     findings = record["ai"]
     reasons = []
     category = record["submitted_category"]
