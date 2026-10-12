@@ -156,9 +156,10 @@ def main():
                 # Manual Email, SMS or Chat input.
                 check_message()
             elif choice == "2":
-                # Import a .eml file directly.
-                record = io_manager.collect_input(eml_file=True)
-                check_message(record)
+                # Import a .eml file chosen from the user's saved email folder.
+                record = io_manager.collect_input_from_folder()
+                if record is not None:
+                    check_message(record)
             elif choice == "3":
                 # Existing browser-based file upload.
                 upload_file()
