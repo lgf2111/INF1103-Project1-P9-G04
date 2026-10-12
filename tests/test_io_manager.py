@@ -305,35 +305,7 @@ def test_read_eml_details_extracts_email_content(tmp_path):
         "Download Update.exe immediately."
     )
 
-def test_get_eml_input_reprompts_invalid_path(monkeypatch, tmp_path):
-    email_file = tmp_path / "valid.eml"
-
-    email_file.write_text(
-        "From: test@example.com\n"
-        "Subject: Test Email\n"
-        'Content-Type: text/plain; charset="utf-8"\n'
-        "\n"
-        "This is a test message.\n",
-        encoding="utf-8",
-    )
-
-    answers = iter([
-        "",
-        "invalid.txt",
-        str(tmp_path / "missing.eml"),
-        str(email_file),
-    ])
-
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
-
-    sender, message = io_manager.get_eml_input()
-
-    assert sender == "test@example.com"
-    assert message == "Subject: Test Email\n\nThis is a test message."
-
-def test_get_eml_input_reprompts_empty_message(
-    monkeypatch, tmp_path, capsys
-):
+def test_read_eml_details_rejects_empty_message(tmp_path):
     # Create an email with an empty message body
     empty_email = tmp_path / "empty.eml"
 
@@ -345,46 +317,11 @@ def test_get_eml_input_reprompts_empty_message(
         encoding="utf-8",
     )
 
-    # Create a valid email
-    valid_email = tmp_path / "valid.eml"
+    with pytest.raises(ValueError, match="cannot be blank"):
+        io_manager.read_eml_details(empty_email)
 
-    valid_email.write_text(
-        "From: test@example.com\n"
-        "Subject: Test Email\n"
-        'Content-Type: text/plain; charset="utf-8"\n'
-        "\n"
-        "This is a valid message.\n",
-        encoding="utf-8",
-    )
 
-    # First attempt is invalid, second is valid
-    answers = iter([
-        str(empty_email),
-        str(valid_email),
-    ])
-
-    monkeypatch.setattr(
-        "builtins.input",
-        lambda _: next(answers)
-    )
-
-    sender, message = io_manager.get_eml_input()
-
-    # Verify the valid email was accepted
-    assert sender == "test@example.com"
-
-    assert message == (
-        "Subject: Test Email\n\n"
-        "This is a valid message."
-    )
-
-    # Verify the first email was rejected
-    output = capsys.readouterr().out
-
-    assert "Unable to read the email file." in output
-    assert "Email loaded successfully." in output
-
-def test_collect_input_eml_with_follow_up_questions(
+def test_collect_input_from_folder_with_follow_up_questions(
     monkeypatch, tmp_path
 ):
     email_file = tmp_path / "suspicious.eml"
@@ -399,7 +336,6 @@ def test_collect_input_eml_with_follow_up_questions(
     )
 
     answers = iter([
-        str(email_file),               # Email file path
         "yes",                         # Link included?
         "https://example.com/verify",  # Link
         "yes",                         # File included?
@@ -417,7 +353,9 @@ def test_collect_input_eml_with_follow_up_questions(
 
     monkeypatch.setattr("builtins.input", fake_input)
 
-    record = io_manager.collect_input(eml_file=True)
+    monkeypatch.setattr(io_manager, "get_eml_folder", lambda: str(tmp_path))
+    monkeypatch.setattr(io_manager, "choose_eml_file", lambda folder: email_file)
+    record = io_manager.collect_input_from_folder()
 
     assert record == {
         "channel": "email",
@@ -441,9 +379,7 @@ def test_collect_input_eml_with_follow_up_questions(
     assert any("Did you download the file?" in p for p in prompts)
     assert any("Did you give a password or code?" in p for p in prompts)
 
-def test_get_eml_input_recovers_from_deeply_nested_mime(
-    monkeypatch, tmp_path, capsys
-):
+def test_read_eml_details_rejects_deeply_nested_mime(tmp_path):
     # Create an email with 1,100 nested MIME containers.
     nested_email = tmp_path / "nested.eml"
     depth = 1100
@@ -479,42 +415,9 @@ def test_get_eml_input_recovers_from_deeply_nested_mime(
         encoding="utf-8",
     )
 
-    # Create a normal email that should work.
-    valid_email = tmp_path / "valid.eml"
+    with pytest.raises(ValueError, match="deeply nested|nesting is too deep"):
+        io_manager.read_eml_details(nested_email)
 
-    valid_email.write_text(
-        "From: test@example.com\n"
-        "Subject: Valid Email\n"
-        'Content-Type: text/plain; charset="utf-8"\n'
-        "\n"
-        "This is a valid message.\n",
-        encoding="utf-8",
-    )
-
-    # User enters the nested email first, then a valid email.
-    answers = iter([
-        str(nested_email),
-        str(valid_email),
-    ])
-
-    monkeypatch.setattr(
-        "builtins.input",
-        lambda _: next(answers),
-    )
-
-    sender, message = io_manager.get_eml_input()
-
-    # The application should recover and accept the valid email.
-    assert sender == "test@example.com"
-    assert message == (
-        "Subject: Valid Email\n\n"
-        "This is a valid message."
-    )
-
-    output = capsys.readouterr().out
-
-    assert "Unable to read the email file." in output
-    assert "Email loaded successfully." in output
 
 def test_read_eml_details_rejects_too_many_mime_parts(tmp_path):
     email_file = tmp_path / "too_many_parts.eml"
@@ -884,7 +787,7 @@ def test_read_eml_details_rejects_invalid_base64_padding(tmp_path):
     with pytest.raises(ValueError, match="Invalid Base64"):
         io_manager.read_eml_details(email_file)
 
-def test_collect_input_direct_eml(monkeypatch, tmp_path):
+def test_collect_input_from_folder_without_link_or_file(monkeypatch, tmp_path):
     email_file = tmp_path / "sample.eml"
 
     email_file.write_bytes(
@@ -896,7 +799,6 @@ def test_collect_input_direct_eml(monkeypatch, tmp_path):
     )
 
     answers = iter([
-        str(email_file),
         "no",  # Link included?
         "no",  # File included?
         "no",  # Password/OTP disclosed?
@@ -907,7 +809,9 @@ def test_collect_input_direct_eml(monkeypatch, tmp_path):
         lambda _: next(answers),
     )
 
-    result = io_manager.collect_input(eml_file=True)
+    monkeypatch.setattr(io_manager, "get_eml_folder", lambda: str(tmp_path))
+    monkeypatch.setattr(io_manager, "choose_eml_file", lambda folder: email_file)
+    result = io_manager.collect_input_from_folder()
 
     assert result == {
         "channel": "email",
@@ -921,3 +825,12 @@ def test_collect_input_direct_eml(monkeypatch, tmp_path):
         "downloaded": False,
         "submitted_category": None,
     }
+
+def test_collect_input_from_folder_cancel_skips_follow_up_questions(monkeypatch):
+    monkeypatch.setattr(io_manager, "get_eml_from_folder", lambda: None)
+
+    def unexpected_input(prompt):
+        pytest.fail("Cancelled email selection must not ask follow-up questions")
+
+    monkeypatch.setattr("builtins.input", unexpected_input)
+    assert io_manager.collect_input_from_folder() is None

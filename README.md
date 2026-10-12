@@ -58,9 +58,10 @@ The app lets you assess a message, view saved reports or quit. It writes `report
 
 ### Import an email
 
-Choose **2. Import an email (.eml file)** from the main menu and enter the file
-path directly. Then answer the link, file and action questions. Choose **1. Check
-a new message (Manual Input)** to type an Email, SMS or Chat message. We include the
+Choose **2. Import an email (.eml file)** from the main menu. On first use,
+choose the folder containing your emails, then select a listed file. The folder
+is saved for later imports. Then answer the link, file and action questions.
+Choose **1. Check a new message (Manual Input)** to type an Email, SMS or Chat message. We include the
 subject and every inline plain-text body part in the text sent for assessment.
 Valid Base64, quoted-printable and declared character sets are decoded without
 silently replacing invalid characters. Missing sender/subject headers are allowed;
