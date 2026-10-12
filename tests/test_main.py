@@ -99,7 +99,12 @@ def test_eml_retry_and_decoded_source_reach_real_pipeline(
         "absent@example.test" if invented_contact else "a1@example.test"
     ]
     _completed_reply(app_boundary, findings)
-    answers = iter(["2", str(bad), str(good), "no", "no", "no", "5"])
+    # Keep the saved-config file inside tmp_path so it doesn't touch the repo.
+    monkeypatch.chdir(tmp_path)
+    # Option 2 now picks a .eml from a saved folder. First run asks for the
+    # folder; then the newest files are listed (encoded.eml is newer than
+    # malformed.eml). Pick the malformed one first (retry), then the good one.
+    answers = iter(["2", str(tmp_path), "2", "1", "no", "no", "no", "5"])
     prompts = []
 
     def answer(prompt):
@@ -108,7 +113,8 @@ def test_eml_retry_and_decoded_source_reach_real_pipeline(
 
     monkeypatch.setattr("builtins.input", answer)
     main.main()
-    assert prompts[:2] == ["Choose 1-5: ", "Enter .eml file path: "]
+    assert prompts[0] == "Choose 1-5: "
+    assert any("email folder" in prompt.lower() for prompt in prompts)
     assert not any("channel" in prompt.lower() or "input method" in prompt.lower()
                    for prompt in prompts)
     assert app_boundary.call_count == 1

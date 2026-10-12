@@ -93,6 +93,35 @@ def build_record_from_message(message, channel="email", sender=None):
         "submitted_category": user_actions["submitted_category"],
     }
 
+def collect_input_from_folder():
+    """Build a record from a .eml chosen out of the saved folder.
+
+    Returns None if the user cancels or no file is available. Mirrors
+    collect_input(eml_file=True): email channel, sender/message from the file,
+    then the usual link/file/action questions.
+    """
+    loaded = get_eml_from_folder()
+    if loaded is None:
+        return None
+    sender, message = loaded
+
+    has_link, link = get_link_information()
+    has_file, file_name = get_file_information()
+    user_actions = collect_user_actions(has_link, has_file)
+
+    return {
+        "channel": "email",
+        "sender": sender,
+        "message": message,
+        "has_link": has_link,
+        "link": link,
+        "has_file": has_file,
+        "file_name": file_name,
+        "clicked": user_actions["clicked"],
+        "downloaded": user_actions["downloaded"],
+        "submitted_category": user_actions["submitted_category"],
+    }
+
 def ask_yes_no(question):
     answer = input(question).strip().lower()
 
@@ -339,6 +368,95 @@ def get_eml_input():
 
         print("Email loaded successfully.")
 
+        return sender, message
+
+
+# --- Email folder picker (added feature) ---------------------------------
+# Lets the user pick a .eml file from a saved folder instead of typing a path.
+# Reuses read_eml_details() above for all parsing/validation.
+
+EML_FOLDER_KEY = "eml_folder"   # key in the local config file
+EML_PAGE_SIZE = 5               # how many .eml files to show at a time
+
+
+def get_eml_folder():
+    """Return the saved email folder, asking for it the first time and saving it."""
+    from misc import config
+
+    folder = config.get(EML_FOLDER_KEY)
+    if folder and Path(folder).is_dir():
+        return folder
+
+    # First run (or the saved folder is gone): ask and save.
+    if folder:
+        print(f"Saved email folder '{folder}' is no longer available.")
+    print("First time: tell PhishReport which folder holds your .eml files.")
+    while True:
+        entered = input("Enter the path to your email folder: ").strip().strip('"')
+        if not entered:
+            print("Folder path cannot be blank.")
+            continue
+        if not Path(entered).is_dir():
+            print("That folder does not exist. Please enter a valid folder path.")
+            continue
+        config.set(EML_FOLDER_KEY, entered)
+        print("Saved. You won't be asked again (option available to change later).")
+        return entered
+
+
+def list_eml_files(folder):
+    """Return the folder's .eml files, newest first by modified time."""
+    files = [p for p in Path(folder).iterdir()
+             if p.is_file() and p.suffix.lower() == ".eml"]
+    files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+    return files
+
+
+def choose_eml_file(folder):
+    """Show the latest .eml files, paginate on request, return the chosen path."""
+    files = list_eml_files(folder)
+    if not files:
+        print(f"No .eml files found in '{folder}'.")
+        return None
+
+    shown = 0
+    while True:
+        # Show the next page of files.
+        page = files[shown:shown + EML_PAGE_SIZE]
+        for index, path in enumerate(page, start=shown + 1):
+            print(f"{index}. {path.name}")
+        shown += len(page)
+
+        options = "Enter a number to pick a file"
+        if shown < len(files):
+            options += ", 'm' for more"
+        options += ", or 'c' to cancel: "
+        answer = input(options).strip().lower()
+
+        if answer == "c":
+            return None
+        if answer == "m" and shown < len(files):
+            continue
+        if answer.isdigit() and 1 <= int(answer) <= shown:
+            return files[int(answer) - 1]
+        print("Invalid choice. Please try again.")
+
+
+def get_eml_from_folder():
+    """Pick a .eml from the saved folder and load it (sender, message)."""
+    folder = get_eml_folder()
+    while True:
+        chosen = choose_eml_file(folder)
+        if chosen is None:
+            return None  # user cancelled or no files
+        try:
+            sender, message = read_eml_details(str(chosen))
+        except (OSError, ValueError):
+            print("Unable to read that email file. Please choose another.")
+            print("Use a valid plain-text email; HTML bodies are not supported. "
+                  "Attachments are not assessed.")
+            continue
+        print("Email loaded successfully.")
         return sender, message
 
 

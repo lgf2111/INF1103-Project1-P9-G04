@@ -24,6 +24,9 @@ reports.json
 *.log
 logs/
 
+# Local user settings (e.g. saved email folder path)
+.phishreport_config.json
+
 # Operating-system metadata
 .DS_Store
 Thumbs.db
