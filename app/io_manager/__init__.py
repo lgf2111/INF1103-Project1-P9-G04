@@ -26,15 +26,16 @@ MAX_MESSAGE_CHARS = 50_000
 
 def main_menu():
     print("\n=== PhishReport ===")
-    print("1. Check a new message")
-    print("2. View saved reports")
+    print("1. Check a new message (Manual Input)")
+    print("2. Import an email (.eml file)")
     print("3. Upload a file to assess")
-    print("4. Quit")
+    print("4. View saved reports")
+    print("5. Quit")
 
     return get_valid_choice(
-        "Choose 1-4: ",
-        ("1", "2", "3", "4"),
-        "Invalid choice. Please choose 1-4: ",
+        "Choose 1-5: ",
+        ("1", "2", "3", "4", "5"),
+        "Invalid choice. Please choose 1-5: ",
     )
 
 def get_valid_choice(prompt, valid_choices, error_message):
@@ -45,22 +46,12 @@ def get_valid_choice(prompt, valid_choices, error_message):
 
     return choice
 
-def collect_input():
-    channel = get_channel()
-
-    if channel == "email":
-        method = get_valid_choice(
-            "Choose email input method (1 = Manual, 2 =.eml file): ",
-            ("1", "2"),
-            "Invalid choice. Please enter 1 or 2: ",
-        )
-
-        if method == "2":
-            sender, message = get_eml_input()
-        else:
-            sender = get_sender()
-            message = get_message()
+def collect_input(eml_file=False):
+    if eml_file:
+        channel = "email"
+        sender, message = get_eml_input()
     else:
+        channel = get_channel()
         sender = get_sender()
         message = get_message()
 
@@ -70,17 +61,17 @@ def collect_input():
     user_actions = collect_user_actions(has_link, has_file)
 
     return {
-            "channel": channel,
-            "sender": sender,
-            "message": message,
-            "has_link": has_link,
-            "link": link,
-            "has_file": has_file,
-            "file_name": file_name,
-            "clicked": user_actions["clicked"],
-            "downloaded": user_actions["downloaded"],
-            "submitted_category": user_actions["submitted_category"],
-        }
+        "channel": channel,
+        "sender": sender,
+        "message": message,
+        "has_link": has_link,
+        "link": link,
+        "has_file": has_file,
+        "file_name": file_name,
+        "clicked": user_actions["clicked"],
+        "downloaded": user_actions["downloaded"],
+        "submitted_category": user_actions["submitted_category"],
+    }
 
 def build_record_from_message(message, channel="email", sender=None):
     """Build a record from already-obtained message text (e.g. an uploaded file).
