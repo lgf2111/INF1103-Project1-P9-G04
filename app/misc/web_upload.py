@@ -3,10 +3,16 @@
 # library (http.server) - no extra dependencies, no classes defined (C1 safe).
 #
 # start_and_wait_for_upload() serves a tiny upload page, waits for one file,
-# then shuts the server down and returns the file's text.
+# then shuts the server down and returns the file's name and original bytes.
 
 import http.server
 import os
+import re
+from email import policy
+from email.parser import BytesHeaderParser
+
+MAX_UPLOAD_BYTES = 2 * 1024 * 1024
+MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 64 * 1024
 
 # Bind to all interfaces so the server is reachable from the host when running
 # inside Docker; override with UPLOAD_HOST if needed. The link we PRINT uses a
@@ -50,7 +56,7 @@ _PAGE = (
     "<div class='pulse'>Waiting for your file&hellip;</div>"
     "</div>"
     "<form id='f' method='post' enctype='multipart/form-data'>"
-    "<input id='file' type='file' name='file' hidden></form>"
+    "<input id='file' type='file' name='file' accept='.eml,.txt' hidden></form>"
     "<script>"
     # Opening a file dialog needs a user gesture, so open it on the first click
     # anywhere; auto-submit as soon as a file is chosen (no Upload button).
@@ -74,7 +80,49 @@ _DONE_PAGE = (
 ).encode()
 
 # Shared state between the request handler and the waiting CLI.
-_result = {"text": None, "done": False}
+_result = {"upload": None, "done": False}
+
+
+def parse_upload(content_type, body):
+    """Parse one bounded multipart form file without changing its original bytes."""
+    if len(body) > MAX_REQUEST_BYTES:
+        raise ValueError("Upload request exceeds the size limit.")
+    if not isinstance(content_type, str) or "\r" in content_type or "\n" in content_type:
+        raise ValueError("Invalid upload content type.")
+    message = BytesHeaderParser(policy=policy.default).parsebytes(
+        b"Content-Type: " + content_type.encode("ascii") + b"\r\n\r\n"
+    )
+    boundary = message.get_boundary()
+    if message.get_content_type() != "multipart/form-data" or not boundary:
+        raise ValueError("Expected a multipart file upload.")
+    # Delimit only complete boundary lines. Do not MIME-parse the file itself:
+    # message/rfc822 files otherwise become nested message objects and lose the
+    # original-byte contract. The common email parser handles them afterwards.
+    if len(boundary) > 70 or "\r" in boundary or "\n" in boundary:
+        raise ValueError("Invalid upload boundary.")
+    delimiters = list(re.finditer(
+        rb"(?:\A|\r\n)--" + re.escape(boundary.encode("ascii"))
+        + rb"(--)?[ \t]*(?:\r\n|\Z)", body,
+    ))
+    if (len(delimiters) != 2 or delimiters[0].group(1)
+            or not delimiters[1].group(1)):
+        raise ValueError("Upload exactly one file.")
+    raw_part = body[delimiters[0].end():delimiters[1].start()]
+    headers, separator, content = raw_part.partition(b"\r\n\r\n")
+    if not separator:
+        raise ValueError("Invalid file upload headers.")
+    part = BytesHeaderParser(policy=policy.default).parsebytes(headers + b"\r\n\r\n")
+    if (part.defects or part.get_content_disposition() != "form-data"
+            or part.get_param("name", header="content-disposition") != "file"):
+        raise ValueError("Invalid file upload field.")
+    if part.get("Content-Transfer-Encoding", "binary").lower() not in ("binary", "8bit"):
+        raise ValueError("Unsupported upload encoding.")
+    filename = part.get_filename()
+    if not filename or not filename.lower().endswith((".eml", ".txt")):
+        raise ValueError("Upload a .eml or .txt file.")
+    if not isinstance(content, bytes) or not content or len(content) > MAX_UPLOAD_BYTES:
+        raise ValueError("Uploaded file is empty or exceeds the size limit.")
+    return {"filename": filename, "content": content}
 
 
 def _handle(handler):
@@ -86,14 +134,18 @@ def _handle(handler):
         handler.wfile.write(_PAGE)
         return
 
-    # Minimal multipart parse (cgi was removed in Python 3.13+): read the body,
-    # split on the boundary, and take the bytes after the part's blank line.
-    length = int(handler.headers.get("Content-Length", 0))
-    body = handler.rfile.read(length)
-    boundary = handler.headers["Content-Type"].split("boundary=")[1].encode()
-    part = body.split(b"--" + boundary)[1]
-    file_bytes = part.split(b"\r\n\r\n", 1)[1].rsplit(b"\r\n", 1)[0]
-    _result["text"] = file_bytes.decode("utf-8", errors="replace")
+    try:
+        length = int(handler.headers.get("Content-Length", "0"))
+        if not 0 < length <= MAX_REQUEST_BYTES:
+            raise ValueError("Invalid upload length.")
+        body = handler.rfile.read(length)
+        if len(body) != length:
+            raise ValueError("Incomplete upload.")
+        upload = parse_upload(handler.headers.get("Content-Type"), body)
+    except (OSError, ValueError, RecursionError):
+        handler.send_error(400, "Upload failed; choose one valid .eml or .txt file up to 2 MiB.")
+        return
+    _result["upload"] = upload
     _result["done"] = True
 
     handler.send_response(200)
@@ -103,26 +155,11 @@ def _handle(handler):
 
 
 def start_and_wait_for_upload():
-    """Serve the upload page, handle requests until one file arrives, return its text."""
-    _result["text"] = None
+    """Handle requests until one bounded file arrives; return original bytes."""
+    _result["upload"] = None
     _result["done"] = False
 
-    # Build a request-handler class from the stdlib base WITHOUT defining a class
-    # in our code: type() creates it, and GET/POST both delegate to _handle().
-    handler_cls = type(
-        "UploadHandler",
-        (http.server.BaseHTTPRequestHandler,),
-        {
-            "do_GET": lambda self: _handle(self),
-            "do_POST": lambda self: _handle(self),
-            "log_message": lambda self, *args: None,  # silence request logging
-        },
-    )
-
-    http.server.HTTPServer.allow_reuse_address = True
-    server = http.server.HTTPServer((BIND_HOST, PORT), handler_cls)
-    print(f"\nOpen http://{DISPLAY_HOST}:{PORT} in your browser to upload a file.")
-    print("Waiting for upload... (Ctrl+C to cancel)")
+    server = http.server.HTTPServer((BIND_HOST, PORT), _make_handler)
 
     try:
         while not _result["done"]:
@@ -130,4 +167,15 @@ def start_and_wait_for_upload():
     finally:
         # Always release the port, even if the user pressed Ctrl+C to cancel.
         server.server_close()
-    return _result["text"]
+    return _result["upload"]
+
+
+def _make_handler(request, address, server):
+    """Configure an existing stdlib handler instance using functions only."""
+    handler = http.server.BaseHTTPRequestHandler.__new__(http.server.BaseHTTPRequestHandler)
+    handler.do_GET = lambda: _handle(handler)
+    handler.do_POST = lambda: _handle(handler)
+    handler.log_message = lambda *args: None
+    request.settimeout(15)
+    http.server.BaseHTTPRequestHandler.__init__(handler, request, address, server)
+    return handler
