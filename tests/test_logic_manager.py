@@ -64,9 +64,9 @@ def test_response_priority_scenarios(changes, expected_score, expected_priority)
 
     value = logic_manager.score(record)
 
-    assert logic_manager.score(record) == expected_score
+    assert value == expected_score
     assert type(value) is int
-    assert logic_manager.route(record) == expected_priority
+    assert logic_manager.route(value) == expected_priority
     assert record == original
 
 
