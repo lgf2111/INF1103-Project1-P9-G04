@@ -33,17 +33,31 @@ def _friendly_ai_error(error):
     return "The check failed: the AI could not complete the assessment. Please try again."
 
 
-def load_env():
-    """Load project environment values without replacing existing settings."""
-    if not os.path.exists(".env"):
-        return
+def load_env() -> bool:
+    """Load an optional UTF-8 file, returning False if it cannot be used safely.
 
-    with open(".env") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, value = line.split("=", 1)
-                os.environ.setdefault(key.strip(), value.strip())
+    Read and validate every assignment before applying any settings. Existing
+    environment values and the first occurrence of each file key take precedence.
+    Failure details stay private; main reports a fixed warning after logging setup.
+    """
+    values = {}
+    try:
+        with open(".env", encoding="utf-8-sig") as stream:
+            for line in stream:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = (part.strip() for part in line.split("=", 1))
+                    if not key or "\x00" in key or "\x00" in value:
+                        return False
+                    values.setdefault(key, value)
+    except FileNotFoundError:
+        return True  # The file is optional when settings come from the environment.
+    except (OSError, UnicodeError):
+        return False
+
+    for key, value in values.items():
+        os.environ.setdefault(key, value)
+    return True
 
 def check_message(record=None):
     """Validate one combined AI response before assessment, saving or display.
