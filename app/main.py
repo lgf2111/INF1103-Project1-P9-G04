@@ -154,12 +154,18 @@ def view_reports():
         io_manager.display_list(records)
 
 def main():
-    load_env()
+    env_loaded = load_env()
     # Set up behind-the-scenes logging to the logs/ folder before anything else,
     # so any failure (AI, database, file) is recorded. Set LOG_LEVEL=DEBUG in
     # .env to also capture full tracebacks while debugging.
     if not logging_setup.setup_logging():
         io_manager.show_message("Warning: diagnostic logging is unavailable.")
+    if not env_loaded:
+        # No raw file/exception details: even DEBUG must not expose credentials.
+        logger.warning("Optional .env could not be loaded; existing environment retained.")
+        io_manager.show_message(
+            "Warning: .env could not be loaded. Using existing environment settings."
+        )
     logger.info("Application started")
     try:
         if load_reports() == []:
