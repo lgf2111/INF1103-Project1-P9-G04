@@ -31,7 +31,3 @@ logs/
 # Operating-system metadata
 .DS_Store
 Thumbs.db
-
-# Final student deliverables; course reference PDFs stay local.
-!submission/Engineering_Report.pdf
-!submission/Project_Initial_Details.pdf

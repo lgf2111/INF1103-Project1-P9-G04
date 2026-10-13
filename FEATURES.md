@@ -37,6 +37,6 @@ test count and release are not the final submission verification.
 
 I keep the original commits and PRs as the authority for authorship. Refactoring
 or testing another layer does not transfer its original contribution. Current
-scope and unresolved delivery gates are in ROADMAP.md and submission/.
+scope and unresolved delivery gates are in ROADMAP.md.
 
 I reviewed the complete application against Week 4 slides 32-42 in issue #74: explicit helper modules, shared input construction, clear interfaces, validated settings/picker failures and network-disabled CI tests. Original layer contributions remain credited above.

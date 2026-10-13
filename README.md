@@ -219,12 +219,3 @@ without a persistent directory mount still loses container-local reports.
 ## Contributing
 
 See the [proposed team workflow](ROADMAP.md#team-standards-and-task-instructions) for task issues, branch names, checks and pull request reviews.
-
-## Submission materials
-
-I submit from `main`. My [engineering report](submission/Engineering_Report.pdf)
-explains the implemented pipeline, exception handling and verification.
-[Project Initial Details](submission/Project_Initial_Details.pdf) records the
-current scope; instructor approval remains unverified.
-[Release checks and demo steps](submission/Release_Checklist.md) list the team
-confirmations still needed before delivery.

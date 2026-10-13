@@ -14,7 +14,7 @@ Professor requirements govern compliance. Optional team features are separate.
 | Data | Local-only version-2 JSON, atomic append, supported-history validation and recovery | PR 69 plus merged recovery PR 72; no shared database required |
 | Docker | Persistent directory, read-only /emails, host upload port, Git Bash paths and LF | PR 67; actual import/save/restart checked here; all-member evidence still required |
 | Required filenames | Four actual app/*_manager.py files with physical function definitions | Issue 71; structural and full runtime tests pass on code f8dbf4e |
-| Report and scope | Current engineering report and Initial Details PDF/source in submission/ | Report five pages, diagram/matrix page 2; approval remains unverified |
+| Report and scope | Engineering report and Initial Details are maintained locally | Report five pages, diagram/matrix page 2; approval remains unverified |
 | Delivery/demo | Main designated; checklist and rehearsal steps prepared | Team confirmations, rehearsal and course receipt still needed |
 
 ## Project structure and architecture
@@ -79,15 +79,14 @@ clicks/downloads/disclosure cannot be inferred from message text.
 
 ## Submission readiness checklist
 
-I tick a gate only after its final-main evidence is recorded. The detailed
-[release checklist](submission/Release_Checklist.md) includes real-email and demo steps.
+I tick a gate only after its final-main evidence is recorded. My local release checklist includes real-email and demo steps.
 
 - [ ] **G1 - Approved scope:** current statement exists; instructor sign-off unverified.
 - [ ] **G2 - Procedural application:** physical files/functions, I/O, AI and validation
   checked locally; final-main verification and AI-scope clarification remain.
 - [ ] **G3 - Automated tests:** 694 offline Docker tests passed on code f8dbf4e;
   rerun/confirm on the integrated submission commit.
-- [ ] **G4 - Engineering report:** current five-page PDF prepared; verify tracking on main.
+- [ ] **G4 - Engineering report:** current five-page PDF prepared; confirm the required delivery route.
 - [ ] **G5 - Git repository:** focused history and PRs exist; access, clones, Initial
   Details submission and final-head CI evidence must be recorded.
 - [ ] **G6 - Docker delivery:** saving/restart verified here; every member must verify.
@@ -99,4 +98,4 @@ I tick a gate only after its final-main evidence is recorded. The detailed
 
 Team Project Framework - Phase 1, sections 1-5; Team Project Specification,
 pp 15-16; Project Initial Details, pp 1-2; Grading Criteria1, p 1. Course PDFs
-are local references. README.md explains setup; submission/ contains deliverables.
+and submission documents are maintained locally. README.md explains setup.
