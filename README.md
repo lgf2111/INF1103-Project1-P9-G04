@@ -47,6 +47,18 @@ GROQ_API_KEY=your_key_here
 
 A key is required for a live assessment, but not for the offline tests. Use fictional messages for testing; never enter real passwords or one-time codes.
 
+The `.env` file is optional when settings are supplied by your shell or Docker.
+Save it as UTF-8 (a UTF-8 BOM is accepted), using the existing `KEY=value` format.
+Existing environment values take precedence; repeated file keys keep their first
+value. Blank lines, comments and lines without `=` are ignored.
+
+If the file cannot be read or decoded, or an assignment has an empty key or a NUL
+character, startup displays a warning and continues using existing environment
+settings. File settings are checked before any are applied, so an invalid or
+partly read file does not leave a partial configuration behind. The warning and
+its log entry contain no file contents or raw exception details. Missing API
+credentials still prevent a completed assessment; this recovery does not bypass AI.
+
 ## Run and test
 
 ```bash
