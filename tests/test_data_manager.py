@@ -214,6 +214,102 @@ def _complete_report():
     }
 
 
+@pytest.mark.parametrize("record", [
+    {"priority": 7}, {"message": ["bad"]}, {"result": [1]}, {"channel": []},
+    {"clicked": "yes"}, {"downloaded": 1}, {"submitted_category": []},
+    {"sender": {}}, {"link": []}, {"file_name": 3}, {"score": True},
+    {"result": {"priority": 7}}, {"result": {"score": "90"}},
+    {"result": {"reasons": [1]}}, {"result": {"checklist": None}},
+    {"details": []}, {"details": {"emails": "bad"}},
+    {"details": {"phone_numbers": [1]}}, {"details": {"ip_addresses": None}},
+])
+def test_legacy_recovery(storage, monkeypatch, capsys, caplog, record):
+    """Reject malformed history safely and preserve its bytes during reads and saves."""
+    storage.write_text(json.dumps([record]), encoding="utf-8")
+    before = storage.read_bytes()
+    upload = Mock()
+    monkeypatch.setattr(data_manager, "upload", upload)
+    monkeypatch.setattr(data_manager, "fetch", Mock(return_value=[]))
+
+    # Default reads recover; strict reads prevent replacing corrupt history.
+    with caplog.at_level(logging.WARNING):
+        assert data_manager.load() == []
+    assert "Could not read local report history" in caplog.text
+    with pytest.raises(ValueError):
+        data_manager.load(strict=True)
+    with pytest.raises(ValueError):
+        data_manager.save(_complete_report())
+
+    main.view_reports()
+    assert "Could not load local report history" in capsys.readouterr().out
+    assert storage.read_bytes() == before
+    upload.assert_not_called()
+
+
+@pytest.mark.parametrize("record", [
+    {}, {"message": "Older report"},
+    {"channel": None, "message": None, "sender": None, "result": None},
+    {"score": 20.5, "priority": "LOW", "details": {"emails": []}},
+    {"result": {"score": 45, "priority": "MEDIUM", "reasons": [], "checklist": []}},
+])
+def test_legacy_display(storage, capsys, record):
+    """Keep supported incomplete legacy records readable without inventing fields."""
+    storage.write_text(json.dumps([record]), encoding="utf-8")
+    before = storage.read_bytes()
+
+    # Exercise both display entry points with records returned by storage.
+    records = data_manager.load(strict=True)
+    main.io_manager.display_list(records)
+    main.io_manager.display_record(records[0])
+    assert "Saved reports" in capsys.readouterr().out
+    assert records == [record]
+    assert storage.read_bytes() == before
+
+
+@pytest.mark.parametrize("changes", [
+    {"priority": 7}, {"message": ["bad"]}, {"channel": []},
+    {"details": {"emails": [1]}},
+])
+def test_legacy_db_fallback(storage, monkeypatch, capsys, changes):
+    """Reject malformed database rows and display valid local history instead."""
+    local = {"message": "Local fallback report"}
+    storage.write_text(json.dumps([local]), encoding="utf-8")
+    before = storage.read_bytes()
+    row = {
+        "channel": "email", "sender": None, "message": "Database report",
+        "link": None, "file_name": None, "details": {}, "score": None, "priority": None,
+    }
+    row.update(changes)
+    connection = MagicMock()
+    cursor = connection.__enter__.return_value.cursor.return_value.__enter__.return_value
+    cursor.fetchall.return_value = [row]
+    monkeypatch.setattr(data_manager.psycopg, "connect", Mock(return_value=connection))
+
+    # Keep fetch/restore and coordinator recovery real; replace only the connection.
+    with pytest.raises(ValueError):
+        data_manager.fetch()
+    main.view_reports()
+    output = capsys.readouterr().out
+    assert "PostgreSQL unavailable" in output
+    assert "Local fallback report" in output
+    assert storage.read_bytes() == before
+
+
+def test_legacy_menu_recovery(storage, monkeypatch, capsys):
+    """Keep the menu usable when startup and history viewing find corrupt records."""
+    storage.write_text('[{"priority": 7}]', encoding="utf-8")
+    before = storage.read_bytes()
+    monkeypatch.setattr(data_manager, "fetch", Mock(return_value=[]))
+    monkeypatch.setattr(main, "load_env", Mock())
+    choices = iter(["4", "5"])
+    monkeypatch.setattr(main.io_manager, "main_menu", lambda: next(choices))
+
+    # Visit history after startup, then exit normally without an assessment.
+    main.main()
+    assert "Could not load local report history" in capsys.readouterr().out
+    assert storage.read_bytes() == before
+
+
 def test_complete_local_roundtrip_preserves_legacy_and_input(storage, monkeypatch):
     legacy = {"message": "Older report", "score": 20, "priority": "LOW"}
     storage.write_text(json.dumps([legacy]))
