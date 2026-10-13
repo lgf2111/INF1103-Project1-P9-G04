@@ -1,7 +1,9 @@
 # Offline integration tests: real AI/logic/JSON; fictional input and mocked HTTP.
 import base64
+import http.client
 import json
 import logging
+import threading
 import urllib.error
 from unittest.mock import MagicMock, Mock
 
@@ -74,6 +76,111 @@ def _record():
         "has_link": False, "link": None, "has_file": False, "file_name": None,
         "submitted_category": "password", "clicked": False, "downloaded": False,
     }
+
+
+@pytest.mark.parametrize("invented_contact", [False, True])
+@pytest.mark.parametrize("disclosure, expected_score", [("no", 60), ("otp", 90)])
+def test_browser_html_email_uses_canonical_source_before_logic_and_save(
+    app_boundary, monkeypatch, invented_contact, disclosure, expected_score,
+):
+    from misc import web_upload
+
+    raw = (b"From: fictional@example.test\r\nSubject: Fictional security notice\r\n"
+           b"Content-Type: text/html; charset=utf-8\r\n\r\n"
+           b'<p>Reply to a1@example.test with your password</p>'
+           b'<a href="https://credential.example.test/login">Verify account</a>')
+    monkeypatch.setattr(web_upload, "start_and_wait_for_upload", Mock(return_value={
+        "filename":"fictional.eml", "content":raw,
+    }))
+    findings = _findings()
+    findings["details"]["emails"] = [
+        "absent@example.test" if invented_contact else "a1@example.test"
+    ]
+    _completed_reply(app_boundary, findings)
+    answers = iter(["no", "no", disclosure])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    main.upload_file()
+    assert app_boundary.call_count == 1
+    records = data_manager.load()
+    if invented_contact:
+        assert records == []
+        main.io_manager.display_result.assert_not_called()
+        data_manager.upload.assert_not_called()
+    else:
+        assert len(records) == 1
+        message = records[0]["message"]
+        assert "a1@example.test" in message
+        assert "https://credential.example.test/login" in message
+        assert "<p>" not in message and "Content-Type:" not in message
+        assert records[0]["result"]["score"] == expected_score
+        assert records[0]["has_file"] is False
+        main.io_manager.display_result.assert_called_once_with(records[0]["result"])
+
+
+@pytest.mark.parametrize("content", [
+    b"Content-Type: text/html; charset=utf-8\r\n\r\n<p>Invalid \xff</p>",
+    b"Content-Type: text/html\r\n\r\n<script>No message</script>",
+])
+def test_invalid_browser_email_stops_before_ai_or_save(app_boundary, monkeypatch, content):
+    from misc import web_upload
+
+    monkeypatch.setattr(web_upload, "start_and_wait_for_upload", Mock(return_value={
+        "filename":"fictional.eml", "content":content,
+    }))
+    main.upload_file()
+    app_boundary.assert_not_called()
+    main.io_manager.display_result.assert_not_called()
+    data_manager.upload.assert_not_called()
+    assert data_manager.load() == []
+
+
+def test_real_browser_http_to_html_ai_logic_and_json(app_boundary, monkeypatch):
+    from misc import web_upload
+
+    ready = threading.Event()
+    servers, errors = [], []
+    original = web_upload.http.server.HTTPServer
+
+    def make_server(address, handler):
+        server = original(address, handler)
+        servers.append(server)
+        ready.set()
+        return server
+
+    def run_upload():
+        try:
+            main.upload_file()
+        except Exception as error:
+            errors.append(error)
+
+    monkeypatch.setattr(web_upload, "BIND_HOST", "127.0.0.1")
+    monkeypatch.setattr(web_upload, "PORT", 0)
+    monkeypatch.setattr(web_upload.http.server, "HTTPServer", make_server)
+    answers = iter(["no", "no", "no"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    _successful_reply(app_boundary)
+    raw = (b"Content-Type: text/html\r\n\r\n<p>Fictional password request</p>"
+           b'<a href="https://credential.example.test">Verify</a>')
+    body = (b'--x\r\nContent-Disposition: form-data; name="file"; filename="test.eml"'
+            b'\r\nContent-Type: application/octet-stream\r\n\r\n' + raw + b'\r\n--x--\r\n')
+    worker = threading.Thread(target=run_upload, daemon=True)
+    worker.start()
+    assert ready.wait(5)
+    connection = http.client.HTTPConnection("127.0.0.1", servers[0].server_port, timeout=5)
+    connection.request("POST", "/", body=body,
+                       headers={"Content-Type":"multipart/form-data; boundary=x"})
+    response = connection.getresponse()
+    assert response.status == 200
+    response.read()
+    connection.close()
+    worker.join(5)
+    assert not worker.is_alive() and not errors
+    assert app_boundary.call_count == 1
+    saved = data_manager.load()
+    assert len(saved) == 1 and saved[0]["result"]["score"] == 60
+    assert "https://credential.example.test" in saved[0]["message"]
+    assert "Content-Type:" not in saved[0]["message"]
+    main.io_manager.display_result.assert_called_once_with(saved[0]["result"])
 
 
 @pytest.mark.parametrize("invented_contact", [False, True])

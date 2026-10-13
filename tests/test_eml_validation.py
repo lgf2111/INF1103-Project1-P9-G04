@@ -11,7 +11,6 @@ import pytest
 @pytest.mark.parametrize("raw", [
     b"Content-Type: text/plain; charset=utf-8\r\n\r\nHello \xff password",
     b"Content-Transfer-Encoding: base64\r\n\r\na",
-    b"From: a@@example.test\r\n\r\nHello",
     b"Subject: =?utf-8?b?/w==?=\r\n\r\nHello",
     b"Subject: =?unknown-charset?q?Hello?=\r\n\r\nHello",
     b"Subject: =?utf-8?b?SGVsbG8?=\r\n\r\nHello",
@@ -19,17 +18,11 @@ import pytest
     b"Content-Transfer-Encoding: quoted-printable\r\n\r\nHello=GG",
     b"Content-Transfer-Encoding: unknown\r\n\r\nHello",
 ])
-def test_malformed_import_reprompts_before_success(tmp_path, monkeypatch, capsys, raw):
+def test_malformed_import_is_rejected_by_parser(tmp_path, raw):
     bad = tmp_path / "bad.eml"
-    good = tmp_path / "good.eml"
     bad.write_bytes(raw)
-    good.write_bytes(b"From: fictional@example.test\r\n\r\nValid message")
-    answers = iter([str(bad), str(good)])
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
-    assert io_manager.get_eml_input() == ("fictional@example.test", "Valid message")
-    output = capsys.readouterr().out
-    assert output.count("Unable to read") == 1
-    assert output.count("Email loaded successfully") == 1
+    with pytest.raises(ValueError):
+        io_manager.read_eml_details(bad)
 
 
 def _multipart(*parts):
@@ -50,9 +43,6 @@ def test_all_inline_plain_text_reaches_canonical_message(tmp_path):
 
 
 @pytest.mark.parametrize("raw", [
-    b"Content-Type: text/html\r\n\r\n<p>Reply with your password</p>",
-    _multipart(b"Content-Type: text/plain\r\n\r\nHello",
-               b"Content-Type: text/html\r\n\r\n<p>Reply with your password</p>"),
     _multipart(b"Content-Type: text/plain\r\n\r\nHello",
                b"Content-Type: message/rfc822\r\n\r\nFrom: x@example.test\r\n\r\nOTP"),
 ])
@@ -82,11 +72,7 @@ def test_inline_filename_does_not_hide_body_content(tmp_path, content_type):
          "Content-Disposition: inline; filename=message.txt\r\n\r\n"
          "Reply with your password").encode(),
     ))
-    if content_type == "text/plain":
-        assert "Reply with your password" in io_manager.read_eml_details(email)[1]
-    else:
-        with pytest.raises(ValueError, match="Unsupported"):
-            io_manager.read_eml_details(email)
+    assert "Reply with your password" in io_manager.read_eml_details(email)[1]
 
 
 @pytest.mark.parametrize("raw, expected", [

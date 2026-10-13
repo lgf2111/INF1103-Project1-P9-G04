@@ -99,22 +99,18 @@ def check_message(record=None):
 
 
 def upload_file():
-    """Get a file's text via the one-shot web uploader, then assess it."""
-    # Lazy import: the web server code only loads when this option is used.
-    from misc import web_upload
-
+    """Parse uploaded email through the same I/O contract as folder imports."""
     try:
-        text = web_upload.start_and_wait_for_upload()
-    except (OSError, RuntimeError) as error:
+        from misc import web_upload
+
+        io_manager.show_upload_instructions(web_upload.DISPLAY_HOST, web_upload.PORT)
+        upload = web_upload.start_and_wait_for_upload()
+        record = io_manager.collect_input_from_upload(upload)
+    except (OSError, RuntimeError, ValueError) as error:
         logging_setup.log_failure(logger, "File upload failed")
         io_manager.show_message("Upload failed: " + str(error))
         return
 
-    if not text or not text.strip():
-        io_manager.show_message("No usable text in the uploaded file.")
-        return
-
-    record = io_manager.build_record_from_message(text.strip())
     check_message(record)
 
 

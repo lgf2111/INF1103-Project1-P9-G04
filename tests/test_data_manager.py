@@ -168,10 +168,18 @@ def test_save(storage, monkeypatch):
         "downloaded": False,
         "submitted_category": None,
     }
-    replies = iter([json.dumps({
-        "credential_request": False, "suspicious": False, "insufficient_context": False,
-        "details": details,
-    })])
+    replies = iter(
+        [
+            json.dumps(
+                {
+                    "credential_request": False,
+                    "suspicious": False,
+                    "insufficient_context": False,
+                    "details": details,
+                }
+            )
+        ]
+    )
     api_calls = []
     displayed = []
 
@@ -230,15 +238,29 @@ def test_file_errors(storage):
 def _complete_report():
     """Build an older version-1 report for compatibility and input fixtures."""
     return {
-        "schema_version": 1, "channel": "email", "sender": "demo@example.test",
-        "message": "Fictional login request", "has_link": False, "link": None,
-        "has_file": False, "file_name": None, "clicked": False, "downloaded": False,
+        "schema_version": 1,
+        "channel": "email",
+        "sender": "demo@example.test",
+        "message": "Fictional login request",
+        "has_link": False,
+        "link": None,
+        "has_file": False,
+        "file_name": None,
+        "clicked": False,
+        "downloaded": False,
         "submitted_category": "password",
-        "ai": {"credential_request": True, "suspicious": True,
-               "insufficient_context": False,
-               "details": {"emails": [], "phone_numbers": [], "ip_addresses": []}},
-        "result": {"score": 90, "priority": "HIGH", "reasons": ["Password disclosed."],
-                   "checklist": ["Change the affected password."]},
+        "ai": {
+            "credential_request": True,
+            "suspicious": True,
+            "insufficient_context": False,
+            "details": {"emails": [], "phone_numbers": [], "ip_addresses": []},
+        },
+        "result": {
+            "score": 90,
+            "priority": "HIGH",
+            "reasons": ["Password disclosed."],
+            "checklist": ["Change the affected password."],
+        },
     }
 
 
@@ -305,8 +327,13 @@ def test_history_recovery(storage, monkeypatch, capsys, operation, content):
     monkeypatch.setattr(main.io_manager, "main_menu", lambda: "5")
     if operation == "save":
         record = _complete_report()
-        monkeypatch.setattr(main.io_manager, "collect_input", lambda: {
-            k: v for k, v in record.items() if k not in ("schema_version", "ai", "result")})
+        monkeypatch.setattr(
+            main.io_manager,
+            "collect_input",
+            lambda: {
+                k: v for k, v in record.items() if k not in ("schema_version", "ai", "result")
+            },
+        )
         monkeypatch.setattr(main.ai_manager, "call_api", lambda prompt: json.dumps(record["ai"]))
         main.check_message()
     elif operation == "startup":
@@ -364,7 +391,7 @@ def test_saved_reports_are_visible(storage, monkeypatch):
     api.assert_not_called()
 
 
-@pytest.mark.parametrize("content", ['{PRIVATE_BROKEN', '{}', '[null]', '[{"schema_version":2}]'])
+@pytest.mark.parametrize("content", ["{PRIVATE_BROKEN", "{}", "[null]", '[{"schema_version":2}]'])
 def test_default_load_logs_and_returns_empty_without_damaging_history(
     storage, caplog, capsys, content
 ):
