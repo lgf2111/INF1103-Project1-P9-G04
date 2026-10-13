@@ -32,14 +32,21 @@ def score(record):
     return 10
 
 
-def route(record):
-    """Route an assessed record using the logic score and agreed thresholds."""
-    value = score(record)
+def _priority(value):
+    """Return the priority corresponding to a calculated score."""
+    # Apply the agreed thresholds from highest to lowest.
     if value >= 70:
         return "HIGH"
     if value >= 35:
         return "MEDIUM"
     return "LOW"
+
+
+def route(record):
+    """Validate a record and return its score and priority without modifying it."""
+    value = score(record)
+    # Keep the calculated score and its corresponding priority together.
+    return {"score": value, "priority": _priority(value)}
 
 
 def evaluate(record):
@@ -48,8 +55,10 @@ def evaluate(record):
     The caller supplies schema/source-validated AI findings. No API, terminal or
     persistence operations belong here. Preserve the original record unchanged.
     """
-    value = score(record)
-    priority = route(record)
+    # Route once and reuse both values without repeating validation or scoring.
+    outcome = route(record)
+    value = outcome["score"]
+    priority = outcome["priority"]
     findings = record["ai"]
     reasons = []
     category = record["submitted_category"]
