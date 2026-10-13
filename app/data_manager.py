@@ -2,6 +2,7 @@
 # Saves, loads and queries local JSON reports. OWNER: Pair C.
 
 import json
+import math
 import os
 import tempfile
 from collections.abc import Callable
@@ -11,6 +12,20 @@ import logging_setup
 logger = logging_setup.get_logger(__name__)
 
 FILE = "reports.json"
+
+
+def _unique_fields(pairs):
+    """Reject ambiguous stored objects instead of silently discarding a value."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Local history contains duplicate fields.")
+        result[key] = value
+    return result
+
+
+def _invalid_constant(value):
+    raise ValueError("Local history contains a non-JSON constant.")
 
 REPORT_FIELDS = {
     "channel",
@@ -124,6 +139,8 @@ def _validate_legacy(record):
         value = outcome.get("score")
         if value is not None and type(value) not in (int, float):
             raise ValueError("Invalid legacy score.")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("Invalid nonfinite legacy score.")
         for key in ("reasons", "checklist"):
             if key in outcome and (
                 not isinstance(outcome[key], list)
@@ -238,10 +255,12 @@ def _read_records():
     """Read and validate the file without converting failures into empty history."""
     try:
         with open(FILE, encoding="utf-8") as stream:
-            records = json.load(stream)
+            records = json.load(
+                stream, object_pairs_hook=_unique_fields, parse_constant=_invalid_constant
+            )
     except FileNotFoundError:
         return []
-    except (json.JSONDecodeError, UnicodeError) as error:
+    except (ValueError, UnicodeError, RecursionError) as error:
         raise ValueError("Local report history is malformed; existing file preserved.") from error
     if not isinstance(records, list):
         raise ValueError("Local report history must be a list.")

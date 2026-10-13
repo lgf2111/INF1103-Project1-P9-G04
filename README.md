@@ -20,7 +20,9 @@ This is the Phase 1 coursework application. The current code provides an integra
 | `app/local_settings.py` | Read and write machine-specific JSON preferences. |
 | `app/logging_setup.py` | Configure safe rotating diagnostic logs. |
 | `app/web_upload.py` | Receive one bounded browser upload; I/O handles assessment input. |
-| `tests/` | Run offline tests with sample AI responses. |
+| `tests/test_logic_manager.py` | Required offline logic tests with hardcoded AI findings. |
+| `tests/test_application.py` | Automated feature showcase and preserved application regressions. |
+| `tests/fixtures/` | Three essential, pinned public email fixtures; provenance included. |
 
 ## My coding practices
 
@@ -84,10 +86,45 @@ credentials still prevent a completed assessment; this recovery does not bypass 
 
 ```bash
 python app/main.py
-python -m pytest
+python -m pytest tests/test_logic_manager.py -q
+python -m pytest tests/test_application.py -q
 ```
 
 The app lets you assess a message, view saved reports or quit. It writes `reports.json` in the directory from which you run it. The tests use sample AI responses and do not need network access.
+
+For the concise automated feature showcase, run
+`python -m pytest tests/test_application.py -k demo -v`. It exercises real public
+emails through manual/folder/browser input, multi-field scoring, exposure,
+uncertainty, failures and reload in a separate process. External AI HTTP is mocked;
+the local upload server, managers and storage are real. This is not a live-model
+demonstration or detection benchmark. The full application script retains meaningful
+lifecycle regressions in named sections. `python -m pytest` runs both scripts.
+
+The existing logic script satisfies Framework section 5.3: `evaluate()`, `score()`
+and `route()`, hardcoded AI findings, multi-field rules, precedence, 35/70 boundary
+values and invalid inputs, without credentials. No redundant logic runner is needed.
+
+### Assessment policy
+
+The first matching rule wins; every new assessment requires valid AI findings first.
+
+| Condition | Score | Priority |
+| --- | --- | --- |
+| Reported password/OTP disclosure | 90 | HIGH |
+| AI suspicious and reported click/download | 80 | HIGH |
+| AI suspicious and AI credential request | 60 | MEDIUM |
+| AI suspicious | 45 | MEDIUM |
+| AI credential request | 40 | MEDIUM |
+| Reported click/download | 35 | MEDIUM |
+| AI insufficient context | 20 | LOW |
+| Otherwise | 10 | LOW |
+
+HIGH starts at 70 and MEDIUM at 35. Scores express response policy, not probability.
+Source checks validate returned contact syntax and ordered occurrences in the
+message; they do not establish completeness, sender identity or model truth.
+Identical input/findings produce identical rule results. Temperature zero does not
+guarantee identical fresh API findings. Instructor interpretation of repeatability
+and API scope for saved-history reads remains pending.
 
 ### Import an email
 
@@ -190,9 +227,23 @@ I can also use an absolute folder path, such as `/c/Users/me/Downloads/emails`
 in Git Bash or `/home/me/emails` on Linux. This selects saved files; it does not
 connect to a mailbox or add support for otherwise unsupported MIME formats.
 
+The Docker helper creates an empty local `emails/` directory when the default
+folder is needed. Put exported messages there or select another folder; personal
+imports are excluded from Git and the Docker image.
+For a real-example demonstration, use
+`PHISHREPORT_EMAIL_DIR="tests/fixtures" ./docker.sh run` in Bash. These three public
+fixtures are necessary offline regression dependencies; their source and purpose
+are documented in `tests/fixtures/README.md`.
+
 The helper publishes menu option 3's upload page at
 http://localhost:8000, bound to the host's loopback interface. I keep
 `.phishreport-data/`, root settings and logs out of Git and the Docker image.
+
+`UPLOAD_PORT` defaults to 8000. Invalid text or out-of-range values fail the upload
+option safely. Keep the default with the Docker helper, which publishes port 8000.
+Corrupt settings are preserved; a folder can still be used for the current selection
+if its preference cannot be saved. Valid updates retain unrelated keys and replace
+the settings file atomically.
 
 ### Check persistence after a restart
 
@@ -215,6 +266,26 @@ docker run --rm -it -p 127.0.0.1:8000:8000 --env-file .env \
 For Git Bash I use the helper, which explicitly converts host paths and prevents
 MSYS from rewriting container paths. A bare `docker run --rm ... phishreport`
 without a persistent directory mount still loses container-local reports.
+
+Verify the deliverables without external networking:
+
+```bash
+docker build -t phishreport .
+docker run --rm --network none phishreport python -m pytest tests/test_logic_manager.py -q
+docker run --rm --network none phishreport python -m pytest tests/test_application.py -q
+docker run --rm --network none phishreport python -m pytest tests/test_application.py -k demo -v
+```
+
+## Submission documents and remaining gates
+
+Submission branch: `main`. Deadline: **14 October 2026, 23:59 Singapore time**.
+The report, current scope statement and release checklist are maintained privately
+in `.local/submission/` for separate delivery, excluded from Git and Docker. The
+supplied course instruction lists the report and approved statement with the
+complete project repository; acceptance of separate delivery must be confirmed.
+The current statement has no approval evidence. Approval/Initial Details receipt,
+invitations/member clones, every member's final Docker checks, rehearsal and
+submission receipts remain missing. [ROADMAP.md](ROADMAP.md) records G1-G8 and the normal review workflow.
 
 ## Contributing
 

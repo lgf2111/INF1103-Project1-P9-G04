@@ -40,3 +40,9 @@ or testing another layer does not transfer its original contribution. Current
 scope and unresolved delivery gates are in ROADMAP.md.
 
 I reviewed the complete application against Week 4 slides 32-42 in issue #74: explicit helper modules, shared input construction, clear interfaces, validated settings/picker failures and network-disabled CI tests. Original layer contributions remain credited above.
+
+Issue #78 records the final audit: corrupt settings/history preservation and upload
+configuration recovery, with regression coverage retained in two requested test
+scripts. Three necessary real-email fixtures remain; obsolete demo copies and the
+old import handoff are removed. Consolidating tests does not transfer their original
+authors' contributions or establish instructor approval or team verification.

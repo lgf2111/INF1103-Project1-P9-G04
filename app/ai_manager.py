@@ -69,10 +69,10 @@ def parse_response(raw: str) -> dict:
         data = json.loads(text, object_pairs_hook=unique_object, parse_constant=reject_constant)
     except json.JSONDecodeError:
         raise failure("parse_response", "AI reply is not valid JSON.", ValueError) from None
-    except ValueError:
+    except (ValueError, RecursionError):
         raise failure(
             "parse_response",
-            "AI reply contains invalid JSON fields or constants.",
+            "AI reply contains invalid or excessively nested JSON.",
             ValueError,
         ) from None
     if not isinstance(data, dict):
@@ -256,7 +256,7 @@ def call_api(prompt: str) -> str:
 
     try:
         data = json.loads(raw, object_pairs_hook=unique_object, parse_constant=reject_constant)
-    except ValueError:
+    except (ValueError, RecursionError):
         raise failure("call_api", "AI provider returned invalid JSON.", RuntimeError) from None
     return _completed_content(data)
 

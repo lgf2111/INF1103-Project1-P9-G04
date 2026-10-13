@@ -1,101 +1,104 @@
 # PhishReport submission roadmap
 
-I submit from `main` by 14 October 2026, 23:59 Singapore time. This replaces
-outdated planning snapshots; Git and FEATURES.md retain contribution history.
-Professor requirements govern compliance. Optional team features are separate.
+Submission branch: `main`. Deadline: **14 October 2026, 23:59 Singapore time**.
+Professor requirements govern compliance. Successful CI and closed issues are not approval.
 
-## General progress and deliverables
+## Submission gates
 
-| Area | Current position | Evidence / remaining gate |
+| Gate | Status | Evidence and remaining acceptance |
 | --- | --- | --- |
-| Input and output | Manual Email/SMS/Chat, common folder/browser .eml parser, exposure questions and explained displays implemented | PRs 19/22/23/39/59/68; real-corpus parity checked |
-| AI | Required prompt/API/parse/schema functions, source validation and bounded retry implemented | AI must succeed before every new completed assessment; no fabricated fallback |
-| Logic | Agreed eight-rule policy and 35/70 thresholds implemented | PR 64; hardcoded-AI offline tests include the two-AI-field rule |
-| Data | Local-only version-2 JSON, atomic append, supported-history validation and recovery | PR 69 plus merged recovery PR 72; no shared database required |
-| Docker | Persistent directory, read-only /emails, host upload port, Git Bash paths and LF | PR 67; actual import/save/restart checked here; all-member evidence still required |
-| Required filenames | Four actual app/*_manager.py files with physical function definitions | Issue 71; structural and full runtime tests pass on code f8dbf4e |
-| Report and scope | Engineering report and Initial Details are maintained locally | Report five pages, diagram/matrix page 2; approval remains unverified |
-| Delivery/demo | Main designated; checklist and rehearsal steps prepared | Team confirmations, rehearsal and course receipt still needed |
+| G1 - Approved scope | Missing | Local statement exists; no approval or Initial Details receipt supplied. Obtain actual approval and receipt. |
+| G2 - Procedural application | Partial | Physical manager functions, procedural/I/O checks and validated new-assessment pipeline pass. Instructor API-scope interpretation for history reads remains unresolved. |
+| G3 - Automated tests | Verified | Existing logic script meets Framework 5.3. One application script contains showcase and preserved regressions. 740 tests pass in network-disabled Docker, including 72 offline logic tests. Record final-main evidence in the local audit. |
+| G4 - Engineering report | Partial | Local five-page PDF; diagram/matrix together on page 2. Separate delivery conflicts with supplied repository wording until accepted. Statement approval is absent. |
+| G5 - Git repository | Partial | Granular contributions and focused PRs retained. Issue #78/PR #79 has successful exact-head CI; teammate review was explicitly waived for this audit session only. Invitations, lab access and member clones remain missing. |
+| G6 - Docker delivery | Partial | Directory persistence, read-only email mount and container recreation checked here. Every member must verify final main; no evidence supplied. |
+| G7 - Integrated application | Partial | Manual/folder/browser, validated AI, policy, recovery and persistence checked. Fresh-model repeatability interpretation remains unresolved; final-main evidence belongs in the local audit. |
+| G8 - Demonstration | Missing team evidence | Automated application showcase and local rehearsal sequence prepared; no completed team rehearsal/individual explanation evidence supplied. |
 
-## Project structure and architecture
+## Architecture and storage
 
-The pipeline is I/O -> AI -> logic -> data, coordinated by main.py. All direct
-terminal calls live in io_manager.py. AI contains transport/validation; logic
-contains domain rules; data contains local JSON operations. Required functions
-are physically defined in the four named files. Explicitly named app-level helpers do not
-replace those managers. No authored classes or dynamic class constructors are allowed.
+`main.py` coordinates I/O -> AI -> logic -> data. Required functions are physically
+in `app/io_manager.py`, `app/ai_manager.py`, `app/logic_manager.py` and
+`app/data_manager.py`. Helpers have explicit responsibilities: `ai_prompts.py`,
+`email_html.py`, `local_settings.py`, `logging_setup.py`, `web_upload.py`.
+No authored classes or dynamic class construction are permitted throughout source
+and tests. Existing standard-library objects are used through their APIs.
 
-New storage has exactly schema_version:2, channel, message and result. Result
-contains score, priority, reasons and checklist. Supported historical formats
-are validated without manufacturing absent fields. Corrupt history is preserved.
+Every new completed assessment requires schema/source-validated AI findings.
+Failed AI checks do not score, save or display a completed result. Valid assessments
+whose save fails display a distinct warning. History loads stored results without
+a new API call; no exception from the course wording is assumed.
 
-## Agreed decision rules
+New JSON records contain exactly `schema_version:2`, `channel`, `message`, `result`.
+Result contains `score`, `priority`, `reasons`, `checklist`. Supported historical
+shapes remain readable without manufacturing absent information. Missing files
+start empty. Corrupt/unreadable history is preserved and append refused. Duplicate
+stored fields and nonfinite scores are rejected. Settings updates are atomic and
+preserve corrupt files on failure. Concurrent writers are outside single-process scope.
 
-| First match | Score | Priority |
+Docker mounts `.phishreport-data/` at `/data` and an email folder read-only at
+`/emails`. Host Python uses its working directory, a separate default history.
+Directory mounting permits atomic replacement and recreation preserves data.
+Personal state, credentials and `.local/` are excluded from Git and the image.
+
+## Agreed first-match rules
+
+| Condition | Score | Priority |
 | --- | --- | --- |
 | Password/OTP disclosure | 90 | HIGH |
 | AI suspicious and click/download | 80 | HIGH |
-| AI suspicious and credential request | 60 | MEDIUM |
+| AI suspicious and AI credential request | 60 | MEDIUM |
 | AI suspicious | 45 | MEDIUM |
 | AI credential request | 40 | MEDIUM |
 | Click/download | 35 | MEDIUM |
 | AI insufficient context | 20 | LOW |
 | Otherwise | 10 | LOW |
 
-Every row requires valid AI findings first. Scores express response policy,
-not probability. HIGH starts at 70 and MEDIUM at 35. LOW does not establish safety.
+HIGH starts at 70 and MEDIUM at 35. Every row requires valid AI first. Scores are
+response policy; LOW does not establish safety. Source matching does not prove
+extraction completeness or detection accuracy. Attachments/images, PDF input,
+live mailboxes and sender authentication are outside implemented scope.
+
+## Tests and cleanup
+
+Only two runnable test scripts remain: `tests/test_logic_manager.py` and
+`tests/test_application.py`. Meaningful regressions were consolidated by area,
+not discarded as debugging material. The application script's `-k demo` selection
+uses real public emails with mocked external AI HTTP, actual local HTTP upload,
+exposure, uncertainty, failures and process reload. It does not replace a live
+provider demonstration or team rehearsal. Exact commands are in README.
+
+Three pinned real emails in `tests/fixtures/` are necessary offline dependencies;
+original bytes and provenance are retained. Unnecessary demo copies and the obsolete
+import-review handoff were removed. `emails/` holds local imports only. Hardcoded
+AI findings and small malformed protocol/type probes remain test code.
 
 ## Team standards and task instructions
 
-I use `<type>/<issue-number>-<short-description>` branches and
-`<type>(<scope>): <action>` commits. Each issue states the bug, affected contract,
-acceptance checks and PR. I commit coherent tested blocks, preserve contributor
-history and keep structural changes separate from behavior fixes. I reproduce
-observed failures before fixing them and request review from affected teammates.
+Use `<type>/<issue-number>-<short-description>` branches and descriptive
+`<type>(<scope>): <action>` commits. Separate behavior, tests, dependencies and
+documentation; retain original authorship and granular history. Open focused PRs
+to `main`, link issues, obtain a non-author review and resolve comments before merge.
+CI is not human approval. Do not force-push shared history. CI runs Ruff,
+tracked-Python class checks, pytest, Docker build and network-disabled Docker tests.
 
-I open focused PRs to main, link issues and record exact-head checks. I seek a
-non-author review and resolve comments; CI success does not imply human approval.
-I preserve granular commits with merge commits rather than squashing the lifecycle.
-I never force-push shared history routinely. Repository protection rules apply.
+## Remaining ordered work
 
-CI runs Ruff, tracked-Python class checks, pytest and Docker build/tests.
-Mandatory manager/I/O/procedural checks also run as offline tests. I distinguish
-live AI, recorded-response replay and hardcoded unit tests in verification claims.
-Each member still needs to run the final submission commit inside Docker.
+1. Obtain topic approval and Initial Details receipt. Confirm acceptance of separate
+   local report/statement delivery versus the supplied instruction listing both
+   with the repository. Keep them private until explicitly instructed otherwise.
+2. Clarify Framework p2 sections 2.2/2.4 and p3 C2/C4: does history retrieval require
+   a new API call, and what sameness is expected from fresh AI assessments?
+   Temperature zero is not proof; no caching exemption is assumed.
+3. Freeze final main, verify its exact commit/CI and rerun affected checks if it changes.
+   The audit-session review exception does not waive future teammate reviews.
+4. Confirm invitations/lab-in-charge access and member clones. Every member builds,
+   tests and runs the same final main in Docker, recording save/restart evidence.
+5. Rehearse the submitted version and each member's contribution explanation.
+6. Submit all required materials through the accepted course route before the
+   deadline; retain receipts and the submitted commit identity.
 
-## Outstanding decisions and optional work
-
-I need instructor interpretation of fresh-model repeatability and whether reading
-saved results requires another API call. Temperature zero and successful samples
-do not establish universal determinism. No caching exception is assumed.
-
-Topic approval, Initial Details receipt, repository invitations/clones and the
-course submission receipt need confirmation. A rewritten statement is not approval.
-
-Open UX proposals such as categorisation and automatic metadata extraction are
-optional. Filtering, report status, accounts, image/PDF analysis, attachment
-execution and mailbox integration are outside required Phase 1 closure. User
-clicks/downloads/disclosure cannot be inferred from message text.
-
-## Submission readiness checklist
-
-I tick a gate only after its final-main evidence is recorded. My local release checklist includes real-email and demo steps.
-
-- [ ] **G1 - Approved scope:** current statement exists; instructor sign-off unverified.
-- [ ] **G2 - Procedural application:** physical files/functions, I/O, AI and validation
-  checked locally; final-main verification and AI-scope clarification remain.
-- [ ] **G3 - Automated tests:** 694 offline Docker tests passed on code f8dbf4e;
-  rerun/confirm on the integrated submission commit.
-- [ ] **G4 - Engineering report:** current five-page PDF prepared; confirm the required delivery route.
-- [ ] **G5 - Git repository:** focused history and PRs exist; access, clones, Initial
-  Details submission and final-head CI evidence must be recorded.
-- [ ] **G6 - Docker delivery:** saving/restart verified here; every member must verify.
-- [ ] **G7 - Integrated app:** real .eml import/upload/save/restart and failures checked;
-  final-main checks and repeatability interpretation remain.
-- [ ] **G8 - Demonstration:** steps prepared; rehearsal and individual explanations needed.
-
-## References
-
-Team Project Framework - Phase 1, sections 1-5; Team Project Specification,
-pp 15-16; Project Initial Details, pp 1-2; Grading Criteria1, p 1. Course PDFs
-and submission documents are maintained locally. README.md explains setup.
+FEATURES.md and original Git/PR records retain contributions. The complete matrix,
+verification evidence and private delivery checks are in the local audit. Optional
+feature expansion does not take priority over these gates.

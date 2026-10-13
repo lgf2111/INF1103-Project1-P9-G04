@@ -1,2 +1,4 @@
 # I keep the Docker helper executable by Bash after Windows checkouts.
 docker.sh text eol=lf
+# Preserve original public regression-email bytes on every checkout.
+tests/fixtures/*.eml -text

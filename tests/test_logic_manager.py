@@ -245,7 +245,7 @@ def test_evaluate_routes_once(monkeypatch):
         {"submitted_category": "payment"},
     ],
 )
-@pytest.mark.parametrize("operation", ["score", "evaluate"])
+@pytest.mark.parametrize("operation", ["score", "route", "evaluate"])
 def test_response_priority_rejects_invalid_inputs(changes, operation):
     record = _assessment_record(**deepcopy(changes))
     original = deepcopy(record)
@@ -254,7 +254,7 @@ def test_response_priority_rejects_invalid_inputs(changes, operation):
     assert record == original
 
 
-@pytest.mark.parametrize("operation", ["score", "evaluate"])
+@pytest.mark.parametrize("operation", ["score", "route", "evaluate"])
 def test_disclosure_still_requires_an_ai_assessment(operation):
     record = _assessment_record(submitted_category="password")
     del record["ai"]
