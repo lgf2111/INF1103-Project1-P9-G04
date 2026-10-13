@@ -8,7 +8,7 @@ import urllib.error
 from unittest.mock import MagicMock, Mock
 
 import ai_manager
-import ai_manager.client as ai_client
+import ai_manager as ai_client
 import data_manager
 import main
 import pytest

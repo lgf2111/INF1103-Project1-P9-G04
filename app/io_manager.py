@@ -19,7 +19,7 @@ from email.header import decode_header
 from email.parser import BytesParser
 from pathlib import Path
 
-from .email_html import html_to_text
+from misc.email_html import html_to_text
 
 MAX_EML_BYTES = 2 * 1024 * 1024
 MAX_MIME_PARTS = 100
