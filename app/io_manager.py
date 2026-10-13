@@ -52,34 +52,20 @@ def get_valid_choice(prompt, valid_choices, error_message):
 
     return choice
 
-def collect_input():
+def collect_input() -> dict:
+    """Collect validated manual fields, then use the shared exposure questions."""
     channel = get_channel()
     sender = get_sender()
     message = get_message()
+    return build_record_from_message(message, channel=channel, sender=sender)
 
-    has_link, link = get_link_information()
-    has_file, file_name = get_file_information()
-
-    user_actions = collect_user_actions(has_link, has_file)
-
-    return {
-        "channel": channel,
-        "sender": sender,
-        "message": message,
-        "has_link": has_link,
-        "link": link,
-        "has_file": has_file,
-        "file_name": file_name,
-        "clicked": user_actions["clicked"],
-        "downloaded": user_actions["downloaded"],
-        "submitted_category": user_actions["submitted_category"],
-    }
-
-def build_record_from_message(message, channel="email", sender=None):
+def build_record_from_message(
+    message: str, channel: str = "email", sender: str | None = None
+) -> dict:
     """Build a record from already-obtained message text (e.g. an uploaded file).
 
-    Reuses the normal action questions so the assessment pipeline is unchanged;
-    the message comes from the file instead of a prompt.
+    Manual, folder and upload collection all use this single action/record contract.
+    The caller supplies message text validated by its collection or decoding path.
     """
     has_link, link = get_link_information()
     has_file, file_name = get_file_information()
@@ -110,34 +96,13 @@ def show_upload_instructions(host, port):
     print(f"\nOpen http://{host}:{port} in your browser to upload an .eml email.")
     print("Waiting for upload... (Ctrl+C to cancel)")
 
-def collect_input_from_folder():
-    """Build a record from a .eml chosen out of the saved folder.
-
-    Returns None if the user cancels or no file is available. Uses the email
-    channel and sender/message from the file, then asks about links, files
-    and reported actions.
-    """
+def collect_input_from_folder() -> dict | None:
+    """Load a selected email and reuse the same record builder as other routes."""
     loaded = get_eml_from_folder()
     if loaded is None:
         return None
     sender, message = loaded
-
-    has_link, link = get_link_information()
-    has_file, file_name = get_file_information()
-    user_actions = collect_user_actions(has_link, has_file)
-
-    return {
-        "channel": "email",
-        "sender": sender,
-        "message": message,
-        "has_link": has_link,
-        "link": link,
-        "has_file": has_file,
-        "file_name": file_name,
-        "clicked": user_actions["clicked"],
-        "downloaded": user_actions["downloaded"],
-        "submitted_category": user_actions["submitted_category"],
-    }
+    return build_record_from_message(message, sender=sender)
 
 def ask_yes_no(question):
     answer = input(question).strip().lower()
@@ -529,7 +494,7 @@ def collect_user_actions(has_link, has_file):
         "submitted_category": submitted_category,
     }
 
-def display_result(result):
+def display_result(result: dict | None) -> None:
     if not result:
         print("\nNo assessment available.")
         return
@@ -551,7 +516,7 @@ def display_result(result):
         print(f"{number}. {step}")
 
 
-def display_record(record):
+def display_record(record: dict) -> None:
     print("\n=== Report details ===")
     channels = {"email": "Email", "sms": "SMS", "chat": "Chat"}
     print("Channel:", channels.get(record.get("channel"), "Unknown"))
@@ -571,7 +536,7 @@ def display_record(record):
     display_result(record.get("result") or {})
 
 
-def display_list(records):
+def display_list(records: list[dict]) -> None:
     if not records:
         print("No saved reports yet.")
         return

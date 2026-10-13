@@ -4,6 +4,7 @@
 import json
 import os
 import tempfile
+from collections.abc import Callable
 
 import logging_setup
 
@@ -187,7 +188,7 @@ def _validate_report(record):
     return record
 
 
-def save(record):
+def save(record: dict) -> None:
     """Append a version-2 report atomically, preserving existing records.
 
     ValueError/OSError means the report could not be saved.
@@ -215,7 +216,7 @@ def save(record):
             os.unlink(temporary)
 
 
-def load(*, strict=False):
+def load(*, strict: bool = False) -> list[dict]:
     """Read history; log and return [] on failure by default, as required in Phase 1.
 
     Internal save/history callers use strict=True to distinguish failed reads from
@@ -249,6 +250,6 @@ def _read_records():
     return records
 
 
-def query(filter_fn):
+def query(filter_fn: Callable[[dict], bool]) -> list[dict]:
     """Return local reports matching the predicate without changing storage."""
     return [record for record in load() if filter_fn(record)]
