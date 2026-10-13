@@ -18,17 +18,11 @@ import pytest
     b"Content-Transfer-Encoding: quoted-printable\r\n\r\nHello=GG",
     b"Content-Transfer-Encoding: unknown\r\n\r\nHello",
 ])
-def test_malformed_import_reprompts_before_success(tmp_path, monkeypatch, capsys, raw):
+def test_malformed_import_is_rejected_by_parser(tmp_path, raw):
     bad = tmp_path / "bad.eml"
-    good = tmp_path / "good.eml"
     bad.write_bytes(raw)
-    good.write_bytes(b"From: fictional@example.test\r\n\r\nValid message")
-    answers = iter([str(bad), str(good)])
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
-    assert io_manager.get_eml_input() == ("fictional@example.test", "Valid message")
-    output = capsys.readouterr().out
-    assert output.count("Unable to read") == 1
-    assert output.count("Email loaded successfully") == 1
+    with pytest.raises(ValueError):
+        io_manager.read_eml_details(bad)
 
 
 def _multipart(*parts):

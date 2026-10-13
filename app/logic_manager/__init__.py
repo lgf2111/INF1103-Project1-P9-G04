@@ -27,19 +27,32 @@ def score(record):
         return 60
     if findings["suspicious"]:
         return 45
-    if findings["insufficient_context"]:
+    # A credential request or reported interaction warrants caution even when
+    # the AI did not independently classify the message as suspicious.
+    if findings["credential_request"]:
+        return 40
+    if record["clicked"] or record["downloaded"]:
         return 35
+    if findings["insufficient_context"]:
+        return 20
     return 10
 
 
-def route(value):
-    """Return the priority for a calculated score."""
-    # Apply the agreed priority thresholds.
+def _priority(value):
+    """Return the priority corresponding to a calculated score."""
+    # Apply the agreed thresholds from highest to lowest.
     if value >= 70:
         return "HIGH"
     if value >= 35:
         return "MEDIUM"
     return "LOW"
+
+
+def route(record):
+    """Validate a record and return its score and priority without modifying it."""
+    value = score(record)
+    # Keep the calculated score and its corresponding priority together.
+    return {"score": value, "priority": _priority(value)}
 
 
 def evaluate(record):
@@ -48,8 +61,10 @@ def evaluate(record):
     The caller supplies schema/source-validated AI findings. No API, terminal or
     persistence operations belong here. Preserve the original record unchanged.
     """
-    value = score(record)
-    priority = route(value)
+    # Route once and reuse both values without repeating validation or scoring.
+    outcome = route(record)
+    value = outcome["score"]
+    priority = outcome["priority"]
     findings = record["ai"]
     reasons = []
     category = record["submitted_category"]
@@ -104,6 +119,7 @@ def evaluate(record):
         )
     return {"priority": priority, "score": value, "checklist": checklist, "reasons": reasons}
 
+
 def _validate_record(record):
     """Validate the record shape produced by io_manager.collect_input()."""
     required_keys = {
@@ -124,10 +140,7 @@ def _validate_record(record):
 
     missing = required_keys - set(record)
     if missing:
-        raise ValueError(
-            "Record is missing required fields: "
-            + ", ".join(sorted(missing))
-        )
+        raise ValueError("Record is missing required fields: " + ", ".join(sorted(missing)))
 
     if not isinstance(record["channel"], str):
         raise ValueError("channel must be text.")
@@ -149,6 +162,4 @@ def _validate_record(record):
         raise ValueError("file_name must be text or None.")
 
     if record["submitted_category"] not in (None, "password", "otp"):
-        raise ValueError(
-            "submitted_category must be None, 'password', or 'otp'."
-        )
+        raise ValueError("submitted_category must be None, 'password', or 'otp'.")
