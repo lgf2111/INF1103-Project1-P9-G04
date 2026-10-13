@@ -408,4 +408,3 @@ def _validate_source_details(data, message):
                 raise ValueError("AI detail has no matching source occurrence in order: " + key)
 
     return data
-

@@ -38,5 +38,3 @@ test count and release are not the final submission verification.
 I keep the original commits and PRs as the authority for authorship. Refactoring
 or testing another layer does not transfer its original contribution. Current
 scope and unresolved delivery gates are in ROADMAP.md and submission/.
-
-

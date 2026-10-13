@@ -1,2 +1,5 @@
 # I keep the Docker helper executable by Bash after Windows checkouts.
 docker.sh text eol=lf
+
+# Preserve submission PDF bytes on every platform; never normalize line endings.
+submission/*.pdf binary
