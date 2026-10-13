@@ -24,8 +24,10 @@ def _friendly_ai_error(error):
     """
     text = str(error).lower()
     if "timed out" in text or "could not complete" in text:
-        return ("The check failed: could not reach the AI service. "
-                "Check your internet connection and try again.")
+        return (
+            "The check failed: could not reach the AI service. "
+            "Check your internet connection and try again."
+        )
     if "http 5" in text:
         return "The check failed: the AI service is temporarily unavailable. Try again shortly."
     if "http 429" in text:
@@ -44,6 +46,7 @@ def load_env():
             if line and not line.startswith("#") and "=" in line:
                 key, value = line.split("=", 1)
                 os.environ.setdefault(key.strip(), value.strip())
+
 
 def check_message(record=None):
     """Validate one combined AI response before assessment, saving or display.
@@ -88,6 +91,7 @@ def check_message(record=None):
     # io_manager.display_result expects the logic result dictionary.
     io_manager.display_result(result)
 
+
 def upload_file():
     """Get a file's text via the one-shot web uploader, then assess it."""
     # Lazy import: the web server code only loads when this option is used.
@@ -107,6 +111,7 @@ def upload_file():
     record = io_manager.build_record_from_message(text.strip())
     check_message(record)
 
+
 def load_reports() -> list[dict] | None:
     """Read JSON history; distinguish an unavailable file from empty history."""
     try:
@@ -122,6 +127,7 @@ def view_reports():
     records = load_reports()
     if records is not None:
         io_manager.display_list(records)
+
 
 def main():
     load_env()
@@ -154,12 +160,12 @@ def main():
                 io_manager.show_message("Bye!")
                 break
             else:
-                io_manager.show_message(
-                    "Please choose 1, 2, 3, 4 or 5.")
+                io_manager.show_message("Please choose 1, 2, 3, 4 or 5.")
     except (KeyboardInterrupt, EOFError):
         # Ctrl+C (interrupt) or Ctrl+D (end of input): exit cleanly, no traceback.
         io_manager.show_message("\nInterrupted. Goodbye!")
     logger.info("Application exited")
+
 
 if __name__ == "__main__":
     main()

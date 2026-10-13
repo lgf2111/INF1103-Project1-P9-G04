@@ -12,8 +12,18 @@ logger = logging_setup.get_logger(__name__)
 FILE = "reports.json"
 
 
-INPUT_FIELDS = {"channel", "sender", "message", "has_link", "link", "has_file",
-                "file_name", "clicked", "downloaded", "submitted_category"}
+INPUT_FIELDS = {
+    "channel",
+    "sender",
+    "message",
+    "has_link",
+    "link",
+    "has_file",
+    "file_name",
+    "clicked",
+    "downloaded",
+    "submitted_category",
+}
 
 
 def _validate_report(record):
@@ -45,9 +55,7 @@ def _validate_report(record):
     if any(type(ai[key]) is not bool for key in findings):
         raise ValueError("Invalid stored AI finding types.")
     details = ai["details"]
-    if not isinstance(details, dict) or set(details) != {
-        "emails", "phone_numbers", "ip_addresses"
-    }:
+    if not isinstance(details, dict) or set(details) != {"emails", "phone_numbers", "ip_addresses"}:
         raise ValueError("Invalid stored extraction.")
     result = record["result"]
     if not isinstance(result, dict) or set(result) != {"score", "priority", "reasons", "checklist"}:
@@ -76,8 +84,11 @@ def save(record):
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=os.path.dirname(os.path.abspath(FILE)),
-            suffix=".tmp", delete=False,
+            mode="w",
+            encoding="utf-8",
+            dir=os.path.dirname(os.path.abspath(FILE)),
+            suffix=".tmp",
+            delete=False,
         ) as stream:
             temporary = stream.name
             json.dump(records, stream, indent=2, ensure_ascii=False, allow_nan=False)
