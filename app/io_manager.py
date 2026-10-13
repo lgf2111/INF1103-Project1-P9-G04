@@ -420,8 +420,15 @@ def choose_eml_file(folder):
             return None
         if answer == "m" and shown < len(files):
             continue
-        if answer.isdigit() and 1 <= int(answer) <= shown:
-            return files[int(answer) - 1]
+        selected = 0
+        if answer.isdigit():
+            try:
+                selected = int(answer)
+            except ValueError:
+                # Some Unicode digits and excessive-length numbers cannot be parsed.
+                pass
+        if 1 <= selected <= shown:
+            return files[selected - 1]
         print("Invalid choice. Please try again.")
 
 
@@ -429,7 +436,11 @@ def get_eml_from_folder():
     """Pick a .eml from the saved folder and load it (sender, message)."""
     folder = get_eml_folder()
     while True:
-        chosen = choose_eml_file(folder)
+        try:
+            chosen = choose_eml_file(folder)
+        except OSError:
+            print("Unable to list the email folder. Check its availability and permissions.")
+            return None
         if chosen is None:
             return None  # user cancelled or no files
         try:

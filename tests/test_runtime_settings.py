@@ -44,3 +44,27 @@ def test_logging_attribute_names_do_not_crash_startup(tmp_path, level):
     assert result.returncode == 0, result.stderr
     assert "Bye!" in result.stdout
     assert "Traceback" not in result.stderr
+
+
+@pytest.mark.parametrize("invalid_choice", ["Â²", "9" * 5000])
+def test_email_picker_rejects_unusable_numeric_choices(tmp_path, monkeypatch, invalid_choice):
+    folder = tmp_path
+    source = Path(__file__).resolve().parents[1] / "emails" / "sample-1.eml"
+    (folder / source.name).write_bytes(source.read_bytes())
+    answers = iter([invalid_choice, "c"])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    assert io_manager.choose_eml_file(folder) is None
+
+
+def test_unreadable_email_folder_returns_safely_to_menu(monkeypatch, capsys):
+    folder = Path(__file__).resolve().parents[1] / "emails"
+    monkeypatch.setattr(io_manager, "get_eml_folder", lambda: folder)
+
+    def cannot_list(_folder):
+        raise PermissionError("PRIVATE_PATH")
+
+    monkeypatch.setattr(io_manager, "list_eml_files", cannot_list)
+    assert io_manager.get_eml_from_folder() is None
+    output = capsys.readouterr().out
+    assert "Unable to list" in output
+    assert "PRIVATE_PATH" not in output
