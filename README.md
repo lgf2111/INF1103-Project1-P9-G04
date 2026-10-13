@@ -23,6 +23,7 @@ This is the Phase 1 coursework application. The current code provides an integra
 | `tests/test_logic_manager.py` | Required offline logic tests with hardcoded AI findings. |
 | `tests/test_application.py` | Automated feature showcase and preserved application regressions. |
 | `tests/fixtures/` | Three essential, pinned public email fixtures; provenance included. |
+| `conftest.py` | Shared pytest import setup and registration of the `demo` selection. |
 
 ## My coding practices
 
@@ -68,7 +69,7 @@ Open `.env` and set `GROQ_API_KEY` to your key from the [Groq console](https://c
 GROQ_API_KEY=your_key_here
 ```
 
-A key is required for a live assessment, but not for the offline tests. Use fictional messages for testing; never enter real passwords or one-time codes.
+A key is required for a live assessment, but not for the offline tests. Use the pinned public real-email examples for demonstrations; never enter real passwords or one-time codes.
 
 The `.env` file is optional when settings are supplied by your shell or Docker.
 Save it as UTF-8 (a UTF-8 BOM is accepted), using the existing `KEY=value` format.
@@ -93,12 +94,19 @@ python -m pytest tests/test_application.py -q
 The app lets you assess a message, view saved reports or quit. It writes `reports.json` in the directory from which you run it. The tests use sample AI responses and do not need network access.
 
 For the concise automated feature showcase, run
-`python -m pytest tests/test_application.py -k demo -v`. It exercises real public
+`python -m pytest tests/test_application.py -m demo -v`. Its 12 cases are in the
+first section of the application script. It exercises real public
 emails through manual/folder/browser input, multi-field scoring, exposure,
 uncertainty, failures and reload in a separate process. External AI HTTP is mocked;
 the local upload server, managers and storage are real. This is not a live-model
 demonstration or detection benchmark. The full application script retains meaningful
-lifecycle regressions in named sections. `python -m pytest` runs both scripts.
+lifecycle regressions in named sections. The application script contains 568 cases:
+12 showcase cases and 556 further regressions. The unchanged logic script contains
+72 cases, giving 640 overall. Counts include parameter variations, not 640 separate
+functions. Use `-m "not demo"` for the application regressions alone.
+`python -m pytest` runs both scripts. `conftest.py` is loaded automatically by
+pytest; it makes the app modules importable and registers the `demo` marker. It is
+required test configuration, not another test script or an application entry point.
 
 The existing logic script satisfies Framework section 5.3: `evaluate()`, `score()`
 and `route()`, hardcoded AI findings, multi-field rules, precedence, 35/70 boundary
@@ -273,19 +281,23 @@ Verify the deliverables without external networking:
 docker build -t phishreport .
 docker run --rm --network none phishreport python -m pytest tests/test_logic_manager.py -q
 docker run --rm --network none phishreport python -m pytest tests/test_application.py -q
-docker run --rm --network none phishreport python -m pytest tests/test_application.py -k demo -v
+docker run --rm --network none phishreport python -m pytest tests/test_application.py -m demo -v
 ```
 
 ## Submission documents and remaining gates
 
 Submission branch: `main`. Deadline: **14 October 2026, 23:59 Singapore time**.
-The report, current scope statement and release checklist are maintained privately
-in `.local/submission/` for separate delivery, excluded from Git and Docker. The
-supplied course instruction lists the report and approved statement with the
-complete project repository; acceptance of separate delivery must be confirmed.
-The current statement has no approval evidence. Approval/Initial Details receipt,
-invitations/member clones, every member's final Docker checks, rehearsal and
-submission receipts remain missing. [ROADMAP.md](ROADMAP.md) records G1-G8 and the normal review workflow.
+The report, current scope statement and release checklist are maintained locally
+in `.local/submission/` for separate course delivery, excluded from Git and Docker.
+The team confirms topic approval and Initial Details were completed before coding;
+the separate document delivery route is also confirmed. The reconciled current
+statement does not establish that every revision was separately approved: use the
+already approved version or confirm any material scope change with the team.
+Instructor interpretations of saved-history API scope and fresh-model repeatability
+remain unresolved in the GitHub record. Repository access/member clones and every
+member's final Docker checks need team confirmation. Rehearsal prepares the later
+demonstration; course receipts are retained when submission occurs.
+[ROADMAP.md](ROADMAP.md) records G1-G8 and the normal review workflow.
 
 ## Contributing
 
