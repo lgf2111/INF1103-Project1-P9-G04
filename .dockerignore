@@ -23,6 +23,8 @@ reports.json
 logs/
 .phishreport_config.json
 .phishreport-data/
+emails/*
+!emails/README.md
 
 # Operating-system metadata
 .DS_Store
