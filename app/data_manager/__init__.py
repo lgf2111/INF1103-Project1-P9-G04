@@ -31,10 +31,72 @@ def _ensure_schema(cursor):
     cursor.execute("ALTER TABLE reports ADD COLUMN IF NOT EXISTS priority TEXT")
 
 
-LEGACY_FIELDS = {"channel", "sender", "message", "link", "file_name", "details",
-                 "score", "priority"}
-INPUT_FIELDS = {"channel", "sender", "message", "has_link", "link", "has_file",
-                "file_name", "clicked", "downloaded", "submitted_category"}
+LEGACY_FIELDS = {
+    "channel",
+    "sender",
+    "message",
+    "link",
+    "file_name",
+    "details",
+    "score",
+    "priority",
+}
+INPUT_FIELDS = {
+    "channel",
+    "sender",
+    "message",
+    "has_link",
+    "link",
+    "has_file",
+    "file_name",
+    "clicked",
+    "downloaded",
+    "submitted_category",
+}
+
+
+def _validate_legacy(record):
+    """Check present legacy fields without filling gaps or changing stored values."""
+    # Older records may omit metadata or use null for unavailable values.
+    for key in ("channel", "sender", "message", "link", "file_name", "submitted_category"):
+        value = record.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("Invalid legacy text field: " + key)
+    for key in ("has_link", "has_file", "clicked", "downloaded"):
+        value = record.get(key)
+        if value is not None and type(value) is not bool:
+            raise ValueError("Invalid legacy action field: " + key)
+
+    result = record.get("result")
+    if result is not None and not isinstance(result, dict):
+        raise ValueError("Invalid legacy assessment.")
+
+    # History supports both top-level outcomes and nested assessment outcomes.
+    for outcome in (record, result if result is not None else {}):
+        priority = outcome.get("priority")
+        if priority is not None and not isinstance(priority, str):
+            raise ValueError("Invalid legacy priority.")
+        value = outcome.get("score")
+        if value is not None and type(value) not in (int, float):
+            raise ValueError("Invalid legacy score.")
+        for key in ("reasons", "checklist"):
+            if key in outcome and (
+                not isinstance(outcome[key], list)
+                or any(not isinstance(item, str) for item in outcome[key])
+            ):
+                raise ValueError("Invalid legacy assessment list: " + key)
+
+    if "details" in record:
+        details = record["details"]
+        if not isinstance(details, dict):
+            raise ValueError("Invalid legacy details.")
+        for key in ("emails", "phone_numbers", "ip_addresses"):
+            if key in details and (
+                not isinstance(details[key], list)
+                or any(not isinstance(item, str) for item in details[key])
+            ):
+                raise ValueError("Invalid legacy extraction list: " + key)
+    return record
 
 
 def _validate_report(record):
@@ -42,7 +104,7 @@ def _validate_report(record):
     if not isinstance(record, dict):
         raise ValueError("Stored reports must be objects.")
     if "schema_version" not in record:
-        return record  # Older local records retain their original fields.
+        return _validate_legacy(record)
     if type(record["schema_version"]) is not int or record["schema_version"] != 1:
         raise ValueError("Unsupported report version.")
     if set(record) != INPUT_FIELDS | {"schema_version", "ai", "result"}:
@@ -66,9 +128,7 @@ def _validate_report(record):
     if any(type(ai[key]) is not bool for key in findings):
         raise ValueError("Invalid stored AI finding types.")
     details = ai["details"]
-    if not isinstance(details, dict) or set(details) != {
-        "emails", "phone_numbers", "ip_addresses"
-    }:
+    if not isinstance(details, dict) or set(details) != {"emails", "phone_numbers", "ip_addresses"}:
         raise ValueError("Invalid stored extraction.")
     result = record["result"]
     if not isinstance(result, dict) or set(result) != {"score", "priority", "reasons", "checklist"}:
@@ -92,9 +152,12 @@ def _database_record(record):
         if set(record) != LEGACY_FIELDS:
             raise ValueError("Legacy database reports require the eight agreed fields.")
         return record
-    return {**{key: record[key] for key in ("channel", "sender", "message", "link", "file_name")},
-            "details": {"schema_version": 1, "record": record},
-            "score": record["result"]["score"], "priority": record["result"]["priority"]}
+    return {
+        **{key: record[key] for key in ("channel", "sender", "message", "link", "file_name")},
+        "details": {"schema_version": 1, "record": record},
+        "score": record["result"]["score"],
+        "priority": record["result"]["priority"],
+    }
 
 
 def _restore_record(row):
@@ -105,7 +168,7 @@ def _restore_record(row):
     if not isinstance(payload, dict):
         raise ValueError("Invalid database details.")
     if "schema_version" not in payload:
-        return row
+        return _validate_report(row)
     if set(payload) != {"schema_version", "record"} or type(payload["schema_version"]) is not int:
         raise ValueError("Invalid database payload.")
     if payload["schema_version"] != 1:
@@ -129,8 +192,11 @@ def save(record):
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=os.path.dirname(os.path.abspath(FILE)),
-            suffix=".tmp", delete=False,
+            mode="w",
+            encoding="utf-8",
+            dir=os.path.dirname(os.path.abspath(FILE)),
+            suffix=".tmp",
+            delete=False,
         ) as stream:
             temporary = stream.name
             json.dump(records, stream, indent=2, ensure_ascii=False, allow_nan=False)
@@ -210,9 +276,7 @@ def fetch() -> list[dict]:
         raise RuntimeError("Set DATABASE_URL before viewing PostgreSQL reports.")
 
     try:
-        with psycopg.connect(
-            database_url, connect_timeout=10, row_factory=dict_row
-        ) as connection:
+        with psycopg.connect(database_url, connect_timeout=10, row_factory=dict_row) as connection:
             with connection.cursor() as cursor:
                 _ensure_schema(cursor)
                 # JSONB details are decoded by the driver into Python dictionaries.
