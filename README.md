@@ -47,6 +47,18 @@ GROQ_API_KEY=your_key_here
 
 A key is required for a live assessment, but not for the offline tests. Use fictional messages for testing; never enter real passwords or one-time codes.
 
+The `.env` file is optional when settings are supplied by your shell or Docker.
+Save it as UTF-8 (a UTF-8 BOM is accepted), using the existing `KEY=value` format.
+Existing environment values take precedence; repeated file keys keep their first
+value. Blank lines, comments and lines without `=` are ignored.
+
+If the file cannot be read or decoded, or an assignment has an empty key or a NUL
+character, startup displays a warning and continues using existing environment
+settings. File settings are checked before any are applied, so an invalid or
+partly read file does not leave a partial configuration behind. The warning and
+its log entry contain no file contents or raw exception details. Missing API
+credentials still prevent a completed assessment; this recovery does not bypass AI.
+
 ## Run and test
 
 ```bash
@@ -58,27 +70,43 @@ The app lets you assess a message, view saved reports or quit. It writes `report
 
 ### Import an email
 
-Choose **2. Import an email (.eml file)** from the main menu. On first use,
-choose the folder containing your emails, then select a listed file. The folder
-is saved for later imports. Then answer the link, file and action questions.
-Choose **1. Check a new message (Manual Input)** to type an Email, SMS or Chat message. We include the
-subject and every inline plain-text body part in the text sent for assessment.
+Choose **2. Import an email (.eml file)**, enter the folder containing your
+exported `.eml` files on first use, then select a file. The folder is remembered
+locally; `m` lists more files and `c` cancels selection. This reads exported files,
+not a live Outlook mailbox. In Docker, mount the folder and enter its container
+path (for example, `/emails`). Choose **3. Upload an email (.eml file)** to
+upload an `.eml` file through the browser. Both email routes use the same
+MIME parser, subject/sender handling and exposure questions.
+
+Choose **1. Check a new message (Manual Input)** to type an Email, SMS or Chat
+message. We include the subject and all inline plain-text/HTML body representations
+in the text sent for assessment, so differing HTML content is not silently omitted.
 Valid Base64, quoted-printable and declared character sets are decoded without
 silently replacing invalid characters. Missing sender/subject headers are allowed;
-duplicate or malformed sender/subject headers are rejected.
+duplicate or undecodable sender/subject headers are rejected. A forged or malformed
+sender address is preserved as untrusted text rather than repaired or authenticated.
 
-We support plain-text bodies, including nested mixed, alternative and related
-containers whose inline parts are all plain text. HTML bodies (including a
-plain-text/HTML alternative) and other inline content are rejected instead of
-assessing only part of the message. Attachments are excluded from assessment.
+We support plain-text and HTML bodies in nested mixed, alternative and related
+containers. HTML is converted to inert text with link/form targets and image
+descriptions retained; scripts/styles are excluded, resources are never fetched,
+and HTML is never rendered or executed. Embedded images and attachments
+are excluded from content analysis. Other unsupported inline body types are rejected.
 For unsupported emails, restart the input flow and choose manual input to provide
 the relevant message text. We still ask separately about links, files, clicks,
 downloads and password/code disclosure; these actions are never inferred.
 
 Imports are limited to regular files of 2 MiB, 100 MIME parts, 32 nesting levels
-and 50,000 final message characters (including the subject). Invalid imports
+and 50,000 final message characters (including the subject). Browser uploads
+reject all other types with: "Only .eml email files are supported. Images and
+attachments are not analysed." Oversized browser uploads return HTTP 413;
+format/type errors return HTTP 400. Invalid imports
 display an error and ask for another file. These limits are our implementation
 choices, not additional coursework requirements.
+
+The browser uploader also limits requests and preserves original file bytes.
+Uploading the email itself does not mean a user downloaded an attachment in it.
+We still ask about actual clicks, attachment downloads and disclosure; the AI
+cannot infer those actions from email content.
 
 ## Run Docker with persistent reports
 

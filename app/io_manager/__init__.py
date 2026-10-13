@@ -19,16 +19,21 @@ from email.header import decode_header
 from email.parser import BytesParser
 from pathlib import Path
 
+from .email_html import html_to_text
+
 MAX_EML_BYTES = 2 * 1024 * 1024
 MAX_MIME_PARTS = 100
 MAX_MIME_DEPTH = 32
 MAX_MESSAGE_CHARS = 50_000
+UPLOAD_TYPE_MESSAGE = (
+    "Only .eml email files are supported. Images and attachments are not analysed."
+)
 
 def main_menu():
     print("\n=== PhishReport ===")
     print("1. Check a new message (Manual Input)")
     print("2. Import an email (.eml file)")
-    print("3. Upload a file to assess")
+    print("3. Upload an email (.eml file)")
     print("4. View saved reports")
     print("5. Quit")
 
@@ -75,19 +80,34 @@ def build_record_from_message(message, channel="email", sender=None):
     Reuses the normal action questions so the assessment pipeline is unchanged;
     the message comes from the file instead of a prompt.
     """
-    user_actions = collect_user_actions(False, False)
+    has_link, link = get_link_information()
+    has_file, file_name = get_file_information()
+    user_actions = collect_user_actions(has_link, has_file)
     return {
         "channel": channel,
         "sender": sender,
         "message": message,
-        "has_link": False,
-        "link": None,
-        "has_file": True,
-        "file_name": "uploaded_file",
+        "has_link": has_link,
+        "link": link,
+        "has_file": has_file,
+        "file_name": file_name,
         "clicked": user_actions["clicked"],
         "downloaded": user_actions["downloaded"],
         "submitted_category": user_actions["submitted_category"],
     }
+
+
+def collect_input_from_upload(upload):
+    """Use the folder import's MIME parser and exposure contract for browser EML."""
+    if not upload["filename"].lower().endswith(".eml"):
+        raise ValueError(UPLOAD_TYPE_MESSAGE)
+    sender, message = read_eml_bytes(upload["content"])
+    return build_record_from_message(message, sender=sender)
+
+
+def show_upload_instructions(host, port):
+    print(f"\nOpen http://{host}:{port} in your browser to upload an .eml email.")
+    print("Waiting for upload... (Ctrl+C to cancel)")
 
 def collect_input_from_folder():
     """Build a record from a .eml chosen out of the saved folder.
@@ -203,6 +223,11 @@ def read_eml_details(file_path):
         # Read only up to the maximum allowed size + 1 byte.
         raw_email = email_file.read(MAX_EML_BYTES + 1)
 
+    return read_eml_bytes(raw_email)
+
+
+def read_eml_bytes(raw_email):
+    """Parse the same bounded bytes for filesystem and browser email imports."""
     # Reject email files larger than 2 MiB.
     if len(raw_email) > MAX_EML_BYTES:
         raise ValueError("Email file exceeds the size limit.")
@@ -253,10 +278,11 @@ def read_eml_details(file_path):
 
 
 def read_eml_header(email_message, name):
-    """Validate raw header decoding before the email library can repair it."""
+    """Decode source metadata strictly; do not repair a suspicious sender address."""
     raw = next((value for key, value in email_message.raw_items()
                 if key.lower() == name.lower()), "")
     try:
+        decoded = []
         for word in re.finditer(r"=\?[^?]+\?([bBqQ])\?([^?]*)\?=", raw):
             encoding, payload = word.groups()
             if encoding.lower() == "b":
@@ -265,20 +291,20 @@ def read_eml_header(email_message, name):
                 raise ValueError("Malformed encoded email header.")
         for value, charset in decode_header(raw):
             if isinstance(value, bytes):
-                value.decode(charset or "ascii", errors="strict")
+                decoded.append(value.decode(charset or "ascii", errors="strict"))
             else:
-                value.encode("utf-8", errors="surrogateescape").decode("utf-8")
-        header = email_message.get(name)
-        if header is not None and header.defects:
-            raise ValueError("Malformed email header.")
+                decoded.append(value.encode("utf-8", errors="surrogateescape").decode("utf-8"))
     except (UnicodeError, LookupError, HeaderParseError, binascii.Error) as error:
         raise ValueError("Could not decode email header.") from error
-    return str(header or "").strip()
+    # A forged/non-RFC From value is still useful untrusted evidence. Preserve
+    # it as text instead of converting it to '<>' or treating it as verified.
+    return re.sub(r"\r?\n[ \t]+", " ", "".join(decoded)).strip()
 
 
 def read_eml_body(email_message):
-    """Include every inline plain-text part; never assess a partial HTML body."""
+    """Include readable plain/HTML representations; exclude images and attachments."""
     bodies = []
+    had_html = False
     stack = [email_message]
     while stack:
         part = stack.pop()
@@ -290,17 +316,30 @@ def read_eml_body(email_message):
                 raise ValueError("Unsupported multipart email body.")
             stack.extend(reversed(list(part.iter_parts())))
             continue
-        if part.get_content_type() != "text/plain":
-            raise ValueError("Unsupported non-plain-text email body.")
-        bodies.append(decode_eml_part(part))
+        if part.get_content_maintype() == "image":
+            continue  # Inline image bytes are excluded in every supported container.
+        if part.get_content_type() not in ("text/plain", "text/html"):
+            raise ValueError("Unsupported email body type.")
+        decoded = decode_eml_part(part, allow_empty=True)
+        if not decoded.strip():
+            continue
+        if part.get_content_type() == "text/html":
+            had_html = True
+            converted = html_to_text(decoded, MAX_MESSAGE_CHARS, allow_empty=True)
+            if not converted:
+                continue  # Empty markup must not block another usable representation.
+            decoded = "[HTML body]\n" + converted
+        bodies.append(decoded)
         if sum(map(len, bodies)) + 2 * (len(bodies) - 1) > MAX_MESSAGE_CHARS:
             raise ValueError("Email exceeds the message length limit.")
     if not bodies:
-        raise ValueError("No readable plain-text message found.")
+        if had_html:
+            raise ValueError("Email HTML has no usable text or link targets.")
+        raise ValueError("No readable email message found.")
     return "\n\n".join(bodies)
 
 
-def decode_eml_part(body_part):
+def decode_eml_part(body_part, allow_empty=False):
 
     # Reject emails without a readable plain-text body.
     if body_part is None:
@@ -336,7 +375,7 @@ def decode_eml_part(body_part):
         ):
             raise ValueError("Invalid Base64 content detected.")
     # Reject empty messages.
-    if not isinstance(body, str) or not body.strip():
+    if not isinstance(body, str) or (not allow_empty and not body.strip()):
         raise ValueError("Email message cannot be blank.")
 
     return body.strip()
@@ -423,8 +462,8 @@ def get_eml_from_folder():
             sender, message = read_eml_details(str(chosen))
         except (OSError, ValueError):
             print("Unable to read that email file. Please choose another.")
-            print("Use a valid plain-text email; HTML bodies are not supported. "
-                  "Attachments are not assessed.")
+            print("Use a valid plain-text or HTML email. "
+                  "Images and attachments are not analysed.")
             continue
         print("Email loaded successfully.")
         return sender, message

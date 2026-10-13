@@ -33,17 +33,31 @@ def _friendly_ai_error(error):
     return "The check failed: the AI could not complete the assessment. Please try again."
 
 
-def load_env():
-    """Load project environment values without replacing existing settings."""
-    if not os.path.exists(".env"):
-        return
+def load_env() -> bool:
+    """Load an optional UTF-8 file, returning False if it cannot be used safely.
 
-    with open(".env") as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                key, value = line.split("=", 1)
-                os.environ.setdefault(key.strip(), value.strip())
+    Read and validate every assignment before applying any settings. Existing
+    environment values and the first occurrence of each file key take precedence.
+    Failure details stay private; main reports a fixed warning after logging setup.
+    """
+    values = {}
+    try:
+        with open(".env", encoding="utf-8-sig") as stream:
+            for line in stream:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, value = (part.strip() for part in line.split("=", 1))
+                    if not key or "\x00" in key or "\x00" in value:
+                        return False
+                    values.setdefault(key, value)
+    except FileNotFoundError:
+        return True  # The file is optional when settings come from the environment.
+    except (OSError, UnicodeError):
+        return False
+
+    for key, value in values.items():
+        os.environ.setdefault(key, value)
+    return True
 
 def check_message(record=None):
     """Validate one combined AI response before assessment, saving or display.
@@ -96,22 +110,18 @@ def check_message(record=None):
     io_manager.display_result(result)
 
 def upload_file():
-    """Get a file's text via the one-shot web uploader, then assess it."""
-    # Lazy import: the web server code only loads when this option is used.
-    from misc import web_upload
-
+    """Parse uploaded email through the same I/O contract as folder imports."""
     try:
-        text = web_upload.start_and_wait_for_upload()
-    except (OSError, RuntimeError) as error:
+        from misc import web_upload
+
+        io_manager.show_upload_instructions(web_upload.DISPLAY_HOST, web_upload.PORT)
+        upload = web_upload.start_and_wait_for_upload()
+        record = io_manager.collect_input_from_upload(upload)
+    except (OSError, RuntimeError, ValueError) as error:
         logging_setup.log_failure(logger, "File upload failed")
         io_manager.show_message("Upload failed: " + str(error))
         return
 
-    if not text or not text.strip():
-        io_manager.show_message("No usable text in the uploaded file.")
-        return
-
-    record = io_manager.build_record_from_message(text.strip())
     check_message(record)
 
 def load_reports() -> list[dict] | None:
@@ -140,12 +150,18 @@ def view_reports():
         io_manager.display_list(records)
 
 def main():
-    load_env()
+    env_loaded = load_env()
     # Set up behind-the-scenes logging to the logs/ folder before anything else,
     # so any failure (AI, database, file) is recorded. Set LOG_LEVEL=DEBUG in
     # .env to also capture full tracebacks while debugging.
     if not logging_setup.setup_logging():
         io_manager.show_message("Warning: diagnostic logging is unavailable.")
+    if not env_loaded:
+        # No raw file/exception details: even DEBUG must not expose credentials.
+        logger.warning("Optional .env could not be loaded; existing environment retained.")
+        io_manager.show_message(
+            "Warning: .env could not be loaded. Using existing environment settings."
+        )
     logger.info("Application started")
     try:
         if load_reports() == []:
