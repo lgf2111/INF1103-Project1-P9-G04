@@ -62,8 +62,8 @@ Choose **2. Import an email (.eml file)**, enter the folder containing your
 exported `.eml` files on first use, then select a file. The folder is remembered
 locally; `m` lists more files and `c` cancels selection. This reads exported files,
 not a live Outlook mailbox. In Docker, mount the folder and enter its container
-path (for example, `/emails`). Choose **3. Upload a file to assess** to upload an
-`.eml` or UTF-8 `.txt` file through the browser. Both email routes use the same
+path (for example, `/emails`). Choose **3. Upload an email (.eml file)** to
+upload an `.eml` file through the browser. Both email routes use the same
 MIME parser, subject/sender handling and exposure questions.
 
 Choose **1. Check a new message (Manual Input)** to type an Email, SMS or Chat
@@ -77,14 +77,17 @@ sender address is preserved as untrusted text rather than repaired or authentica
 We support plain-text and HTML bodies in nested mixed, alternative and related
 containers. HTML is converted to inert text with link/form targets and image
 descriptions retained; scripts/styles are excluded, resources are never fetched,
-and HTML is never rendered or executed. Embedded related images and attachments
+and HTML is never rendered or executed. Embedded images and attachments
 are excluded from content analysis. Other unsupported inline body types are rejected.
 For unsupported emails, restart the input flow and choose manual input to provide
 the relevant message text. We still ask separately about links, files, clicks,
 downloads and password/code disclosure; these actions are never inferred.
 
 Imports are limited to regular files of 2 MiB, 100 MIME parts, 32 nesting levels
-and 50,000 final message characters (including the subject). Invalid imports
+and 50,000 final message characters (including the subject). Browser uploads
+reject all other types with: "Only .eml email files are supported. Images and
+attachments are not analysed." Oversized browser uploads return HTTP 413;
+format/type errors return HTTP 400. Invalid imports
 display an error and ask for another file. These limits are our implementation
 choices, not additional coursework requirements.
 
