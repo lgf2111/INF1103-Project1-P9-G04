@@ -13,7 +13,7 @@ Professor requirements govern compliance. Optional team features are separate.
 | Logic | Agreed eight-rule policy and 35/70 thresholds implemented | PR 64; hardcoded-AI offline tests include the two-AI-field rule |
 | Data | Local-only version-2 JSON, atomic append, supported-history validation and recovery | PR 69 plus merged recovery PR 72; no shared database required |
 | Docker | Persistent directory, read-only /emails, host upload port, Git Bash paths and LF | PR 67; actual import/save/restart checked here; all-member evidence still required |
-| Required filenames | Four actual app/*_manager.py files with physical function definitions | Issue 71; structural and full runtime tests pass on code 0d6834e; must reach main |
+| Required filenames | Four actual app/*_manager.py files with physical function definitions | Issue 71; structural and full runtime tests pass on code 0d6834e |
 | Report and scope | Current engineering report and Initial Details PDF/source in submission/ | Report five pages, diagram/matrix page 2; approval remains unverified |
 | Delivery/demo | Main designated; checklist and rehearsal steps prepared | Team confirmations, rehearsal and course receipt still needed |
 
