@@ -31,10 +31,28 @@ def _ensure_schema(cursor):
     cursor.execute("ALTER TABLE reports ADD COLUMN IF NOT EXISTS priority TEXT")
 
 
-LEGACY_FIELDS = {"channel", "sender", "message", "link", "file_name", "details",
-                 "score", "priority"}
-INPUT_FIELDS = {"channel", "sender", "message", "has_link", "link", "has_file",
-                "file_name", "clicked", "downloaded", "submitted_category"}
+LEGACY_FIELDS = {
+    "channel",
+    "sender",
+    "message",
+    "link",
+    "file_name",
+    "details",
+    "score",
+    "priority",
+}
+INPUT_FIELDS = {
+    "channel",
+    "sender",
+    "message",
+    "has_link",
+    "link",
+    "has_file",
+    "file_name",
+    "clicked",
+    "downloaded",
+    "submitted_category",
+}
 
 
 def _validate_legacy(record):
@@ -110,9 +128,7 @@ def _validate_report(record):
     if any(type(ai[key]) is not bool for key in findings):
         raise ValueError("Invalid stored AI finding types.")
     details = ai["details"]
-    if not isinstance(details, dict) or set(details) != {
-        "emails", "phone_numbers", "ip_addresses"
-    }:
+    if not isinstance(details, dict) or set(details) != {"emails", "phone_numbers", "ip_addresses"}:
         raise ValueError("Invalid stored extraction.")
     result = record["result"]
     if not isinstance(result, dict) or set(result) != {"score", "priority", "reasons", "checklist"}:
@@ -136,9 +152,12 @@ def _database_record(record):
         if set(record) != LEGACY_FIELDS:
             raise ValueError("Legacy database reports require the eight agreed fields.")
         return record
-    return {**{key: record[key] for key in ("channel", "sender", "message", "link", "file_name")},
-            "details": {"schema_version": 1, "record": record},
-            "score": record["result"]["score"], "priority": record["result"]["priority"]}
+    return {
+        **{key: record[key] for key in ("channel", "sender", "message", "link", "file_name")},
+        "details": {"schema_version": 1, "record": record},
+        "score": record["result"]["score"],
+        "priority": record["result"]["priority"],
+    }
 
 
 def _restore_record(row):
@@ -173,8 +192,11 @@ def save(record):
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(
-            mode="w", encoding="utf-8", dir=os.path.dirname(os.path.abspath(FILE)),
-            suffix=".tmp", delete=False,
+            mode="w",
+            encoding="utf-8",
+            dir=os.path.dirname(os.path.abspath(FILE)),
+            suffix=".tmp",
+            delete=False,
         ) as stream:
             temporary = stream.name
             json.dump(records, stream, indent=2, ensure_ascii=False, allow_nan=False)
@@ -254,9 +276,7 @@ def fetch() -> list[dict]:
         raise RuntimeError("Set DATABASE_URL before viewing PostgreSQL reports.")
 
     try:
-        with psycopg.connect(
-            database_url, connect_timeout=10, row_factory=dict_row
-        ) as connection:
+        with psycopg.connect(database_url, connect_timeout=10, row_factory=dict_row) as connection:
             with connection.cursor() as cursor:
                 _ensure_schema(cursor)
                 # JSONB details are decoded by the driver into Python dictionaries.

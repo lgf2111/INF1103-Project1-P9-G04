@@ -16,6 +16,7 @@ def storage(monkeypatch, tmp_path):
     # Keep test data away from real reports and replace the database boundary.
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("DATABASE_URL", "postgresql://example.invalid/test")
+
     def upload(records):
         """Replace database writes with a deterministic batch count."""
         return len(records)
@@ -43,10 +44,18 @@ def test_save(storage, monkeypatch):
         "downloaded": False,
         "submitted_category": None,
     }
-    replies = iter([json.dumps({
-        "credential_request": False, "suspicious": False, "insufficient_context": False,
-        "details": details,
-    })])
+    replies = iter(
+        [
+            json.dumps(
+                {
+                    "credential_request": False,
+                    "suspicious": False,
+                    "insufficient_context": False,
+                    "details": details,
+                }
+            )
+        ]
+    )
     api_calls = []
     displayed = []
 
@@ -70,10 +79,19 @@ def test_save(storage, monkeypatch):
     # Run the actual coordinator, then read its persisted output independently.
     main.check_message()
     saved = json.loads(storage.read_text())
-    assert saved == [{**record, "schema_version": 1, "ai": {
-        "credential_request": False, "suspicious": False, "insufficient_context": False,
-        "details": details,
-    }, "result": displayed[0]}]
+    assert saved == [
+        {
+            **record,
+            "schema_version": 1,
+            "ai": {
+                "credential_request": False,
+                "suspicious": False,
+                "insufficient_context": False,
+                "details": details,
+            },
+            "result": displayed[0],
+        }
+    ]
     assert len(displayed) == 1
     assert len(api_calls) == 1
 
@@ -86,22 +104,22 @@ def test_upload_and_fetch_score_and_priority(monkeypatch):
     connection = MagicMock()
     connection.__enter__.return_value = connection
     connection.cursor.return_value = cursor_context
-    fetched = [{
-        "channel": "email",
-        "sender": "demo@example.test",
-        "message": "A fictional report",
-        "link": None,
-        "file_name": None,
-        "details": {"emails": []},
-        "score": 72,
-        "priority": "HIGH",
-    }]
+    fetched = [
+        {
+            "channel": "email",
+            "sender": "demo@example.test",
+            "message": "A fictional report",
+            "link": None,
+            "file_name": None,
+            "details": {"emails": []},
+            "score": 72,
+            "priority": "HIGH",
+        }
+    ]
     cursor.fetchall.return_value = fetched
 
     monkeypatch.setenv("DATABASE_URL", "postgresql://example.invalid/test")
-    monkeypatch.setattr(
-        data_manager.psycopg, "connect", lambda *args, **kwargs: connection
-    )
+    monkeypatch.setattr(data_manager.psycopg, "connect", lambda *args, **kwargs: connection)
 
     record = {
         "channel": "email",
@@ -202,27 +220,56 @@ def test_file_errors(storage):
 
 def _complete_report():
     return {
-        "schema_version": 1, "channel": "email", "sender": "demo@example.test",
-        "message": "Fictional login request", "has_link": False, "link": None,
-        "has_file": False, "file_name": None, "clicked": False, "downloaded": False,
+        "schema_version": 1,
+        "channel": "email",
+        "sender": "demo@example.test",
+        "message": "Fictional login request",
+        "has_link": False,
+        "link": None,
+        "has_file": False,
+        "file_name": None,
+        "clicked": False,
+        "downloaded": False,
         "submitted_category": "password",
-        "ai": {"credential_request": True, "suspicious": True,
-               "insufficient_context": False,
-               "details": {"emails": [], "phone_numbers": [], "ip_addresses": []}},
-        "result": {"score": 90, "priority": "HIGH", "reasons": ["Password disclosed."],
-                   "checklist": ["Change the affected password."]},
+        "ai": {
+            "credential_request": True,
+            "suspicious": True,
+            "insufficient_context": False,
+            "details": {"emails": [], "phone_numbers": [], "ip_addresses": []},
+        },
+        "result": {
+            "score": 90,
+            "priority": "HIGH",
+            "reasons": ["Password disclosed."],
+            "checklist": ["Change the affected password."],
+        },
     }
 
 
-@pytest.mark.parametrize("record", [
-    {"priority": 7}, {"message": ["bad"]}, {"result": [1]}, {"channel": []},
-    {"clicked": "yes"}, {"downloaded": 1}, {"submitted_category": []},
-    {"sender": {}}, {"link": []}, {"file_name": 3}, {"score": True},
-    {"result": {"priority": 7}}, {"result": {"score": "90"}},
-    {"result": {"reasons": [1]}}, {"result": {"checklist": None}},
-    {"details": []}, {"details": {"emails": "bad"}},
-    {"details": {"phone_numbers": [1]}}, {"details": {"ip_addresses": None}},
-])
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"priority": 7},
+        {"message": ["bad"]},
+        {"result": [1]},
+        {"channel": []},
+        {"clicked": "yes"},
+        {"downloaded": 1},
+        {"submitted_category": []},
+        {"sender": {}},
+        {"link": []},
+        {"file_name": 3},
+        {"score": True},
+        {"result": {"priority": 7}},
+        {"result": {"score": "90"}},
+        {"result": {"reasons": [1]}},
+        {"result": {"checklist": None}},
+        {"details": []},
+        {"details": {"emails": "bad"}},
+        {"details": {"phone_numbers": [1]}},
+        {"details": {"ip_addresses": None}},
+    ],
+)
 def test_legacy_recovery(storage, monkeypatch, capsys, caplog, record):
     """Reject malformed history safely and preserve its bytes during reads and saves."""
     storage.write_text(json.dumps([record]), encoding="utf-8")
@@ -246,12 +293,16 @@ def test_legacy_recovery(storage, monkeypatch, capsys, caplog, record):
     upload.assert_not_called()
 
 
-@pytest.mark.parametrize("record", [
-    {}, {"message": "Older report"},
-    {"channel": None, "message": None, "sender": None, "result": None},
-    {"score": 20.5, "priority": "LOW", "details": {"emails": []}},
-    {"result": {"score": 45, "priority": "MEDIUM", "reasons": [], "checklist": []}},
-])
+@pytest.mark.parametrize(
+    "record",
+    [
+        {},
+        {"message": "Older report"},
+        {"channel": None, "message": None, "sender": None, "result": None},
+        {"score": 20.5, "priority": "LOW", "details": {"emails": []}},
+        {"result": {"score": 45, "priority": "MEDIUM", "reasons": [], "checklist": []}},
+    ],
+)
 def test_legacy_display(storage, capsys, record):
     """Keep supported incomplete legacy records readable without inventing fields."""
     storage.write_text(json.dumps([record]), encoding="utf-8")
@@ -266,18 +317,29 @@ def test_legacy_display(storage, capsys, record):
     assert storage.read_bytes() == before
 
 
-@pytest.mark.parametrize("changes", [
-    {"priority": 7}, {"message": ["bad"]}, {"channel": []},
-    {"details": {"emails": [1]}},
-])
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"priority": 7},
+        {"message": ["bad"]},
+        {"channel": []},
+        {"details": {"emails": [1]}},
+    ],
+)
 def test_legacy_db_fallback(storage, monkeypatch, capsys, changes):
     """Reject malformed database rows and display valid local history instead."""
     local = {"message": "Local fallback report"}
     storage.write_text(json.dumps([local]), encoding="utf-8")
     before = storage.read_bytes()
     row = {
-        "channel": "email", "sender": None, "message": "Database report",
-        "link": None, "file_name": None, "details": {}, "score": None, "priority": None,
+        "channel": "email",
+        "sender": None,
+        "message": "Database report",
+        "link": None,
+        "file_name": None,
+        "details": {},
+        "score": None,
+        "priority": None,
     }
     row.update(changes)
     connection = MagicMock()
@@ -324,7 +386,7 @@ def test_complete_local_roundtrip_preserves_legacy_and_input(storage, monkeypatc
     upload.assert_called_once_with([record])
 
 
-@pytest.mark.parametrize("content", ['{broken', '{}', '[1]', '[null]', '[{"schema_version": 2}]'])
+@pytest.mark.parametrize("content", ["{broken", "{}", "[1]", "[null]", '[{"schema_version": 2}]'])
 def test_corrupt_history_is_preserved_and_never_uploaded(storage, monkeypatch, capsys, content):
     storage.write_text(content)
     upload = Mock()
@@ -338,20 +400,26 @@ def test_corrupt_history_is_preserved_and_never_uploaded(storage, monkeypatch, c
     assert capsys.readouterr().out == ""
 
 
-@pytest.mark.parametrize("key,value", [
-    ("schema_version", 2), ("schema_version", True), ("clicked", "no"),
-    ("ai", {}), ("result", {"score": True, "priority": "HIGH", "reasons": [], "checklist": []}),
-    ("result", {"score": 101, "priority": "HIGH", "reasons": [], "checklist": []}),
-])
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("schema_version", 2),
+        ("schema_version", True),
+        ("clicked", "no"),
+        ("ai", {}),
+        ("result", {"score": True, "priority": "HIGH", "reasons": [], "checklist": []}),
+        ("result", {"score": 101, "priority": "HIGH", "reasons": [], "checklist": []}),
+    ],
+)
 def test_invalid_complete_report_rejected_before_write(storage, monkeypatch, key, value):
-    storage.write_text('[]')
+    storage.write_text("[]")
     record = _complete_report()
     record[key] = value
     upload = Mock()
     monkeypatch.setattr(data_manager, "upload", upload)
     with pytest.raises(ValueError):
         data_manager.save(record)
-    assert storage.read_text() == '[]'
+    assert storage.read_text() == "[]"
     upload.assert_not_called()
 
 
@@ -364,7 +432,7 @@ def test_failed_atomic_replace_preserves_old_history(storage, monkeypatch):
     with pytest.raises(OSError):
         data_manager.save(_complete_report())
     assert storage.read_bytes() == before
-    assert list(storage.parent.glob('*.tmp')) == []
+    assert list(storage.parent.glob("*.tmp")) == []
     upload.assert_not_called()
 
 
@@ -388,9 +456,16 @@ def test_complete_postgresql_roundtrip_without_schema_migration(monkeypatch):
     assert rows[0][-2:] == (90, "HIGH")
     payload = json.loads(rows[0][5])
     assert payload == {"schema_version": 1, "record": record}
-    legacy = {"channel": "sms", "sender": None, "message": "Older report",
-              "link": None, "file_name": None, "details": {"emails": []},
-              "score": None, "priority": None}
+    legacy = {
+        "channel": "sms",
+        "sender": None,
+        "message": "Older report",
+        "link": None,
+        "file_name": None,
+        "details": {"emails": []},
+        "score": None,
+        "priority": None,
+    }
     row = {key: record[key] for key in ("channel", "sender", "message", "link", "file_name")}
     row.update(details=payload, score=90, priority="HIGH")
     cursor.fetchall.return_value = [legacy, row]
@@ -402,21 +477,26 @@ def test_complete_postgresql_roundtrip_without_schema_migration(monkeypatch):
 
 @pytest.mark.parametrize("operation", ["startup", "view", "save"])
 def test_coordinator_handles_broken_local_history(storage, monkeypatch, capsys, operation):
-    storage.write_text('{broken')
+    storage.write_text("{broken")
     monkeypatch.setattr(data_manager, "fetch", Mock(side_effect=RuntimeError("Unavailable")))
     monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
     monkeypatch.setattr(main.io_manager, "main_menu", lambda: "5")
     if operation == "save":
         record = _complete_report()
-        monkeypatch.setattr(main.io_manager, "collect_input", lambda: {
-            k: v for k, v in record.items() if k not in ("schema_version", "ai", "result")})
+        monkeypatch.setattr(
+            main.io_manager,
+            "collect_input",
+            lambda: {
+                k: v for k, v in record.items() if k not in ("schema_version", "ai", "result")
+            },
+        )
         monkeypatch.setattr(main.ai_manager, "call_api", lambda prompt: json.dumps(record["ai"]))
         main.check_message()
     elif operation == "startup":
         main.main()
     else:
         main.view_reports()
-    assert storage.read_text() == '{broken'
+    assert storage.read_text() == "{broken"
     output = capsys.readouterr().out
     assert "Could not" in output
     assert "starting with an empty list" not in output
@@ -438,7 +518,7 @@ def test_io_failures_do_not_upload_or_damage_history(storage, monkeypatch, failu
     with pytest.raises((ValueError, OSError)):
         data_manager.save(_complete_report())
     assert storage.read_bytes() == before
-    assert list(storage.parent.glob('*.tmp')) == []
+    assert list(storage.parent.glob("*.tmp")) == []
     upload.assert_not_called()
 
 
@@ -447,8 +527,11 @@ def test_coordinator_distinguishes_local_and_database_failure(
     storage, monkeypatch, capsys, database_failure
 ):
     record = _complete_report()
-    monkeypatch.setattr(main.io_manager, "collect_input", lambda: {
-        k: v for k, v in record.items() if k not in ("schema_version", "ai", "result")})
+    monkeypatch.setattr(
+        main.io_manager,
+        "collect_input",
+        lambda: {k: v for k, v in record.items() if k not in ("schema_version", "ai", "result")},
+    )
     monkeypatch.setattr(main.ai_manager, "call_api", lambda prompt: json.dumps(record["ai"]))
     upload = Mock(side_effect=RuntimeError("Unavailable"))
     monkeypatch.setattr(data_manager, "upload", upload)
@@ -478,18 +561,33 @@ def test_saved_complete_report_displays_actions_and_result(storage, capsys):
     assert "Change the affected password." in output
 
 
-@pytest.mark.parametrize("database,local,expected", [
-    ([{"message": "Shared"}], [{"message": "Shared"}, {"message": "Local only"}],
-     [{"message": "Shared"}, {"message": "Local only"}]),
-    ([{"message": "Shared"}], [{"message": "Shared"}, {"message": "Shared"}],
-     [{"message": "Shared"}, {"message": "Shared"}]),
-    ([{"message": "Shared"}, {"message": "Shared"}], [{"message": "Shared"}],
-     [{"message": "Shared"}, {"message": "Shared"}]),
-    ([], [{"message": "Local only"}], [{"message": "Local only"}]),
-    ([{"message": "Database only"}], [], [{"message": "Database only"}]),
-    ([{"message": "Old", "score": 10}], [{"message": "Old", "result": {"score": 10}}],
-     [{"message": "Old", "score": 10}, {"message": "Old", "result": {"score": 10}}]),
-])
+@pytest.mark.parametrize(
+    "database,local,expected",
+    [
+        (
+            [{"message": "Shared"}],
+            [{"message": "Shared"}, {"message": "Local only"}],
+            [{"message": "Shared"}, {"message": "Local only"}],
+        ),
+        (
+            [{"message": "Shared"}],
+            [{"message": "Shared"}, {"message": "Shared"}],
+            [{"message": "Shared"}, {"message": "Shared"}],
+        ),
+        (
+            [{"message": "Shared"}, {"message": "Shared"}],
+            [{"message": "Shared"}],
+            [{"message": "Shared"}, {"message": "Shared"}],
+        ),
+        ([], [{"message": "Local only"}], [{"message": "Local only"}]),
+        ([{"message": "Database only"}], [], [{"message": "Database only"}]),
+        (
+            [{"message": "Old", "score": 10}],
+            [{"message": "Old", "result": {"score": 10}}],
+            [{"message": "Old", "score": 10}, {"message": "Old", "result": {"score": 10}}],
+        ),
+    ],
+)
 def test_history_combines_sources_without_losing_repeated_assessments(database, local, expected):
     before = deepcopy((database, local))
     assert data_manager.combine_reports(database, local) == expected
@@ -520,12 +618,12 @@ def test_saved_local_report_remains_visible_with_nonempty_database(storage, monk
 def test_database_history_remains_available_when_local_history_is_corrupt(
     storage, monkeypatch, capsys
 ):
-    storage.write_text('{broken')
+    storage.write_text("{broken")
     records = [_complete_report()]
     monkeypatch.setattr(data_manager, "fetch", Mock(return_value=records))
     assert main.load_reports() == records
     assert "Could not load local report history" in capsys.readouterr().out
-    assert storage.read_text() == '{broken'
+    assert storage.read_text() == "{broken"
 
 
 @pytest.mark.parametrize("database_available", [False, True])
@@ -539,7 +637,7 @@ def test_unreadable_local_history_is_reported_even_with_database(
     assert "Could not load local report history" in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("content", ['{PRIVATE_BROKEN', '{}', '[null]', '[{"schema_version":2}]'])
+@pytest.mark.parametrize("content", ["{PRIVATE_BROKEN", "{}", "[null]", '[{"schema_version":2}]'])
 def test_default_load_logs_and_returns_empty_without_damaging_history(
     storage, caplog, capsys, content
 ):
