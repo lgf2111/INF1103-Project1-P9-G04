@@ -12,7 +12,14 @@ logger = logging_setup.get_logger(__name__)
 FILE = "reports.json"
 
 REPORT_FIELDS = {
-    "channel", "sender", "message", "link", "file_name", "details", "score", "priority",
+    "channel",
+    "sender",
+    "message",
+    "link",
+    "file_name",
+    "details",
+    "score",
+    "priority",
 }
 
 
@@ -77,7 +84,10 @@ def _validate_result(result):
 def _validate_v2(record):
     """Validate the exact version-2 storage contract without changing values."""
     if not isinstance(record, dict) or set(record) != {
-        "schema_version", "channel", "message", "result",
+        "schema_version",
+        "channel",
+        "message",
+        "result",
     }:
         raise ValueError("Version-2 reports must contain exactly the four agreed fields.")
     if type(record["schema_version"]) is not int or record["schema_version"] != 2:
