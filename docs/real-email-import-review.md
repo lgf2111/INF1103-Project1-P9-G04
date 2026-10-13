@@ -21,12 +21,12 @@ assessment. Removing the API still prevents new assessments.
 
 - `io_manager.read_eml_bytes`: shared filesystem/browser parsing, strict transfer
   and charset decoding, original size/MIME count/depth/final-text limits.
-- `io_manager.email_html`: inert HTML text plus link/form/image targets and image
+- `email_html.html_to_text`: inert HTML text plus link/form/image targets and image
   descriptions. Both plain and HTML alternatives are retained; blank alternatives
   do not block usable content. No rendering, execution or resource fetching.
 - Header handling preserves forged sender text as untrusted evidence instead of
   repairing/authenticating addresses; duplicate or undecodable headers still fail.
-- `misc.web_upload`: bounded multipart upload, quoted boundaries, original file
+- `web_upload`: bounded multipart upload, quoted boundaries, original file
   bytes, `.eml`-only restriction, finite socket timeout and server cleanup.
   A `message/rfc822` upload label no longer turns the file into a nested object.
   Functions configure existing standard-library objects; no team-authored handler

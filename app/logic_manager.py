@@ -2,7 +2,7 @@
 # Computes response priorities and guidance from validated AI findings and reported actions.
 
 
-def score(record):
+def score(record: dict) -> int:
     """Return a response-priority score using the first matching rule.
 
     The caller must supply AI findings validated against the original input.
@@ -38,7 +38,7 @@ def score(record):
     return 10
 
 
-def _priority(value):
+def _priority(value: int) -> str:
     """Return the priority corresponding to a calculated score."""
     # Apply the agreed thresholds from highest to lowest.
     if value >= 70:
@@ -48,14 +48,14 @@ def _priority(value):
     return "LOW"
 
 
-def route(record):
+def route(record: dict) -> dict:
     """Validate a record and return its score and priority without modifying it."""
     value = score(record)
     # Keep the calculated score and its corresponding priority together.
     return {"score": value, "priority": _priority(value)}
 
 
-def evaluate(record):
+def evaluate(record: dict) -> dict:
     """Return score, priority, reasons and exposure-aware guidance for a validated record.
 
     The caller supplies schema/source-validated AI findings. No API, terminal or

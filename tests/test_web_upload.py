@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
-from misc import web_upload
+import web_upload
 
 
 @pytest.mark.parametrize("media_type", ["message/rfc822", "application/octet-stream", "text/plain"])

@@ -2,7 +2,7 @@
 
 INF1103 Phase 1 | Team P9-G04 | 13 October 2026
 
-Code reviewed: 0d6834e, incorporating main dfe6c81. Submission branch: main.
+Code reviewed: f8dbf4e, incorporating main 1e2009c. Submission branch: main.
 
 ## Our problem, users and objectives
 
@@ -18,7 +18,7 @@ We limit imports to 2 MiB, 100 MIME parts, depth 32 and 50,000 final message cha
 
 ## Our procedural architecture
 
-We provide the literal files app/io_manager.py, app/ai_manager.py, app/logic_manager.py and app/data_manager.py. Required functions are defined in those files, rather than re-exported from same-named packages. main.py coordinates them. Distinct misc modules contain configuration, logging, prompt constants, inert HTML conversion and HTTP support. No team-authored classes or dynamic class constructors are used. All direct print()/input() calls are in io_manager.py. We use standard-library classes through existing APIs without defining subclasses.
+We provide the literal files app/io_manager.py, app/ai_manager.py, app/logic_manager.py and app/data_manager.py. Required functions are defined in those files, rather than re-exported from same-named packages. main.py coordinates them. Named app-level helpers handle local settings, logging, prompt constants, inert HTML conversion and HTTP uploads. Manual, folder and browser input reuse one record/exposure builder. No team-authored classes or dynamic class constructors are used. All direct print()/input() calls are in io_manager.py. We use standard-library classes through existing APIs without defining subclasses.
 
 Every new completed assessment requires valid API findings. Deleting the AI module or preventing its call breaks assessment. Retries never replace findings with assumed safe values. Viewing a stored result does not create a new assessment or invoke the API again; the wording about every processed record needs instructor interpretation for retrieval [1, C2].
 
@@ -77,7 +77,7 @@ We build with ./docker.sh build, test with ./docker.sh test and start with ./doc
 
 ## Our verification and its limits
 
-The reviewed code passed 683 tests in network-disabled Docker. Windows Python 3.12 passed 672 with 11 POSIX-only skips. Ruff and whitespace checks passed. Structural tests check exact files, physically defined functions, resolved imports, no classes and I/O confinement. All 13 moved AI function bodies remained syntax-tree equivalent. History regressions cover 19 corruption cases and five compatibility cases; bytes survive startup, viewing and refused saves.
+The reviewed code passed 694 tests in network-disabled Docker. Windows Python 3.12 passed 683 with 11 POSIX-only skips. Ruff and whitespace checks passed. Structural tests check exact files, physically defined functions, resolved imports, no classes and I/O confinement. AI transport/validation and domain-rule bodies remain unchanged; input construction is shared. Eleven new configuration/picker regressions cover recovered crashes. History regressions cover 19 corruption cases and five compatibility cases; bytes survive startup, viewing and refused saves.
 
 Required offline logic tests use hardcoded AI responses, including the two-field rule, independently of the service. New format/integration checks use real public phishing emails from rf-peixoto/phishing_pot, pinned at 2933c0341b1248678c1e246b36d352add2edf0f1. Of 32 files, 29 parsed with equal browser/folder records; samples 14, 28 and 30 were safely rejected as unsupported multipart bodies. This is parser coverage, not detection accuracy.
 
@@ -87,7 +87,7 @@ Actual Docker HTTP upload and folder import of sample 1 produced equal saved res
 
 ## Our DevOps and release checks
 
-I use issue-linked branches, focused commits, pull requests and exact-head CI. Issue #70 and merged PR #72 restore malformed-history recovery after integration. Issue #71 tracks the literal manager-file correction. Refactor, tests and documentation are reviewable commit blocks. CI runs lint, a tracked-Python class check, pytest and Docker build/tests. My explicit local Docker verification also disables external networking.
+I use issue-linked branches, focused commits, pull requests and exact-head CI. Issue #70 and merged PR #72 restore malformed-history recovery after integration. Issue #71 covered the literal manager filenames; issue #74 applies lecture practices while retaining those interfaces. Refactor, tests and documentation are reviewable commit blocks. CI runs lint, a tracked-Python class check, pytest and Docker build/tests. My explicit local Docker verification also disables external networking.
 
 Our history retains Guan Feng's foundation/DevOps, Jeremy's collection/parsing, Bryan Lee's displays, Xavier/Bryan Ow's logic/data and my AI/integration work. Moving functions preserves behavior and contribution history rather than replacing it with a final code dump. Each member must explain their contribution and shared contracts during the demonstration.
 
@@ -109,6 +109,6 @@ The key integration lesson is to verify deployment and failure boundaries. Valid
 
 [2] Team Project Specification, pp 15-16: hard constraints and submission/demo checkpoints.
 
-[3] Project Initial Details, pp 1-2; Grading Criteria1, p 1. Supplied course documents.
+[3] Project Initial Details, pp 1-2; Grading Criteria1, p 1; Week_4_Lists_FileHandling, slides 32-42: responsibility, reuse, simplicity, IPO, modularity, validation and naming.
 
-[4] github.com/lgf2111/INF1103-Project1-P9-G04, code 0d6834e; issue #70/PR #72 and issue #71. Official filename clarification confirmed by me through the team. Review: 13 October 2026.
+[4] github.com/lgf2111/INF1103-Project1-P9-G04, code f8dbf4e; issue #70/PR #72 and issues #71/#74. Official filename clarification confirmed by me through the team. Review: 13 October 2026.

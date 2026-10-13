@@ -7,8 +7,8 @@ import os
 import ai_manager
 import data_manager
 import io_manager
+import logging_setup
 import logic_manager
-from misc import logging_setup
 
 # web_upload is imported lazily inside upload_file() so the web server code only
 # loads when the user actually chooses to upload a file.
@@ -115,7 +115,7 @@ def check_message(record=None):
 def upload_file():
     """Parse uploaded email through the same I/O contract as folder imports."""
     try:
-        from misc import web_upload
+        import web_upload
 
         io_manager.show_upload_instructions(web_upload.DISPLAY_HOST, web_upload.PORT)
         upload = web_upload.start_and_wait_for_upload()

@@ -1,4 +1,4 @@
-# misc/web_upload.py
+# web_upload.py
 # EXPERIMENTAL: minimal, lazy, one-shot file upload using only the standard
 # library (http.server) - no extra dependencies, no classes defined (C1 safe).
 #
@@ -104,20 +104,24 @@ def parse_upload(content_type, body):
     # original-byte contract. The common email parser handles them afterwards.
     if len(boundary) > 70 or "\r" in boundary or "\n" in boundary:
         raise ValueError("Invalid upload boundary.")
-    delimiters = list(re.finditer(
-        rb"(?:\A|\r\n)--" + re.escape(boundary.encode("ascii"))
-        + rb"(--)?[ \t]*(?:\r\n|\Z)", body,
-    ))
-    if (len(delimiters) != 2 or delimiters[0].group(1)
-            or not delimiters[1].group(1)):
+    delimiters = list(
+        re.finditer(
+            rb"(?:\A|\r\n)--" + re.escape(boundary.encode("ascii")) + rb"(--)?[ \t]*(?:\r\n|\Z)",
+            body,
+        )
+    )
+    if len(delimiters) != 2 or delimiters[0].group(1) or not delimiters[1].group(1):
         raise ValueError("Upload exactly one file.")
-    raw_part = body[delimiters[0].end():delimiters[1].start()]
+    raw_part = body[delimiters[0].end() : delimiters[1].start()]
     headers, separator, content = raw_part.partition(b"\r\n\r\n")
     if not separator:
         raise ValueError("Invalid file upload headers.")
     part = BytesHeaderParser(policy=policy.default).parsebytes(headers + b"\r\n\r\n")
-    if (part.defects or part.get_content_disposition() != "form-data"
-            or part.get_param("name", header="content-disposition") != "file"):
+    if (
+        part.defects
+        or part.get_content_disposition() != "form-data"
+        or part.get_param("name", header="content-disposition") != "file"
+    ):
         raise ValueError("Invalid file upload field.")
     if part.get("Content-Transfer-Encoding", "binary").lower() not in ("binary", "8bit"):
         raise ValueError("Unsupported upload encoding.")

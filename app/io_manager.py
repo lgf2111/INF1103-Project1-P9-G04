@@ -19,7 +19,8 @@ from email.header import decode_header
 from email.parser import BytesParser
 from pathlib import Path
 
-from misc.email_html import html_to_text
+import local_settings
+from email_html import html_to_text
 
 MAX_EML_BYTES = 2 * 1024 * 1024
 MAX_MIME_PARTS = 100
@@ -28,6 +29,7 @@ MAX_MESSAGE_CHARS = 50_000
 UPLOAD_TYPE_MESSAGE = (
     "Only .eml email files are supported. Images and attachments are not analysed."
 )
+
 
 def main_menu():
     print("\n=== PhishReport ===")
@@ -43,6 +45,7 @@ def main_menu():
         "Invalid choice. Please choose 1-5: ",
     )
 
+
 def get_valid_choice(prompt, valid_choices, error_message):
     choice = input(prompt).strip().lower()
 
@@ -51,34 +54,22 @@ def get_valid_choice(prompt, valid_choices, error_message):
 
     return choice
 
-def collect_input():
+
+def collect_input() -> dict:
+    """Collect validated manual fields, then use the shared exposure questions."""
     channel = get_channel()
     sender = get_sender()
     message = get_message()
+    return build_record_from_message(message, channel=channel, sender=sender)
 
-    has_link, link = get_link_information()
-    has_file, file_name = get_file_information()
 
-    user_actions = collect_user_actions(has_link, has_file)
-
-    return {
-        "channel": channel,
-        "sender": sender,
-        "message": message,
-        "has_link": has_link,
-        "link": link,
-        "has_file": has_file,
-        "file_name": file_name,
-        "clicked": user_actions["clicked"],
-        "downloaded": user_actions["downloaded"],
-        "submitted_category": user_actions["submitted_category"],
-    }
-
-def build_record_from_message(message, channel="email", sender=None):
+def build_record_from_message(
+    message: str, channel: str = "email", sender: str | None = None
+) -> dict:
     """Build a record from already-obtained message text (e.g. an uploaded file).
 
-    Reuses the normal action questions so the assessment pipeline is unchanged;
-    the message comes from the file instead of a prompt.
+    Manual, folder and upload collection all use this single action/record contract.
+    The caller supplies message text validated by its collection or decoding path.
     """
     has_link, link = get_link_information()
     has_file, file_name = get_file_information()
@@ -109,34 +100,15 @@ def show_upload_instructions(host, port):
     print(f"\nOpen http://{host}:{port} in your browser to upload an .eml email.")
     print("Waiting for upload... (Ctrl+C to cancel)")
 
-def collect_input_from_folder():
-    """Build a record from a .eml chosen out of the saved folder.
 
-    Returns None if the user cancels or no file is available. Uses the email
-    channel and sender/message from the file, then asks about links, files
-    and reported actions.
-    """
+def collect_input_from_folder() -> dict | None:
+    """Load a selected email and reuse the same record builder as other routes."""
     loaded = get_eml_from_folder()
     if loaded is None:
         return None
     sender, message = loaded
+    return build_record_from_message(message, sender=sender)
 
-    has_link, link = get_link_information()
-    has_file, file_name = get_file_information()
-    user_actions = collect_user_actions(has_link, has_file)
-
-    return {
-        "channel": "email",
-        "sender": sender,
-        "message": message,
-        "has_link": has_link,
-        "link": link,
-        "has_file": has_file,
-        "file_name": file_name,
-        "clicked": user_actions["clicked"],
-        "downloaded": user_actions["downloaded"],
-        "submitted_category": user_actions["submitted_category"],
-    }
 
 def ask_yes_no(question):
     answer = input(question).strip().lower()
@@ -146,6 +118,7 @@ def ask_yes_no(question):
 
     return answer in ("y", "yes")
 
+
 def get_channel():
     return get_valid_choice(
         "Enter channel (Email/SMS/Chat): ",
@@ -153,25 +126,24 @@ def get_channel():
         "Invalid channel. Please enter Email, SMS, or Chat: ",
     )
 
+
 def get_sender():
-    sender = input(
-        "Enter sender information (press Enter if unknown): "
-    ).strip()
+    sender = input("Enter sender information (press Enter if unknown): ").strip()
 
     if sender == "":
         return None
 
     return sender
 
+
 def get_message():
     message = input("Enter the suspicious message: ").strip()
 
     while message == "":
-        message = input(
-            "Message cannot be blank. Please enter the suspicious message: "
-        ).strip()
+        message = input("Message cannot be blank. Please enter the suspicious message: ").strip()
 
     return message
+
 
 def validate_mime_limits(email_message):
     stack = [(email_message, 0)]
@@ -205,6 +177,7 @@ def validate_mime_limits(email_message):
             for child in part.iter_parts():
                 stack.append((child, depth + 1))
 
+
 def read_eml_details(file_path):
     path = Path(file_path)
     if not path.is_file():
@@ -213,7 +186,6 @@ def read_eml_details(file_path):
     # Nonblocking open also covers a path replaced with a FIFO after is_file().
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0)
     with os.fdopen(os.open(path, flags), "rb") as email_file:
-
         # Ensure the opened path is a regular file.
         file_info = os.fstat(email_file.fileno())
 
@@ -234,17 +206,13 @@ def read_eml_bytes(raw_email):
 
     # Parse the email and validate its MIME structure.
     try:
-        email_message = BytesParser(
-            policy=policy.default
-        ).parsebytes(raw_email)
+        email_message = BytesParser(policy=policy.default).parsebytes(raw_email)
 
         # Validate MIME part count and nesting depth.
         validate_mime_limits(email_message)
 
     except RecursionError as error:
-        raise ValueError(
-            "Email MIME structure is too deeply nested."
-        ) from error
+        raise ValueError("Email MIME structure is too deeply nested.") from error
 
     # Check for duplicate From headers.
     from_headers = email_message.get_all("From", [])
@@ -279,8 +247,9 @@ def read_eml_bytes(raw_email):
 
 def read_eml_header(email_message, name):
     """Decode source metadata strictly; do not repair a suspicious sender address."""
-    raw = next((value for key, value in email_message.raw_items()
-                if key.lower() == name.lower()), "")
+    raw = next(
+        (value for key, value in email_message.raw_items() if key.lower() == name.lower()), ""
+    )
     try:
         decoded = []
         for word in re.finditer(r"=\?[^?]+\?([bBqQ])\?([^?]*)\?=", raw):
@@ -349,7 +318,8 @@ def decode_eml_part(body_part, allow_empty=False):
     if transfer not in ("7bit", "8bit", "binary", "base64", "quoted-printable"):
         raise ValueError("Unsupported email transfer encoding.")
     if transfer == "quoted-printable" and re.search(
-        r"=(?![0-9a-fA-F]{2}|\r?\n)", body_part.get_payload(),
+        r"=(?![0-9a-fA-F]{2}|\r?\n)",
+        body_part.get_payload(),
     ):
         raise ValueError("Malformed quoted-printable content.")
 
@@ -357,21 +327,16 @@ def decode_eml_part(body_part, allow_empty=False):
         body = body_part.get_content(errors="strict")
 
     except RecursionError as error:
-        raise ValueError(
-            "Email MIME structure is too deeply nested."
-        ) from error
+        raise ValueError("Email MIME structure is too deeply nested.") from error
 
     except (UnicodeError, LookupError) as error:
-        raise ValueError(
-            "Could not decode email content."
-        ) from error
+        raise ValueError("Could not decode email content.") from error
 
     # Decoding records defects rather than necessarily raising an exception.
     for defect in body_part.defects:
         if isinstance(
             defect,
-            (InvalidBase64CharactersDefect, InvalidBase64PaddingDefect,
-             InvalidBase64LengthDefect),
+            (InvalidBase64CharactersDefect, InvalidBase64PaddingDefect, InvalidBase64LengthDefect),
         ):
             raise ValueError("Invalid Base64 content detected.")
     # Reject empty messages.
@@ -380,43 +345,51 @@ def decode_eml_part(body_part, allow_empty=False):
 
     return body.strip()
 
+
 # --- Email folder picker (added feature) ---------------------------------
 # Lets the user pick a .eml file from a saved folder instead of typing a path.
 # Reuses read_eml_details() above for all parsing/validation.
 
-EML_FOLDER_KEY = "eml_folder"   # key in the local config file
-EML_PAGE_SIZE = 5               # how many .eml files to show at a time
+EML_FOLDER_KEY = "eml_folder"  # key in the local config file
+EML_PAGE_SIZE = 5  # how many .eml files to show at a time
+
+
+def _is_email_folder(folder: object) -> bool:
+    """Check external preference/input values before constructing a filesystem path."""
+    if not isinstance(folder, str) or not folder.strip():
+        return False
+    try:
+        return Path(folder).is_dir()
+    except (OSError, ValueError):
+        return False
 
 
 def get_eml_folder():
     """Return the saved email folder, asking for it the first time and saving it."""
-    from misc import config
-
-    folder = config.get(EML_FOLDER_KEY)
-    if folder and Path(folder).is_dir():
+    folder = local_settings.get_setting(EML_FOLDER_KEY)
+    if _is_email_folder(folder):
         return folder
 
     # First run (or the saved folder is gone): ask and save.
     if folder:
-        print(f"Saved email folder '{folder}' is no longer available.")
+        print("Saved email folder is invalid or no longer available.")
     print("First time: tell PhishReport which folder holds your .eml files.")
     while True:
         entered = input("Enter the path to your email folder: ").strip().strip('"')
         if not entered:
             print("Folder path cannot be blank.")
             continue
-        if not Path(entered).is_dir():
+        if not _is_email_folder(entered):
             print("That folder does not exist. Please enter a valid folder path.")
             continue
-        config.set(EML_FOLDER_KEY, entered)
+        local_settings.save_setting(EML_FOLDER_KEY, entered)
         print("Saved. You won't be asked again (option available to change later).")
         return entered
 
 
 def list_eml_files(folder):
     """Return the folder's .eml files, newest first by modified time."""
-    files = [p for p in Path(folder).iterdir()
-             if p.is_file() and p.suffix.lower() == ".eml"]
+    files = [p for p in Path(folder).iterdir() if p.is_file() and p.suffix.lower() == ".eml"]
     files.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return files
 
@@ -431,7 +404,7 @@ def choose_eml_file(folder):
     shown = 0
     while True:
         # Show the next page of files.
-        page = files[shown:shown + EML_PAGE_SIZE]
+        page = files[shown : shown + EML_PAGE_SIZE]
         for index, path in enumerate(page, start=shown + 1):
             print(f"{index}. {path.name}")
         shown += len(page)
@@ -446,8 +419,15 @@ def choose_eml_file(folder):
             return None
         if answer == "m" and shown < len(files):
             continue
-        if answer.isdigit() and 1 <= int(answer) <= shown:
-            return files[int(answer) - 1]
+        selected = 0
+        if answer.isdigit():
+            try:
+                selected = int(answer)
+            except ValueError:
+                # Some Unicode digits and excessive-length numbers cannot be parsed.
+                pass
+        if 1 <= selected <= shown:
+            return files[selected - 1]
         print("Invalid choice. Please try again.")
 
 
@@ -455,15 +435,18 @@ def get_eml_from_folder():
     """Pick a .eml from the saved folder and load it (sender, message)."""
     folder = get_eml_folder()
     while True:
-        chosen = choose_eml_file(folder)
+        try:
+            chosen = choose_eml_file(folder)
+        except OSError:
+            print("Unable to list the email folder. Check its availability and permissions.")
+            return None
         if chosen is None:
             return None  # user cancelled or no files
         try:
             sender, message = read_eml_details(str(chosen))
         except (OSError, ValueError):
             print("Unable to read that email file. Please choose another.")
-            print("Use a valid plain-text or HTML email. "
-                  "Images and attachments are not analysed.")
+            print("Use a valid plain-text or HTML email. Images and attachments are not analysed.")
             continue
         print("Email loaded successfully.")
         return sender, message
@@ -478,11 +461,10 @@ def get_link_information():
     link = input("Enter the link: ").strip()
 
     while link == "":
-        link = input(
-            "Link cannot be blank. Please enter the link: "
-        ).strip()
+        link = input("Link cannot be blank. Please enter the link: ").strip()
 
     return True, link
+
 
 def get_file_information():
     has_file = ask_yes_no("Was a file included? (yes/no): ")
@@ -493,11 +475,10 @@ def get_file_information():
     file_name = input("Enter the file name: ").strip()
 
     while file_name == "":
-        file_name = input(
-            "File name cannot be blank. Please enter the file name: "
-        ).strip()
+        file_name = input("File name cannot be blank. Please enter the file name: ").strip()
 
     return True, file_name
+
 
 def get_submitted_category():
     submitted = get_valid_choice(
@@ -510,6 +491,7 @@ def get_submitted_category():
         return None
 
     return submitted
+
 
 def collect_user_actions(has_link, has_file):
     if has_link:
@@ -530,14 +512,14 @@ def collect_user_actions(has_link, has_file):
         "submitted_category": submitted_category,
     }
 
-def display_result(result):
+
+def display_result(result: dict | None) -> None:
+    """Display a validated outcome or an explicit unavailable assessment."""
     if not result:
         print("\nNo assessment available.")
         return
 
-    priority = (result.get("priority") or "unavailable").replace(
-        "_", " "
-    ).title()
+    priority = (result.get("priority") or "unavailable").replace("_", " ").title()
     print("\n=== Assessment ===")
     print("Priority:", priority)
     print("Rule-based score:", result.get("score", "Unavailable"))
@@ -552,7 +534,8 @@ def display_result(result):
         print(f"{number}. {step}")
 
 
-def display_record(record):
+def display_record(record: dict) -> None:
+    """Display a validated saved record, preserving absent historical fields."""
     print("\n=== Report details ===")
     channels = {"email": "Email", "sms": "SMS", "chat": "Chat"}
     print("Channel:", channels.get(record.get("channel"), "Unknown"))
@@ -572,7 +555,8 @@ def display_record(record):
     display_result(record.get("result") or {})
 
 
-def display_list(records):
+def display_list(records: list[dict]) -> None:
+    """Display saved summaries without altering or reassessing their outcomes."""
     if not records:
         print("No saved reports yet.")
         return
@@ -580,9 +564,7 @@ def display_list(records):
     print("\n=== Saved reports ===")
     for number, record in enumerate(records, start=1):
         result = record.get("result") or record
-        priority = (result.get("priority") or "unavailable").replace(
-            "_", " "
-        ).title()
+        priority = (result.get("priority") or "unavailable").replace("_", " ").title()
         channels = {"email": "Email", "sms": "SMS", "chat": "Chat"}
         channel = channels.get(record.get("channel"), "Unknown")
         score = result.get("score")
