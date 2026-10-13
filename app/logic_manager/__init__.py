@@ -113,6 +113,7 @@ def evaluate(record):
         )
     return {"priority": priority, "score": value, "checklist": checklist, "reasons": reasons}
 
+
 def _validate_record(record):
     """Validate the record shape produced by io_manager.collect_input()."""
     required_keys = {
@@ -133,10 +134,7 @@ def _validate_record(record):
 
     missing = required_keys - set(record)
     if missing:
-        raise ValueError(
-            "Record is missing required fields: "
-            + ", ".join(sorted(missing))
-        )
+        raise ValueError("Record is missing required fields: " + ", ".join(sorted(missing)))
 
     if not isinstance(record["channel"], str):
         raise ValueError("channel must be text.")
@@ -158,6 +156,4 @@ def _validate_record(record):
         raise ValueError("file_name must be text or None.")
 
     if record["submitted_category"] not in (None, "password", "otp"):
-        raise ValueError(
-            "submitted_category must be None, 'password', or 'otp'."
-        )
+        raise ValueError("submitted_category must be None, 'password', or 'otp'.")
