@@ -284,7 +284,7 @@ supplied course instruction lists the report and approved statement with the
 complete project repository; acceptance of separate delivery must be confirmed.
 The current statement has no approval evidence. Approval/Initial Details receipt,
 invitations/member clones, every member's final Docker checks, rehearsal and
-submission receipts remain missing. [ROADMAP.md](ROADMAP.md) records G1-G8 and review gates.
+submission receipts remain missing. [ROADMAP.md](ROADMAP.md) records G1-G8 and the normal review workflow.
 
 ## Contributing
 

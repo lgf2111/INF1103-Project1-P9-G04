@@ -9,11 +9,11 @@ Professor requirements govern compliance. Successful CI and closed issues are no
 | --- | --- | --- |
 | G1 - Approved scope | Missing | Local statement exists; no approval or Initial Details receipt supplied. Obtain actual approval and receipt. |
 | G2 - Procedural application | Partial | Physical manager functions, procedural/I/O checks and validated new-assessment pipeline pass. Instructor API-scope interpretation for history reads remains unresolved. |
-| G3 - Automated tests | Verified on audit branch | Existing logic script meets Framework 5.3. One application script contains showcase and preserved regressions. Both pass in network-disabled Docker; rerun on final main after merge. |
+| G3 - Automated tests | Verified | Existing logic script meets Framework 5.3. One application script contains showcase and preserved regressions. 739 tests pass in network-disabled Docker, including 72 offline logic tests. Record final-main evidence in the local audit. |
 | G4 - Engineering report | Partial | Local five-page PDF; diagram/matrix together on page 2. Separate delivery conflicts with supplied repository wording until accepted. Statement approval is absent. |
-| G5 - Git repository | Partial | Granular contributions and focused PRs retained. Issue #78 fixes need exact-head CI and independent review before merge. Invitations, lab access and member clones remain missing. |
+| G5 - Git repository | Partial | Granular contributions and focused PRs retained. Issue #78/PR #79 has successful exact-head CI; teammate review was explicitly waived for this audit session only. Invitations, lab access and member clones remain missing. |
 | G6 - Docker delivery | Partial | Directory persistence, read-only email mount and container recreation checked here. Every member must verify final main; no evidence supplied. |
-| G7 - Integrated application | Partial | Manual/folder/browser, validated AI, policy, recovery and persistence checked. Fresh-model repeatability interpretation and final-main verification remain. |
+| G7 - Integrated application | Partial | Manual/folder/browser, validated AI, policy, recovery and persistence checked. Fresh-model repeatability interpretation remains unresolved; final-main evidence belongs in the local audit. |
 | G8 - Demonstration | Missing team evidence | Automated application showcase and local rehearsal sequence prepared; no completed team rehearsal/individual explanation evidence supplied. |
 
 ## Architecture and storage
@@ -91,8 +91,8 @@ tracked-Python class checks, pytest, Docker build and network-disabled Docker te
 2. Clarify Framework p2 sections 2.2/2.4 and p3 C2/C4: does history retrieval require
    a new API call, and what sameness is expected from fresh AI assessments?
    Temperature zero is not proof; no caching exemption is assumed.
-3. Review/merge the audit PR after exact-head CI. Freeze final main and rerun affected
-   checks; record its SHA and CI URL.
+3. Freeze final main, verify its exact commit/CI and rerun affected checks if it changes.
+   The audit-session review exception does not waive future teammate reviews.
 4. Confirm invitations/lab-in-charge access and member clones. Every member builds,
    tests and runs the same final main in Docker, recording save/restart evidence.
 5. Rehearse the submitted version and each member's contribution explanation.
