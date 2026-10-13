@@ -9,7 +9,7 @@ Professor requirements govern compliance. Successful CI and closed issues are no
 | --- | --- | --- |
 | G1 - Approved scope | Missing | Local statement exists; no approval or Initial Details receipt supplied. Obtain actual approval and receipt. |
 | G2 - Procedural application | Partial | Physical manager functions, procedural/I/O checks and validated new-assessment pipeline pass. Instructor API-scope interpretation for history reads remains unresolved. |
-| G3 - Automated tests | Verified | Existing logic script meets Framework 5.3. One application script contains showcase and preserved regressions. 739 tests pass in network-disabled Docker, including 72 offline logic tests. Record final-main evidence in the local audit. |
+| G3 - Automated tests | Verified | Existing logic script meets Framework 5.3. One application script contains showcase and preserved regressions. 740 tests pass in network-disabled Docker, including 72 offline logic tests. Record final-main evidence in the local audit. |
 | G4 - Engineering report | Partial | Local five-page PDF; diagram/matrix together on page 2. Separate delivery conflicts with supplied repository wording until accepted. Statement approval is absent. |
 | G5 - Git repository | Partial | Granular contributions and focused PRs retained. Issue #78/PR #79 has successful exact-head CI; teammate review was explicitly waived for this audit session only. Invitations, lab access and member clones remain missing. |
 | G6 - Docker delivery | Partial | Directory persistence, read-only email mount and container recreation checked here. Every member must verify final main; no evidence supplied. |
