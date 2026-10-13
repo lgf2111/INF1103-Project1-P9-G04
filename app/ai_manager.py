@@ -33,8 +33,8 @@ def failure(stage, message, error_type):
     return error_type(message)
 
 
-
 # Strict JSON parsing
+
 
 def unique_object(pairs):
     """Build a JSON object without silently accepting duplicate field names."""
@@ -71,15 +71,17 @@ def parse_response(raw: str) -> dict:
         raise failure("parse_response", "AI reply is not valid JSON.", ValueError) from None
     except ValueError:
         raise failure(
-            "parse_response", "AI reply contains invalid JSON fields or constants.", ValueError,
+            "parse_response",
+            "AI reply contains invalid JSON fields or constants.",
+            ValueError,
         ) from None
     if not isinstance(data, dict):
         raise failure("parse_response", "AI reply must be a JSON object.", ValueError)
     return data
 
 
-
 # Prompt construction
+
 
 def build_prompt(record: dict) -> str:
     """Request phishing findings and message-only extraction in one JSON object.
@@ -99,16 +101,20 @@ def build_prompt(record: dict) -> str:
         if value is not None:
             if not isinstance(value, str):
                 raise failure(
-                    "build_prompt", "AI metadata must be text or None: " + key, ValueError,
+                    "build_prompt",
+                    "AI metadata must be text or None: " + key,
+                    ValueError,
                 )
             metadata[key] = value
     return (
         FINDINGS_INSTRUCTIONS
         + EXTRACTION_INSTRUCTIONS
-        + "Metadata (JSON object):\n" + json.dumps(metadata) + "\n"
-        + "Message (JSON string):\n" + json.dumps(message)
+        + "Metadata (JSON object):\n"
+        + json.dumps(metadata)
+        + "\n"
+        + "Message (JSON string):\n"
+        + json.dumps(message)
     )
-
 
 
 # API transport and bounded retries
@@ -170,18 +176,21 @@ def call_api(prompt: str) -> str:
         fallback_model = fallback_model.strip()
         if not fallback_model or fallback_model == model.strip():
             raise failure(
-                "call_api", "GROQ_FALLBACK_MODEL must be nonblank and differ from GROQ_MODEL.",
+                "call_api",
+                "GROQ_FALLBACK_MODEL must be nonblank and differ from GROQ_MODEL.",
                 RuntimeError,
             )
 
-    body = json.dumps({
-        "model": model,
-        "messages": [{"role": "user", "content": prompt}],
-        "response_format": {"type": "json_object"},
-        # Reduce sampling variation; temperature zero does not guarantee that
-        # separate live requests return identical findings.
-        "temperature": 0,
-    }).encode()
+    body = json.dumps(
+        {
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+            "response_format": {"type": "json_object"},
+            # Reduce sampling variation; temperature zero does not guarantee that
+            # separate live requests return identical findings.
+            "temperature": 0,
+        }
+    ).encode()
 
     request = urllib.request.Request(
         URL,
@@ -212,13 +221,21 @@ def call_api(prompt: str) -> str:
                 error.close()
             else:
                 cause = error.reason if isinstance(error, urllib.error.URLError) else error
-                retryable = isinstance(cause, (
-                    TimeoutError, ConnectionError, http.client.IncompleteRead,
-                    http.client.RemoteDisconnected,
-                ))
+                retryable = isinstance(
+                    cause,
+                    (
+                        TimeoutError,
+                        ConnectionError,
+                        http.client.IncompleteRead,
+                        http.client.RemoteDisconnected,
+                    ),
+                )
                 timed_out = isinstance(cause, TimeoutError)
-                reason = ("The AI request timed out." if timed_out
-                          else "Could not complete the AI request.")
+                reason = (
+                    "The AI request timed out."
+                    if timed_out
+                    else "Could not complete the AI request."
+                )
             if attempt == max_attempts or not retryable:
                 raise failure("call_api", reason, RuntimeError) from None
             # Only fixed diagnostics are logged; never include raw exception/provider data.
@@ -227,7 +244,9 @@ def call_api(prompt: str) -> str:
                 payload = json.loads(body)
                 payload["model"] = fallback_model
                 request = urllib.request.Request(
-                    URL, data=json.dumps(payload).encode(), headers=dict(request.header_items()),
+                    URL,
+                    data=json.dumps(payload).encode(),
+                    headers=dict(request.header_items()),
                 )
                 retry_model = "fallback_model"
             logger.info(
@@ -265,7 +284,9 @@ def _completed_content(data):
     """Validate each envelope container before consuming the model's content."""
     if not isinstance(data, dict) or data.get("error") is not None:
         raise failure(
-            "call_api", "AI provider returned an invalid response envelope.", RuntimeError,
+            "call_api",
+            "AI provider returned an invalid response envelope.",
+            RuntimeError,
         )
     choices = data.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -284,7 +305,6 @@ def _completed_content(data):
     if not isinstance(content, str) or not content.strip():
         raise failure("call_api", "AI provider returned no usable response text.", RuntimeError)
     return content
-
 
 
 # Schema and source validation
@@ -310,18 +330,23 @@ def validate_response(data: dict) -> dict:
     if set(data) != set(REQUIRED_KEYS):
         raise failure(
             "validate_response",
-            "AI reply must contain exactly: " + ", ".join(REQUIRED_KEYS), ValueError,
+            "AI reply must contain exactly: " + ", ".join(REQUIRED_KEYS),
+            ValueError,
         )
     for key in FINDING_KEYS:
         if not isinstance(data[key], bool):
             raise failure(
-                "validate_response", "AI reply key is not true/false: " + key, ValueError,
+                "validate_response",
+                "AI reply key is not true/false: " + key,
+                ValueError,
             )
     try:
         _validate_detail_schema(data["details"])
     except ValueError:
         raise failure(
-            "validate_response", "AI reply has invalid detail fields.", ValueError,
+            "validate_response",
+            "AI reply has invalid detail fields.",
+            ValueError,
         ) from None
     return data
 
@@ -336,7 +361,9 @@ def validate_details(data, message):
         return _validate_source_details(data, message)
     except ValueError:
         raise failure(
-            "validate_details", "AI details have invalid fields or source occurrences.", ValueError,
+            "validate_details",
+            "AI details have invalid fields or source occurrences.",
+            ValueError,
         ) from None
 
 

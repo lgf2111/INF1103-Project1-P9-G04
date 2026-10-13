@@ -38,8 +38,13 @@ def test_logging_attribute_names_do_not_crash_startup(tmp_path, level):
     environment = dict(os.environ, LOG_LEVEL=level)
     environment.pop("GROQ_API_KEY", None)
     result = subprocess.run(
-        [sys.executable, str(app / "main.py")], cwd=tmp_path,
-        input="5\n", text=True, capture_output=True, env=environment, timeout=10,
+        [sys.executable, str(app / "main.py")],
+        cwd=tmp_path,
+        input="5\n",
+        text=True,
+        capture_output=True,
+        env=environment,
+        timeout=10,
     )
     assert result.returncode == 0, result.stderr
     assert "Bye!" in result.stdout

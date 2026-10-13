@@ -1,9 +1,27 @@
 """Convert email HTML to bounded source text without rendering or fetching it."""
+
 import re
 from html.parser import HTMLParser
 
-BLOCKS = {"br", "p", "div", "li", "tr", "td", "th", "table", "section",
-          "article", "h1", "h2", "h3", "h4", "h5", "h6", "hr"}
+BLOCKS = {
+    "br",
+    "p",
+    "div",
+    "li",
+    "tr",
+    "td",
+    "th",
+    "table",
+    "section",
+    "article",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "hr",
+}
 IGNORED = {"script", "style", "head", "template"}
 LINE_BREAKS = "\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 

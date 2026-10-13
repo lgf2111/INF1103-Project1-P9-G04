@@ -2,7 +2,7 @@
 # One place that sets up logging for the whole app. OWNER: Lee Guan Feng.
 #
 # Goal: a behind-the-scenes log file that helps debug failures (e.g. the
-# database not connecting) WITHOUT leaking secrets like the database URL or API
+# local file or API failing) WITHOUT leaking secrets like the API
 # key into the log.
 #
 # Two modes, controlled by the LOG_LEVEL environment variable (set it in .env):
@@ -81,8 +81,9 @@ def setup_logging():
     handler.setFormatter(logging.Formatter(FORMAT))
     root.addHandler(handler)
 
-    logging.getLogger(__name__).info("=== logging started (level=%s) ===",
-                                     logging.getLevelName(level))
+    logging.getLogger(__name__).info(
+        "=== logging started (level=%s) ===", logging.getLevelName(level)
+    )
     _configured = True
     return True
 
@@ -107,7 +108,7 @@ def log_failure(logger, summary):
     developer-written message with no secrets or user content.
 
     - Default (LOG_LEVEL not DEBUG): logs just the summary at WARNING. No
-      traceback and no raw exception text, so the database URL, API key and
+      traceback and no raw exception text, so API keys and
       message content never reach the log.
     - LOG_LEVEL=DEBUG: logs the summary at ERROR with the full traceback
       (exc_info), so you can see exactly why it failed while debugging.
