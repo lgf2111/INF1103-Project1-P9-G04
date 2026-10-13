@@ -1,5 +1,7 @@
 # Runtime code uses the Python standard library.
-# The packages below support offline tests.
+# Pytest is the only direct third-party dependency (offline test and demo scripts).
+# Its required transitive packages are pinned below; these are not app runtime imports.
+# Keep the verified versions; do not install Groq, requests or database clients.
 iniconfig==2.3.0
 packaging==26.3
 pluggy==1.6.0
