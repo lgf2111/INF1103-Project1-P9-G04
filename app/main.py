@@ -153,16 +153,25 @@ def main():
         while True:
             choice = io_manager.main_menu()
             if choice == "1":
+                # Manual Email, SMS or Chat input.
                 check_message()
             elif choice == "2":
-                view_reports()
+                # Import a .eml file chosen from the user's saved email folder.
+                record = io_manager.collect_input_from_folder()
+                if record is not None:
+                    check_message(record)
             elif choice == "3":
+                # Existing browser-based file upload.
                 upload_file()
             elif choice == "4":
+                # View previous assessments.
+                view_reports()
+            elif choice == "5":
                 io_manager.show_message("Bye!")
                 break
             else:
-                io_manager.show_message("Please choose 1, 2, 3 or 4.")
+                io_manager.show_message(
+                    "Please choose 1, 2, 3, 4 or 5.")
     except (KeyboardInterrupt, EOFError):
         # Ctrl+C (interrupt) or Ctrl+D (end of input): exit cleanly, no traceback.
         io_manager.show_message("\nInterrupted. Goodbye!")

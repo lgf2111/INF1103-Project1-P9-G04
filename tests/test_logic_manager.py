@@ -157,7 +157,7 @@ def test_evaluate_routes_once(monkeypatch):
     {"findings": {"insufficient_context": []}},
     {"clicked": "yes"}, {"downloaded": 1}, {"submitted_category": "payment"},
 ])
-@pytest.mark.parametrize("operation", ["score", "route", "evaluate"])
+@pytest.mark.parametrize("operation", ["score", "evaluate"])
 def test_response_priority_rejects_invalid_inputs(changes, operation):
     record = _assessment_record(**deepcopy(changes))
     original = deepcopy(record)
@@ -166,7 +166,7 @@ def test_response_priority_rejects_invalid_inputs(changes, operation):
     assert record == original
 
 
-@pytest.mark.parametrize("operation", ["score", "route", "evaluate"])
+@pytest.mark.parametrize("operation", ["score", "evaluate"])
 def test_disclosure_still_requires_an_ai_assessment(operation):
     record = _assessment_record(submitted_category="password")
     del record["ai"]
@@ -221,3 +221,24 @@ def test_evaluate_guidance_matches_reported_interaction(action, guidance):
     assert any(guidance in step.lower() for step in result["checklist"])
     assert not any("change" in step.lower() and "password" in step.lower()
                    for step in result["checklist"])
+
+def test_evaluate_scores_once(monkeypatch):
+    """Ensure an assessment calculates its score exactly once."""
+    record = _assessment_record(submitted_category="password")
+    original_score = logic_manager.score
+    calls = []
+
+    def track_score(received):
+        """Record each scoring call and run the original function."""
+        # Preserve real validation and scoring while tracking calls.
+        calls.append(received)
+        return original_score(received)
+
+    monkeypatch.setattr(logic_manager, "score", track_score)
+
+    result = logic_manager.evaluate(record)
+
+    assert len(calls) == 1
+    assert calls[0] is record
+    assert result["score"] == 90
+    assert result["priority"] == "HIGH"

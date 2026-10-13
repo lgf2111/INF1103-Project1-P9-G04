@@ -26,16 +26,17 @@ def test_ask_yes_no_reprompts_invalid_input(monkeypatch):
 
     assert result is True
 
-def test_main_menu_accepts_valid_choice(monkeypatch):
-    monkeypatch.setattr("builtins.input", lambda _: "2")
+@pytest.mark.parametrize("choice", ["1", "2", "3", "4", "5"])
+def test_main_menu_accepts_valid_choice(monkeypatch, choice):
+    monkeypatch.setattr("builtins.input", lambda _: choice)
 
     result = io_manager.main_menu()
 
-    assert result == "2"
+    assert result == choice
 
 
 def test_main_menu_reprompts_invalid_choice(monkeypatch):
-    answers = iter(["5", "hello", "1"])
+    answers = iter(["6", "hello", "1"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
@@ -228,7 +229,6 @@ def test_collect_user_actions_without_link_or_file(monkeypatch):
 def test_collect_input_returns_complete_record(monkeypatch):
     answers = iter([
     "Email",
-    "1",
     "update@micr0soft.com",
     "Download Update.exe immediately.",
     "no",
@@ -399,8 +399,6 @@ def test_collect_input_eml_with_follow_up_questions(
     )
 
     answers = iter([
-        "email",                       # Channel
-        "2",                           # Import .eml
         str(email_file),               # Email file path
         "yes",                         # Link included?
         "https://example.com/verify",  # Link
@@ -419,7 +417,7 @@ def test_collect_input_eml_with_follow_up_questions(
 
     monkeypatch.setattr("builtins.input", fake_input)
 
-    record = io_manager.collect_input()
+    record = io_manager.collect_input(eml_file=True)
 
     assert record == {
         "channel": "email",
@@ -885,3 +883,41 @@ def test_read_eml_details_rejects_invalid_base64_padding(tmp_path):
     # Base64 content is missing its required padding.
     with pytest.raises(ValueError, match="Invalid Base64"):
         io_manager.read_eml_details(email_file)
+
+def test_collect_input_direct_eml(monkeypatch, tmp_path):
+    email_file = tmp_path / "sample.eml"
+
+    email_file.write_bytes(
+        b"From: sender@example.com\r\n"
+        b"Subject: Test Email\r\n"
+        b"Content-Type: text/plain; charset=utf-8\r\n"
+        b"\r\n"
+        b"This is a test message.\r\n"
+    )
+
+    answers = iter([
+        str(email_file),
+        "no",  # Link included?
+        "no",  # File included?
+        "no",  # Password/OTP disclosed?
+    ])
+
+    monkeypatch.setattr(
+        "builtins.input",
+        lambda _: next(answers),
+    )
+
+    result = io_manager.collect_input(eml_file=True)
+
+    assert result == {
+        "channel": "email",
+        "sender": "sender@example.com",
+        "message": "Subject: Test Email\n\nThis is a test message.",
+        "has_link": False,
+        "link": None,
+        "has_file": False,
+        "file_name": None,
+        "clicked": False,
+        "downloaded": False,
+        "submitted_category": None,
+    }

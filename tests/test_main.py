@@ -99,9 +99,24 @@ def test_eml_retry_and_decoded_source_reach_real_pipeline(
         "absent@example.test" if invented_contact else "a1@example.test"
     ]
     _completed_reply(app_boundary, findings)
-    answers = iter(["email", "2", str(bad), str(good), "no", "no", "no"])
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
-    main.check_message()
+    # Keep the saved-config file inside tmp_path so it doesn't touch the repo.
+    monkeypatch.chdir(tmp_path)
+    # Option 2 now picks a .eml from a saved folder. First run asks for the
+    # folder; then the newest files are listed (encoded.eml is newer than
+    # malformed.eml). Pick the malformed one first (retry), then the good one.
+    answers = iter(["2", str(tmp_path), "2", "1", "no", "no", "no", "5"])
+    prompts = []
+
+    def answer(prompt):
+        prompts.append(prompt)
+        return next(answers)
+
+    monkeypatch.setattr("builtins.input", answer)
+    main.main()
+    assert prompts[0] == "Choose 1-5: "
+    assert any("email folder" in prompt.lower() for prompt in prompts)
+    assert not any("channel" in prompt.lower() or "input method" in prompt.lower()
+                   for prompt in prompts)
     assert app_boundary.call_count == 1
     prompt = json.loads(app_boundary.call_args.args[0].data)["messages"][0]["content"]
     assert str(good) not in prompt
@@ -184,7 +199,7 @@ def test_menu_continues_after_bad_record_then_saves_next_assessment(
     app_boundary, monkeypatch, tmp_path,
 ):
     _successful_reply(app_boundary)
-    monkeypatch.setattr(main.io_manager, "main_menu", Mock(side_effect=["1", "1", "4"]))
+    monkeypatch.setattr(main.io_manager, "main_menu", Mock(side_effect=["1", "1", "5"]))
     monkeypatch.setattr(main.io_manager, "collect_input", Mock(side_effect=[
         {"message": None}, _record(),
     ]))
@@ -219,7 +234,7 @@ def test_unwritable_log_destination_keeps_menu_available(app_boundary, tmp_path,
     # A file named "logs" makes os.makedirs("logs") fail, so the file log can't
     # open - the app must still run and warn about logging being unavailable.
     (tmp_path / "logs").write_text("not a directory")
-    monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="4"))
+    monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="5"))
 
     main.main()
 
@@ -327,7 +342,7 @@ def test_configured_storage_logging_uses_application_file(
     app_boundary, tmp_path, monkeypatch
 ):
     (tmp_path / "reports.json").write_text('{PRIVATE_BROKEN')
-    monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="4"))
+    monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="5"))
     main.main()
     text = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
     assert "data_manager" in text and "Could not read local report history" in text
@@ -369,3 +384,15 @@ def test_timeout_fallback_reaches_real_logic_and_saves_once(app_boundary, monkey
     main.io_manager.display_result.assert_called_once()
     main.io_manager.show_message.assert_not_called()
     data_manager.upload.assert_called_once_with(saved)
+
+
+@pytest.mark.parametrize("choice, handler_name", [("3", "upload_file"), ("4", "view_reports")])
+def test_menu_routes_upload_and_saved_reports(app_boundary, monkeypatch, choice, handler_name):
+    handler = Mock()
+    monkeypatch.setattr(main, handler_name, handler)
+    monkeypatch.setattr(main.io_manager, "main_menu", Mock(side_effect=[choice, "5"]))
+
+    main.main()
+
+    handler.assert_called_once_with()
+    app_boundary.assert_not_called()

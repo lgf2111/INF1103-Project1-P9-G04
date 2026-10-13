@@ -58,7 +58,9 @@ The app lets you assess a message, view saved reports or quit. It writes `report
 
 ### Import an email
 
-Choose **Email**, then **2 (.eml file)** and enter the file path. We include the
+Choose **2. Import an email (.eml file)** from the main menu and enter the file
+path directly. Then answer the link, file and action questions. Choose **1. Check
+a new message (Manual Input)** to type an Email, SMS or Chat message. We include the
 subject and every inline plain-text body part in the text sent for assessment.
 Valid Base64, quoted-printable and declared character sets are decoded without
 silently replacing invalid characters. Missing sender/subject headers are allowed;
@@ -92,7 +94,7 @@ To run the interactive application in Docker, first create `.env` as described a
 docker run --rm -it -p 8000:8000 --env-file .env phishreport
 ```
 
-`-p 8000:8000` publishes the file-upload page (menu option 4) so your browser can reach it at http://localhost:8000. (The `./docker.sh run` helper already includes this.)
+`-p 8000:8000` publishes the file-upload page (menu option 3) so your browser can reach it at http://localhost:8000. (The `./docker.sh run` helper already includes this.)
 
 Reports saved inside this temporary container do not persist after it exits. Persistent container storage and verification on every team laptop remain delivery tasks in the roadmap.
 
