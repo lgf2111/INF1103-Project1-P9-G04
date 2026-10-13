@@ -108,24 +108,79 @@ Uploading the email itself does not mean a user downloaded an attachment in it.
 We still ask about actual clicks, attachment downloads and disclosure; the AI
 cannot infer those actions from email content.
 
-## Check the Docker build
+## Run Docker with persistent reports
 
-With Docker running, build the image and run the offline tests:
-
-```bash
-docker build -t phishreport .
-docker run --rm phishreport pytest
-```
-
-To run the interactive application in Docker, first create `.env` as described above:
+I create `.env` as described above, start Docker, then build, test and run:
 
 ```bash
-docker run --rm -it -p 8000:8000 --env-file .env phishreport
+./docker.sh build
+./docker.sh test
+./docker.sh run
 ```
 
-`-p 8000:8000` publishes the file-upload page (menu option 3) so your browser can reach it at http://localhost:8000. (The `./docker.sh run` helper already includes this.)
+On Windows I use **Git Bash**, or WSL with Docker integration enabled. On macOS
+and Linux I use Bash; if needed I first run `chmod +x docker.sh`. The helper
+resolves paths from its own project directory, so I can also invoke it from
+another working directory. Its test command disables external networking.
 
-Reports saved inside this temporary container do not persist after it exits. Persistent container storage and verification on every team laptop remain delivery tasks in the roadmap.
+My Docker reports, settings and logs are stored in **`.phishreport-data/`** on
+the host. The helper mounts that directory at `/data`, sets it as the working
+directory and launches `/app/app/main.py`. I mount the directory rather than
+`reports.json` itself because the data manager saves by atomically replacing the
+file; replacing an individually bind-mounted file fails in Docker.
+
+On first setup I copy existing root `reports.json`, `.phishreport_config.json`
+and logs into the data directory if their destinations do not already exist.
+Later runs preserve the newer destination files. The original files remain
+untouched; this is a one-time copy, not ongoing synchronization. I do not reset
+corrupt history. After migration I use `.phishreport-data/reports.json` for my
+Docker history; running host Python from the repository root still uses the
+separate root `reports.json`.
+
+### Email folder inside Docker
+
+I select **2. Import an email** and enter **`/emails`** when asked for the email
+folder. The helper mounts my project's `emails/` directory there read-only. The
+folder picker then remembers this container path across runs. A saved Windows or
+macOS host path is not automatically available inside a container; if old copied
+settings point to an unavailable path, I enter `/emails` when prompted again.
+
+To use another folder, I set `PHISHREPORT_EMAIL_DIR` for the run. Relative paths
+are resolved against the project, and spaces are supported:
+
+```bash
+PHISHREPORT_EMAIL_DIR="Saved emails" ./docker.sh run
+```
+
+I can also use an absolute folder path, such as `/c/Users/me/Downloads/emails`
+in Git Bash or `/home/me/emails` on Linux. This selects saved files; it does not
+connect to a mailbox or add support for otherwise unsupported MIME formats.
+
+The helper publishes menu option 3's upload page at
+http://localhost:8000, bound to the host's loopback interface. I keep
+`.phishreport-data/`, root settings and logs out of Git and the Docker image.
+
+### Check persistence after a restart
+
+I assess a supported real `.eml` using a configured API key, check that the app
+reports no local-save failure, and quit. I then run `./docker.sh run` again and
+select **4. View saved reports**. The same completed record should still exist,
+and the folder picker should retain `/emails`. I record the tested commit and
+results for my laptop; each teammate must verify the final submission version.
+
+For an equivalent manual Bash run after setup, I use directory mounts and the
+absolute application entry point:
+
+```bash
+docker run --rm -it -p 127.0.0.1:8000:8000 --env-file .env \
+  --mount "type=bind,source=$(pwd)/.phishreport-data,target=/data" \
+  --mount "type=bind,source=$(pwd)/emails,target=/emails,readonly" \
+  -w /data phishreport python /app/app/main.py
+```
+
+For Git Bash I use the helper, which explicitly converts host paths and prevents
+MSYS from rewriting container paths. A bare `docker run --rm ... phishreport`
+without a persistent directory mount still loses container-local reports.
 
 ## Contributing
 

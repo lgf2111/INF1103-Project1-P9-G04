@@ -20,6 +20,9 @@ __pycache__/
 # Reports and logs created while running the app
 reports.json
 *.log
+logs/
+.phishreport_config.json
+.phishreport-data/
 
 # Operating-system metadata
 .DS_Store
