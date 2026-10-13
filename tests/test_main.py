@@ -105,7 +105,6 @@ def test_browser_html_email_uses_canonical_source_before_logic_and_save(
     if invented_contact:
         assert records == []
         main.io_manager.display_result.assert_not_called()
-        data_manager.upload.assert_not_called()
     else:
         assert len(records) == 1
         message = records[0]["message"]
@@ -113,7 +112,6 @@ def test_browser_html_email_uses_canonical_source_before_logic_and_save(
         assert "https://credential.example.test/login" in message
         assert "<p>" not in message and "Content-Type:" not in message
         assert records[0]["result"]["score"] == expected_score
-        assert records[0]["has_file"] is False
         main.io_manager.display_result.assert_called_once_with(records[0]["result"])
 
 
@@ -130,7 +128,6 @@ def test_invalid_browser_email_stops_before_ai_or_save(app_boundary, monkeypatch
     main.upload_file()
     app_boundary.assert_not_called()
     main.io_manager.display_result.assert_not_called()
-    data_manager.upload.assert_not_called()
     assert data_manager.load() == []
 
 

@@ -95,7 +95,7 @@ def test_real_http_server_recovers_from_bad_request_then_preserves_email_bytes(m
     connection.request("GET", "/")
     response = connection.getresponse()
     assert response.status == 200
-    assert b"Upload a file" in response.read()
+    assert b"Upload an email" in response.read()
     connection.request("POST", "/", body=b"bad", headers={"Content-Type":"text/plain"})
     response = connection.getresponse()
     assert response.status == 400
@@ -111,3 +111,79 @@ def test_real_http_server_recovers_from_bad_request_then_preserves_email_bytes(m
     assert not worker.is_alive()
     assert results == [{"filename":"fictional.eml", "content":content}]
     assert servers[0].socket.fileno() == -1
+
+
+def _request_handler(body):
+    return SimpleNamespace(
+        command="POST",
+        headers={"Content-Type": "multipart/form-data; boundary=boundary",
+                 "Content-Length": str(len(body))},
+        rfile=io.BytesIO(body), wfile=io.BytesIO(),
+        send_response=Mock(), send_header=Mock(), end_headers=Mock(), send_error=Mock(),
+    )
+
+
+def test_valid_web_eml_matches_folder_input(tmp_path, monkeypatch):
+    from email.message import EmailMessage
+
+    import io_manager
+
+    email = EmailMessage()
+    email["From"] = "fictional@example.test"
+    email["Subject"] = "Fictional verification"
+    email.set_content(
+        '<p>Caf\u00e9 account notice</p><a href="https://example.test/verify">Verify</a>',
+        subtype="html", charset="utf-8", cte="base64",
+    )
+    raw = email.as_bytes()
+    path = tmp_path / "valid.EML"
+    path.write_bytes(raw)
+    handler = _request_handler(_form(raw, filename="valid.EML"))
+    monkeypatch.setattr(web_upload, "_result", {"upload": None, "done": False})
+    web_upload._handle(handler)
+    handler.send_response.assert_called_once_with(200)
+    handler.send_error.assert_not_called()
+    answers = iter(["no", "no", "no"] * 2)
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    monkeypatch.setattr(io_manager, "get_eml_from_folder",
+                        lambda: io_manager.read_eml_details(path))
+    folder = io_manager.collect_input_from_folder()
+    browser = io_manager.collect_input_from_upload(web_upload._result["upload"])
+    assert browser == folder
+    assert browser["sender"] == "fictional@example.test"
+    assert browser["message"].startswith("Subject: Fictional verification\n\n")
+    assert "Caf\u00e9 account notice" in browser["message"]
+    assert "https://example.test/verify" in browser["message"]
+    assert "Content-Transfer-Encoding" not in browser["message"]
+
+
+@pytest.mark.parametrize("filename", [
+    "notes.txt", "image.png", "attachment.pdf", "archive.zip", "email.eml.exe",
+])
+def test_web_upload_is_eml_only_with_clear_rejection(monkeypatch, filename):
+    import io_manager
+
+    message = "Only .eml email files are supported. Images and attachments are not analysed."
+    handler = _request_handler(_form(b"Not an email.", filename=filename))
+    monkeypatch.setattr(web_upload, "_result", {"upload": None, "done": False})
+    web_upload._handle(handler)
+    handler.send_error.assert_called_once_with(400, message)
+    assert web_upload._result == {"upload": None, "done": False}
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("Invalid upload asked for input"))
+    with pytest.raises(ValueError, match=r"Only \.eml email files"):
+        io_manager.collect_input_from_upload({"filename": filename, "content": b"Not an email."})
+
+
+@pytest.mark.parametrize("large_request", [False, True])
+def test_web_upload_limit_rejects_oversize_before_completion(monkeypatch, large_request):
+    handler = _request_handler(_form(b"x" * (web_upload.MAX_UPLOAD_BYTES + 1)))
+    if large_request:
+        handler.headers["Content-Length"] = str(web_upload.MAX_REQUEST_BYTES + 1)
+        handler.rfile = Mock()
+        handler.rfile.read.side_effect = AssertionError("Oversized request must not be read")
+    monkeypatch.setattr(web_upload, "_result", {"upload": None, "done": False})
+    web_upload._handle(handler)
+    handler.send_error.assert_called_once_with(413, "Email file exceeds the 2 MiB size limit.")
+    assert web_upload._result == {"upload": None, "done": False}
+    if large_request:
+        handler.rfile.read.assert_not_called()

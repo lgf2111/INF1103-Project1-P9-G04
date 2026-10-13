@@ -47,6 +47,18 @@ GROQ_API_KEY=your_key_here
 
 A key is required for a live assessment, but not for the offline tests. Use fictional messages for testing; never enter real passwords or one-time codes.
 
+The `.env` file is optional when settings are supplied by your shell or Docker.
+Save it as UTF-8 (a UTF-8 BOM is accepted), using the existing `KEY=value` format.
+Existing environment values take precedence; repeated file keys keep their first
+value. Blank lines, comments and lines without `=` are ignored.
+
+If the file cannot be read or decoded, or an assignment has an empty key or a NUL
+character, startup displays a warning and continues using existing environment
+settings. File settings are checked before any are applied, so an invalid or
+partly read file does not leave a partial configuration behind. The warning and
+its log entry contain no file contents or raw exception details. Missing API
+credentials still prevent a completed assessment; this recovery does not bypass AI.
+
 ## Run and test
 
 ```bash
@@ -62,8 +74,8 @@ Choose **2. Import an email (.eml file)**, enter the folder containing your
 exported `.eml` files on first use, then select a file. The folder is remembered
 locally; `m` lists more files and `c` cancels selection. This reads exported files,
 not a live Outlook mailbox. In Docker, mount the folder and enter its container
-path (for example, `/emails`). Choose **3. Upload a file to assess** to upload an
-`.eml` or UTF-8 `.txt` file through the browser. Both email routes use the same
+path (for example, `/emails`). Choose **3. Upload an email (.eml file)** to
+upload an `.eml` file through the browser. Both email routes use the same
 MIME parser, subject/sender handling and exposure questions.
 
 Choose **1. Check a new message (Manual Input)** to type an Email, SMS or Chat
@@ -77,14 +89,17 @@ sender address is preserved as untrusted text rather than repaired or authentica
 We support plain-text and HTML bodies in nested mixed, alternative and related
 containers. HTML is converted to inert text with link/form targets and image
 descriptions retained; scripts/styles are excluded, resources are never fetched,
-and HTML is never rendered or executed. Embedded related images and attachments
+and HTML is never rendered or executed. Embedded images and attachments
 are excluded from content analysis. Other unsupported inline body types are rejected.
 For unsupported emails, restart the input flow and choose manual input to provide
 the relevant message text. We still ask separately about links, files, clicks,
 downloads and password/code disclosure; these actions are never inferred.
 
 Imports are limited to regular files of 2 MiB, 100 MIME parts, 32 nesting levels
-and 50,000 final message characters (including the subject). Invalid imports
+and 50,000 final message characters (including the subject). Browser uploads
+reject all other types with: "Only .eml email files are supported. Images and
+attachments are not analysed." Oversized browser uploads return HTTP 413;
+format/type errors return HTTP 400. Invalid imports
 display an error and ask for another file. These limits are our implementation
 choices, not additional coursework requirements.
 
@@ -93,24 +108,79 @@ Uploading the email itself does not mean a user downloaded an attachment in it.
 We still ask about actual clicks, attachment downloads and disclosure; the AI
 cannot infer those actions from email content.
 
-## Check the Docker build
+## Run Docker with persistent reports
 
-With Docker running, build the image and run the offline tests:
-
-```bash
-docker build -t phishreport .
-docker run --rm phishreport pytest
-```
-
-To run the interactive application in Docker, first create `.env` as described above:
+I create `.env` as described above, start Docker, then build, test and run:
 
 ```bash
-docker run --rm -it -p 8000:8000 --env-file .env phishreport
+./docker.sh build
+./docker.sh test
+./docker.sh run
 ```
 
-`-p 8000:8000` publishes the file-upload page (menu option 3) so your browser can reach it at http://localhost:8000. (The `./docker.sh run` helper already includes this.)
+On Windows I use **Git Bash**, or WSL with Docker integration enabled. On macOS
+and Linux I use Bash; if needed I first run `chmod +x docker.sh`. The helper
+resolves paths from its own project directory, so I can also invoke it from
+another working directory. Its test command disables external networking.
 
-Reports saved inside this temporary container do not persist after it exits. Persistent container storage and verification on every team laptop remain delivery tasks in the roadmap.
+My Docker reports, settings and logs are stored in **`.phishreport-data/`** on
+the host. The helper mounts that directory at `/data`, sets it as the working
+directory and launches `/app/app/main.py`. I mount the directory rather than
+`reports.json` itself because the data manager saves by atomically replacing the
+file; replacing an individually bind-mounted file fails in Docker.
+
+On first setup I copy existing root `reports.json`, `.phishreport_config.json`
+and logs into the data directory if their destinations do not already exist.
+Later runs preserve the newer destination files. The original files remain
+untouched; this is a one-time copy, not ongoing synchronization. I do not reset
+corrupt history. After migration I use `.phishreport-data/reports.json` for my
+Docker history; running host Python from the repository root still uses the
+separate root `reports.json`.
+
+### Email folder inside Docker
+
+I select **2. Import an email** and enter **`/emails`** when asked for the email
+folder. The helper mounts my project's `emails/` directory there read-only. The
+folder picker then remembers this container path across runs. A saved Windows or
+macOS host path is not automatically available inside a container; if old copied
+settings point to an unavailable path, I enter `/emails` when prompted again.
+
+To use another folder, I set `PHISHREPORT_EMAIL_DIR` for the run. Relative paths
+are resolved against the project, and spaces are supported:
+
+```bash
+PHISHREPORT_EMAIL_DIR="Saved emails" ./docker.sh run
+```
+
+I can also use an absolute folder path, such as `/c/Users/me/Downloads/emails`
+in Git Bash or `/home/me/emails` on Linux. This selects saved files; it does not
+connect to a mailbox or add support for otherwise unsupported MIME formats.
+
+The helper publishes menu option 3's upload page at
+http://localhost:8000, bound to the host's loopback interface. I keep
+`.phishreport-data/`, root settings and logs out of Git and the Docker image.
+
+### Check persistence after a restart
+
+I assess a supported real `.eml` using a configured API key, check that the app
+reports no local-save failure, and quit. I then run `./docker.sh run` again and
+select **4. View saved reports**. The same completed record should still exist,
+and the folder picker should retain `/emails`. I record the tested commit and
+results for my laptop; each teammate must verify the final submission version.
+
+For an equivalent manual Bash run after setup, I use directory mounts and the
+absolute application entry point:
+
+```bash
+docker run --rm -it -p 127.0.0.1:8000:8000 --env-file .env \
+  --mount "type=bind,source=$(pwd)/.phishreport-data,target=/data" \
+  --mount "type=bind,source=$(pwd)/emails,target=/emails,readonly" \
+  -w /data phishreport python /app/app/main.py
+```
+
+For Git Bash I use the helper, which explicitly converts host paths and prevents
+MSYS from rewriting container paths. A bare `docker run --rm ... phishreport`
+without a persistent directory mount still loses container-local reports.
 
 ## Contributing
 

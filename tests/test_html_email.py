@@ -142,3 +142,32 @@ def test_empty_plain_alternative_does_not_block_real_email_body(filename):
     # MIME nesting can normalize CRLF to LF; message content must be unchanged.
     actual = io_manager.read_eml_bytes(wrapped)[1]
     assert actual.replace("\r\n", "\n") == expected.replace("\r\n", "\n")
+
+
+def test_inline_image_under_mixed_does_not_block_readable_html():
+    from email.message import EmailMessage
+
+    email = EmailMessage()
+    email.set_content("<p>A readable notice.</p>", subtype="html")
+    email.add_attachment(b"IMAGE_BYTES", maintype="image", subtype="png",
+                         filename="logo.png", disposition="inline")
+    message = io_manager.read_eml_bytes(email.as_bytes())[1]
+    assert "A readable notice." in message
+    assert "IMAGE_BYTES" not in message
+
+
+def test_empty_html_alternative_does_not_block_valid_plain_text():
+    from email.message import EmailMessage
+
+    email = EmailMessage()
+    email.set_content("A valid plain-text message.")
+    email.add_alternative("<html><body></body></html>", subtype="html")
+    assert io_manager.read_eml_bytes(email.as_bytes())[1] == "A valid plain-text message."
+
+
+def test_html_whitespace_does_not_count_as_final_message_text():
+    raw = b"Content-Type: text/html; charset=utf-8\r\n\r\n<p>" + b" " * 51000 + b"Hello</p>"
+    assert io_manager.read_eml_bytes(raw)[1] == "[HTML body]\nHello"
+    assert html_to_text("<p>  Hello  </p><p>  world  </p>", 11) == "Hello\nworld"
+    with pytest.raises(ValueError, match="length limit"):
+        html_to_text("<p>Hello</p><p>world</p>", 10)

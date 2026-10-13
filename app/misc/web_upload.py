@@ -11,7 +11,10 @@ import re
 from email import policy
 from email.parser import BytesHeaderParser
 
-MAX_UPLOAD_BYTES = 2 * 1024 * 1024
+import io_manager
+
+MAX_UPLOAD_BYTES = io_manager.MAX_EML_BYTES
+SIZE_ERROR = "Email file exceeds the 2 MiB size limit."
 MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 64 * 1024
 
 # Bind to all interfaces so the server is reachable from the host when running
@@ -51,12 +54,13 @@ _PAGE = (
     f"<style>{_STYLE}</style></head><body>"
     "<div class='card' id='card'>"
     "<div class='icon'>&#128228;</div>"
-    "<h1>Upload a file to assess</h1>"
-    "<p>Click anywhere to choose a file.</p>"
+    "<h1>Upload an email (.eml file)</h1>"
+    f"<p>{io_manager.UPLOAD_TYPE_MESSAGE}</p>"
+    "<p>Click anywhere to choose an email (maximum 2 MiB).</p>"
     "<div class='pulse'>Waiting for your file&hellip;</div>"
     "</div>"
     "<form id='f' method='post' enctype='multipart/form-data'>"
-    "<input id='file' type='file' name='file' accept='.eml,.txt' hidden></form>"
+    "<input id='file' type='file' name='file' accept='.eml' hidden></form>"
     "<script>"
     # Opening a file dialog needs a user gesture, so open it on the first click
     # anywhere; auto-submit as soon as a file is chosen (no Upload button).
@@ -86,7 +90,7 @@ _result = {"upload": None, "done": False}
 def parse_upload(content_type, body):
     """Parse one bounded multipart form file without changing its original bytes."""
     if len(body) > MAX_REQUEST_BYTES:
-        raise ValueError("Upload request exceeds the size limit.")
+        raise ValueError(SIZE_ERROR)
     if not isinstance(content_type, str) or "\r" in content_type or "\n" in content_type:
         raise ValueError("Invalid upload content type.")
     message = BytesHeaderParser(policy=policy.default).parsebytes(
@@ -118,10 +122,12 @@ def parse_upload(content_type, body):
     if part.get("Content-Transfer-Encoding", "binary").lower() not in ("binary", "8bit"):
         raise ValueError("Unsupported upload encoding.")
     filename = part.get_filename()
-    if not filename or not filename.lower().endswith((".eml", ".txt")):
-        raise ValueError("Upload a .eml or .txt file.")
-    if not isinstance(content, bytes) or not content or len(content) > MAX_UPLOAD_BYTES:
-        raise ValueError("Uploaded file is empty or exceeds the size limit.")
+    if not filename or not filename.lower().endswith(".eml"):
+        raise ValueError(io_manager.UPLOAD_TYPE_MESSAGE)
+    if not content:
+        raise ValueError("Email file is empty.")
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise ValueError(SIZE_ERROR)
     return {"filename": filename, "content": content}
 
 
@@ -136,14 +142,20 @@ def _handle(handler):
 
     try:
         length = int(handler.headers.get("Content-Length", "0"))
-        if not 0 < length <= MAX_REQUEST_BYTES:
+        if length <= 0:
             raise ValueError("Invalid upload length.")
+        if length > MAX_REQUEST_BYTES:
+            handler.send_error(413, SIZE_ERROR)
+            return
         body = handler.rfile.read(length)
         if len(body) != length:
             raise ValueError("Incomplete upload.")
         upload = parse_upload(handler.headers.get("Content-Type"), body)
-    except (OSError, ValueError, RecursionError):
-        handler.send_error(400, "Upload failed; choose one valid .eml or .txt file up to 2 MiB.")
+    except ValueError as error:
+        handler.send_error(413 if str(error) == SIZE_ERROR else 400, str(error))
+        return
+    except (OSError, RecursionError):
+        handler.send_error(400, "Upload failed. Please try again with an .eml email.")
         return
     _result["upload"] = upload
     _result["done"] = True
