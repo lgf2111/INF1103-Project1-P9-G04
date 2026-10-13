@@ -83,14 +83,7 @@ def check_message(record=None):
         data_manager.save(report)
     except (OSError, ValueError):
         logging_setup.log_failure(logger, "Local report save failed")
-        io_manager.show_message(
-            "Could not save the local report; existing history preserved "
-            "and database upload not attempted."
-        )
-    except RuntimeError as error:
-        # The local write completed before the failed database request.
-        logging_setup.log_failure(logger, "Database upload failed after local save")
-        io_manager.show_message("Report saved locally, but database saving failed: " + str(error))
+        io_manager.show_message("Could not save the local report; existing history preserved.")
 
     # io_manager.display_result expects the logic result dictionary.
     io_manager.display_result(result)
@@ -115,26 +108,17 @@ def upload_file():
     check_message(record)
 
 def load_reports() -> list[dict] | None:
-    """Read both histories; return None when local history is unavailable and DB empty."""
+    """Read JSON history; distinguish an unavailable file from empty history."""
     try:
-        records = data_manager.fetch()
-    except (RuntimeError, ValueError) as error:
-        # Explain the unavailable source before reading the local copy.
-        logging_setup.log_failure(logger, "Reading reports from PostgreSQL failed")
-        io_manager.show_message("PostgreSQL unavailable; checking reports.json: " + str(error))
-        records = []
-
-    # A failed upload can leave newer reports only in the local copy.
-    try:
-        local_records = data_manager.load(strict=True)
+        return data_manager.load(strict=True)
     except (OSError, ValueError):
         logging_setup.log_failure(logger, "Reading local report history failed")
         io_manager.show_message("Could not load local report history; existing file preserved.")
-        return records if records else None
-    return data_manager.combine_reports(records, local_records)
+        return None
+
 
 def view_reports():
-    """Load database or local history and send it to I/O for display."""
+    """Load local JSON history and send it to I/O for display."""
     records = load_reports()
     if records is not None:
         io_manager.display_list(records)
@@ -142,7 +126,7 @@ def view_reports():
 def main():
     load_env()
     # Set up behind-the-scenes logging to the logs/ folder before anything else,
-    # so any failure (AI, database, file) is recorded. Set LOG_LEVEL=DEBUG in
+    # so any failure (AI or file) is recorded. Set LOG_LEVEL=DEBUG in
     # .env to also capture full tracebacks while debugging.
     if not logging_setup.setup_logging():
         io_manager.show_message("Warning: diagnostic logging is unavailable.")
