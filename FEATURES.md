@@ -3,13 +3,10 @@
 This file records who built what, so everyone gets credit for their work.
 Add a row when you finish a feature. Link the pull request if you can.
 
-## Done so far
+## Foundation contribution history
 
-The project scaffolding and DevOps setup are in place and the app runs end to
-end. The four managers have working starter versions; their owners can still
-extend them (see "Up for grabs" below).
-
-Most of this so far is the foundation and DevOps work.
+I retain the foundation contributions below as historical evidence. Their original
+test count and release are not the final submission verification.
 
 | Feature | Description | Owner | PR |
 | --- | --- | --- | --- |
@@ -25,25 +22,21 @@ Most of this so far is the foundation and DevOps work.
 | Project docs | `README.md` (setup/run/rules guide) and this file | Lee Guan Feng | #12 |
 | v1.0.0 release | First complete working, tested, containerised end-to-end release | Lee Guan Feng | tag v1.0.0 |
 
-The starter versions of the four managers were added just to get the app
-running; the owners below should replace/extend them and take the credit.
+## Integrated work
 
-## Up for grabs (the real feature work)
-
-Pick one, build it on a branch, open a PR, then add your name here.
-
-| Feature | Description | Owner |
+| Contribution | Contributor(s) | Evidence |
 | --- | --- | --- |
-| `io_manager.py` | Input collection, validation and re-prompting; the display functions | Lee Guan Feng |
-| `ai_manager.py` | The Groq call, JSON parsing, schema validation and error handling | Pair A |
-| `logic_manager.py` | The business rules: priority, score, checklist and the decision table | Pair B |
-| `data_manager.py` | Save / load / query of reports, including missing/corrupt file handling | Pair C |
-| Report filtering | Use `query()` to filter saved reports by priority in the menu | Pair C |
-| Report status updates | Let users mark a report as handled / ignored | TBD |
+| Validated collection and email/MIME input | Jeremy Goh | PRs 19, 23, 39 |
+| Result and saved-record displays | Bryan Lee | PR 22 |
+| Logic and data development, agreed scoring and local-only storage | Xavier Heng / Bryan Ow | PRs 20, 64, 69; original commits identify individual work |
+| AI validation and integration, real-email reliability | My AI/integration work with existing team parser contributions retained | PRs 25, 59, 68 |
+| Safe optional configuration startup | My integration work | PR 65 |
+| Docker directory persistence and email mounts | My deployment fix with Guan Feng / Bryan Ow co-authorship | PR 67 |
+| Malformed-history recovery after local-only integration | My regression fix | PR 72 |
+| Required literal manager files and submission reconciliation | My integration/compliance work | Issue 71; code 0d6834e |
 
-## How to add your credit
+I keep the original commits and PRs as the authority for authorship. Refactoring
+or testing another layer does not transfer its original contribution. Current
+scope and unresolved delivery gates are in ROADMAP.md and submission/.
 
-1. Do your work on a branch and open a pull request (see the README).
-2. When it is merged, move the feature into the "Done" table with your name
-   and the PR number.
-3. Keep descriptions short - one line is enough.
+

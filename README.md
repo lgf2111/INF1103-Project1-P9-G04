@@ -4,7 +4,7 @@
 
 PhishReport is a procedural Python CLI for checking suspicious messages. It sends each new message to the Groq API, validates the AI findings, and applies rules using those findings and the user's reported actions. It displays a priority, a rule-based score and a response checklist, then saves the assessment as JSON.
 
-This is the Phase 1 coursework application. The current code provides a starter assessment flow; planned improvements and team decisions are in [ROADMAP.md](ROADMAP.md). A result with no clear indicators does not guarantee that a message is safe.
+This is the Phase 1 coursework application. The current code provides an integrated assessment flow; planned improvements and team decisions are in [ROADMAP.md](ROADMAP.md). A result with no clear indicators does not guarantee that a message is safe.
 
 ## Project layout
 
@@ -198,3 +198,12 @@ without a persistent directory mount still loses container-local reports.
 ## Contributing
 
 See the [proposed team workflow](ROADMAP.md#team-standards-and-task-instructions) for task issues, branch names, checks and pull request reviews.
+
+## Submission materials
+
+I submit from `main`. My [engineering report](submission/Engineering_Report.pdf)
+explains the implemented pipeline, exception handling and verification.
+[Project Initial Details](submission/Project_Initial_Details.pdf) records the
+current scope; instructor approval remains unverified.
+[Release checks and demo steps](submission/Release_Checklist.md) list the team
+confirmations still needed before delivery.
