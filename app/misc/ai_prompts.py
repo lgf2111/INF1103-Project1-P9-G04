@@ -1,7 +1,5 @@
-# ai_manager/prompts.py
-# Prompt text for the AI layer, kept out of ai_manager/__init__.py to keep that
-# module shorter. These are plain Python string constants imported within the
-# ai_manager package - no file is read at runtime.
+# ai_prompts.py
+# Plain prompt constants used by ai_manager.py; no runtime file reading.
 # OWNER: Pair A (Akari-light and Lee Guan Feng).
 
 # The fixed instruction block of the assessment prompt (everything except the

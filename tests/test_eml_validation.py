@@ -102,6 +102,6 @@ def test_fifo_never_blocks_before_file_validation(tmp_path, replace_after_check)
         + "try:\n    io_manager.read_eml_details(" + repr(str(fifo)) + ")\n"
         + "except ValueError:\n    pass\nelse:\n    raise AssertionError('FIFO accepted')\n"
     )
-    env = dict(os.environ, PYTHONPATH=str(Path(io_manager.__file__).resolve().parent.parent))
+    env = dict(os.environ, PYTHONPATH=str(Path(io_manager.__file__).resolve().parent))
     subprocess.run([sys.executable, "-c", script], env=env, timeout=5, check=True,
                    capture_output=True)
