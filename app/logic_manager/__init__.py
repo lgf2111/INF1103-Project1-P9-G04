@@ -27,8 +27,14 @@ def score(record):
         return 60
     if findings["suspicious"]:
         return 45
-    if findings["insufficient_context"]:
+    # A credential request or reported interaction warrants caution even when
+    # the AI did not independently classify the message as suspicious.
+    if findings["credential_request"]:
+        return 40
+    if record["clicked"] or record["downloaded"]:
         return 35
+    if findings["insufficient_context"]:
+        return 20
     return 10
 
 

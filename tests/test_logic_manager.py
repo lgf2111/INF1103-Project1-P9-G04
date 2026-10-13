@@ -39,10 +39,13 @@ def _assessment_record(**changes):
     [
         pytest.param({}, 10, "LOW", id="routine-message"),
         pytest.param(
-            {"findings": {"credential_request": True}}, 10, "LOW", id="credential-request-alone"
+            {"findings": {"credential_request": True}},
+            40,
+            "MEDIUM",
+            id="credential-request-alone",
         ),
         pytest.param(
-            {"findings": {"insufficient_context": True}}, 35, "MEDIUM", id="insufficient-context"
+            {"findings": {"insufficient_context": True}}, 20, "LOW", id="insufficient-context"
         ),
         pytest.param({"findings": {"suspicious": True}}, 45, "MEDIUM", id="suspicious"),
         pytest.param(
@@ -117,9 +120,9 @@ def _assessment_record(**changes):
         ),
         pytest.param(
             {"clicked": True, "downloaded": True},
-            10,
-            "LOW",
-            id="interaction-alone-does-not-establish-suspicion",
+            35,
+            "MEDIUM",
+            id="interaction-alone-requires-caution",
         ),
     ],
 )
@@ -263,7 +266,8 @@ def test_disclosure_still_requires_an_ai_assessment(operation):
     "changes, expected_score, expected_priority",
     [
         ({}, 10, "LOW"),
-        ({"findings": {"insufficient_context": True}}, 35, "MEDIUM"),
+        ({"findings": {"insufficient_context": True}}, 20, "LOW"),
+        ({"findings": {"credential_request": True}}, 40, "MEDIUM"),
         ({"findings": {"suspicious": True}}, 45, "MEDIUM"),
         ({"findings": {"suspicious": True, "credential_request": True}}, 60, "MEDIUM"),
         ({"clicked": True, "findings": {"suspicious": True}}, 80, "HIGH"),
