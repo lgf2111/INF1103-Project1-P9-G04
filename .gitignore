@@ -26,6 +26,7 @@ logs/
 
 # Local user settings (e.g. saved email folder path)
 .phishreport_config.json
+.phishreport-data/
 
 # Operating-system metadata
 .DS_Store
