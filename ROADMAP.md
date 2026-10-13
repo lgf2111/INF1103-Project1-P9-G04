@@ -13,7 +13,7 @@ Professor requirements govern compliance. Optional team features are separate.
 | Logic | Agreed eight-rule policy and 35/70 thresholds implemented | PR 64; hardcoded-AI offline tests include the two-AI-field rule |
 | Data | Local-only version-2 JSON, atomic append, supported-history validation and recovery | PR 69 plus merged recovery PR 72; no shared database required |
 | Docker | Persistent directory, read-only /emails, host upload port, Git Bash paths and LF | PR 67; actual import/save/restart checked here; all-member evidence still required |
-| Required filenames | Four actual app/*_manager.py files with physical function definitions | Issue 71; structural and full runtime tests pass on code 0d6834e |
+| Required filenames | Four actual app/*_manager.py files with physical function definitions | Issue 71; structural and full runtime tests pass on code f8dbf4e |
 | Report and scope | Current engineering report and Initial Details PDF/source in submission/ | Report five pages, diagram/matrix page 2; approval remains unverified |
 | Delivery/demo | Main designated; checklist and rehearsal steps prepared | Team confirmations, rehearsal and course receipt still needed |
 
@@ -22,7 +22,7 @@ Professor requirements govern compliance. Optional team features are separate.
 The pipeline is I/O -> AI -> logic -> data, coordinated by main.py. All direct
 terminal calls live in io_manager.py. AI contains transport/validation; logic
 contains domain rules; data contains local JSON operations. Required functions
-are physically defined in the four named files. Distinct misc helpers do not
+are physically defined in the four named files. Explicitly named app-level helpers do not
 replace those managers. No authored classes or dynamic class constructors are allowed.
 
 New storage has exactly schema_version:2, channel, message and result. Result
@@ -85,7 +85,7 @@ I tick a gate only after its final-main evidence is recorded. The detailed
 - [ ] **G1 - Approved scope:** current statement exists; instructor sign-off unverified.
 - [ ] **G2 - Procedural application:** physical files/functions, I/O, AI and validation
   checked locally; final-main verification and AI-scope clarification remain.
-- [ ] **G3 - Automated tests:** 683 offline Docker tests passed on code 0d6834e;
+- [ ] **G3 - Automated tests:** 694 offline Docker tests passed on code f8dbf4e;
   rerun/confirm on the integrated submission commit.
 - [ ] **G4 - Engineering report:** current five-page PDF prepared; verify tracking on main.
 - [ ] **G5 - Git repository:** focused history and PRs exist; access, clones, Initial

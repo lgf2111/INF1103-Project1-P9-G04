@@ -53,5 +53,5 @@ regressions for transport/write failures rather than altering production history
 6. Each member explains their own contribution and one integration boundary.
 
 The engineering report's diagram and exception matrix share page 2. Our latest
-local evidence is 683 offline Docker tests and 672 Windows tests with 11 POSIX
+local evidence is 694 offline Docker tests and 683 Windows tests with 11 POSIX
 skips; this does not replace another member's final-machine evidence.

@@ -15,7 +15,28 @@ This is the Phase 1 coursework application. The current code provides an integra
 | `app/logic_manager.py` | Apply assessment rules, scoring and routing. |
 | `app/data_manager.py` | Save, load and query JSON reports. |
 | `app/main.py` | Connect the managers and run the menu. |
+| `app/ai_prompts.py` | Fixed instructions used by the AI manager. |
+| `app/email_html.py` | Convert HTML to inert text without fetching resources. |
+| `app/local_settings.py` | Read and write machine-specific JSON preferences. |
+| `app/logging_setup.py` | Configure safe rotating diagnostic logs. |
+| `app/web_upload.py` | Receive one bounded browser upload; I/O handles assessment input. |
 | `tests/` | Run offline tests with sample AI responses. |
+
+## My coding practices
+
+I follow Week 4, slides 32-42, within the Phase 1 manager requirements.
+The four named manager files contain their required functions. Supporting
+modules have descriptive names directly under app/; they do not replace managers.
+
+| Lecture principle | Application in this project |
+| --- | --- |
+| Single responsibility | I keep input/display, API validation, scoring and report persistence in their respective managers. |
+| DRY | Manual, folder and browser routes reuse one record/exposure builder and one email parser. |
+| KISS | I use functions and dictionaries, with explicit helper names and no extra framework. |
+| Input / process / output | main.py coordinates validated input, AI, domain rules, JSON save and display. |
+| Modular programming | I keep focused functions, typed public contracts, tested commit blocks and CI. |
+| Validation | I validate messages, MIME, AI schema/source, stored records, saved folder paths and logging levels before use. |
+| Meaningful naming | local_settings, get_setting and save_setting describe their purpose without a generic misc package. |
 
 ## Set up
 
