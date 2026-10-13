@@ -46,14 +46,10 @@ def get_valid_choice(prompt, valid_choices, error_message):
 
     return choice
 
-def collect_input(eml_file=False):
-    if eml_file:
-        channel = "email"
-        sender, message = get_eml_input()
-    else:
-        channel = get_channel()
-        sender = get_sender()
-        message = get_message()
+def collect_input():
+    channel = get_channel()
+    sender = get_sender()
+    message = get_message()
 
     has_link, link = get_link_information()
     has_file, file_name = get_file_information()
@@ -96,9 +92,9 @@ def build_record_from_message(message, channel="email", sender=None):
 def collect_input_from_folder():
     """Build a record from a .eml chosen out of the saved folder.
 
-    Returns None if the user cancels or no file is available. Mirrors
-    collect_input(eml_file=True): email channel, sender/message from the file,
-    then the usual link/file/action questions.
+    Returns None if the user cancels or no file is available. Uses the email
+    channel and sender/message from the file, then asks about links, files
+    and reported actions.
     """
     loaded = get_eml_from_folder()
     if loaded is None:
@@ -344,32 +340,6 @@ def decode_eml_part(body_part):
         raise ValueError("Email message cannot be blank.")
 
     return body.strip()
-
-def get_eml_input():
-    while True:
-        file_path = input("Enter .eml file path: ").strip().strip('"')
-
-        if not file_path:
-            print("File path cannot be blank.")
-            continue
-
-        if Path(file_path).suffix.lower() != ".eml":
-            print("Invalid file type. Only .eml files are supported.")
-            continue
-
-        try:
-            sender, message = read_eml_details(file_path)
-
-        except (OSError, ValueError):
-            print("Unable to read the email file. Please try again.")
-            print("Use a valid plain-text email; HTML bodies are not supported. "
-                  "Attachments are not assessed.")
-            continue
-
-        print("Email loaded successfully.")
-
-        return sender, message
-
 
 # --- Email folder picker (added feature) ---------------------------------
 # Lets the user pick a .eml file from a saved folder instead of typing a path.
