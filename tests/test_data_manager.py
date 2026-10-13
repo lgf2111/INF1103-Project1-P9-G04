@@ -453,7 +453,9 @@ def test_legacy_field_corruption_recovers_without_replacing_file(
 
 
 @pytest.mark.parametrize("legacy", [
-    {}, {"message": (Path(__file__).resolve().parents[1] / "emails" / "sample-1.eml").read_text(encoding="utf-8")},
+    {}, {"message": (
+        Path(__file__).resolve().parents[1] / "emails" / "sample-1.eml"
+    ).read_text(encoding="utf-8")},
     {"channel": None, "message": None, "sender": None, "result": None},
     {"score": 20.5, "priority": "LOW", "details": {"emails": []}},
     {"result": {"score": 45, "priority": "MEDIUM", "reasons": [], "checklist": []}},
