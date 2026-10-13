@@ -81,7 +81,13 @@ def check_message(record=None):
         io_manager.show_message("Sorry, the check failed: " + str(error))
         return
 
-    report = {**assessed_record, "schema_version": 1, "result": result}
+    # Retain the original message and assessment in the agreed version-2 format.
+    report = {
+        "schema_version": 2,
+        "channel": record["channel"],
+        "message": record["message"],
+        "result": result,
+    }
     try:
         data_manager.save(report)
     except (OSError, ValueError):
