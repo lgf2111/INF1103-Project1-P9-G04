@@ -7,14 +7,14 @@ Professor requirements govern compliance. Successful CI and closed issues are no
 
 | Gate | Status | Evidence and remaining acceptance |
 | --- | --- | --- |
-| G1 - Approved scope | Missing | Local statement exists; no approval or Initial Details receipt supplied. Obtain actual approval and receipt. |
+| G1 - Approved scope | Verified (team confirmation) | The team confirms topic approval and Initial Details were finalized before coding. No new approval is inferred for material revisions; use the approved statement version for delivery. |
 | G2 - Procedural application | Partial | Physical manager functions, procedural/I/O checks and validated new-assessment pipeline pass. Instructor API-scope interpretation for history reads remains unresolved. |
-| G3 - Automated tests | Verified | Existing logic script meets Framework 5.3. One application script contains showcase and preserved regressions. 740 tests pass in network-disabled Docker, including 72 offline logic tests. Record final-main evidence in the local audit. |
-| G4 - Engineering report | Partial | Local five-page PDF; diagram/matrix together on page 2. Separate delivery conflicts with supplied repository wording until accepted. Statement approval is absent. |
-| G5 - Git repository | Partial | Granular contributions and focused PRs retained. Issue #78/PR #79 has successful exact-head CI; teammate review was explicitly waived for this audit session only. Invitations, lab access and member clones remain missing. |
+| G3 - Automated tests | Verified | Existing 72-case logic script meets Framework 5.3. Application script contains 12 showcase cases and 556 further regressions after removing redundant checks. 640 tests pass in network-disabled Docker. Exact final-main evidence is in the local audit. |
+| G4 - Engineering report | Verified (technical content) | Local five-page PDF; diagram/matrix together on page 2. Report and statement are delivered separately through the confirmed course route. Final upload is a delivery action, not an additional route-approval question. |
+| G5 - Git repository | Partial | Granular contributions and focused PRs retained. Issue #78/PR #79 fixed audit defects; issue #80 covers test simplification and documentation. Teammate review explicitly waived for this session only. Invitations, lab access and member clones need confirmation, not presumed absent. |
 | G6 - Docker delivery | Partial | Directory persistence, read-only email mount and container recreation checked here. Every member must verify final main; no evidence supplied. |
 | G7 - Integrated application | Partial | Manual/folder/browser, validated AI, policy, recovery and persistence checked. Fresh-model repeatability interpretation remains unresolved; final-main evidence belongs in the local audit. |
-| G8 - Demonstration | Missing team evidence | Automated application showcase and local rehearsal sequence prepared; no completed team rehearsal/individual explanation evidence supplied. |
+| G8 - Demonstration | Partial | Explicit 12-case automated showcase and rehearsal sequence prepared. Team rehearsal/individual explanations remain unverified. The later course demonstration is distinct from repository submission. |
 
 ## Architecture and storage
 
@@ -64,10 +64,15 @@ live mailboxes and sender authentication are outside implemented scope.
 
 Only two runnable test scripts remain: `tests/test_logic_manager.py` and
 `tests/test_application.py`. Meaningful regressions were consolidated by area,
-not discarded as debugging material. The application script's `-k demo` selection
+not discarded as debugging material. The application script's `-m demo` selection
 uses real public emails with mocked external AI HTTP, actual local HTTP upload,
 exposure, uncertainty, failures and process reload. It does not replace a live
 provider demonstration or team rehearsal. Exact commands are in README.
+
+The test review removed 30 redundant functions and unnecessary parameter cross
+products (100 collected cases); distinct failure boundaries remain covered. The
+logic script is unchanged. `conftest.py` supplies shared imports and registers the
+explicit marker; it is test configuration, not a third runnable testing script.
 
 Three pinned real emails in `tests/fixtures/` are necessary offline dependencies;
 original bytes and provenance are retained. Unnecessary demo copies and the obsolete
@@ -85,19 +90,24 @@ tracked-Python class checks, pytest, Docker build and network-disabled Docker te
 
 ## Remaining ordered work
 
-1. Obtain topic approval and Initial Details receipt. Confirm acceptance of separate
-   local report/statement delivery versus the supplied instruction listing both
-   with the repository. Keep them private until explicitly instructed otherwise.
-2. Clarify Framework p2 sections 2.2/2.4 and p3 C2/C4: does history retrieval require
+1. Clarify Framework p2 sections 2.2/2.4 and p3 C2/C4: does history retrieval require
    a new API call, and what sameness is expected from fresh AI assessments?
-   Temperature zero is not proof; no caching exemption is assumed.
-3. Freeze final main, verify its exact commit/CI and rerun affected checks if it changes.
+   [PR #25](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/25) leaves
+   history scope unchecked. [Issue #32](https://github.com/lgf2111/INF1103-Project1-P9-G04/issues/32)
+   and [PR #37](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/37) implement
+   temperature zero but contain no instructor interpretation. Both questions remain
+   approval blockers pending team/instructor confirmation; no exemption is assumed.
+2. Freeze final main, verify its exact commit/CI and rerun affected checks if it changes.
    The audit-session review exception does not waive future teammate reviews.
-4. Confirm invitations/lab-in-charge access and member clones. Every member builds,
+3. Confirm invitations/lab-in-charge access and member clones. Every member builds,
    tests and runs the same final main in Docker, recording save/restart evidence.
-5. Rehearse the submitted version and each member's contribution explanation.
-6. Submit all required materials through the accepted course route before the
-   deadline; retain receipts and the submitted commit identity.
+4. Complete the reviewed local temporary-file cleanup in the private action list.
+   No new ignore patterns replace deletion. Current documents and personal data stay.
+5. Deliver the repository and separate report/approved statement through the confirmed
+   course route before the deadline; retain receipts and the submitted commit identity.
+   Topic approval and prior Initial Details completion are already team-confirmed.
+6. Rehearse the submitted version and each member's contribution explanation for
+   the later demonstration. Do not label a prepared sequence a completed rehearsal.
 
 FEATURES.md and original Git/PR records retain contributions. The complete matrix,
 verification evidence and private delivery checks are in the local audit. Optional
