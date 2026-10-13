@@ -2429,6 +2429,17 @@ def test_docker_helper_helper_has_unix_line_endings():
     assert b"\r\n" not in (Path(__file__).resolve().parents[1] / "docker.sh").read_bytes()
 
 
+@pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
+def test_docker_helper_creates_default_import_folder_on_clean_checkout(docker_helper_project):
+    folder, _, _ = docker_helper_project
+    shutil.rmtree(folder / "emails")  # This fixture owns an isolated temporary project.
+    result, calls = docker_helper_launch(docker_helper_project)
+    assert result.returncode == 0, result.stderr
+    assert (folder / "emails").is_dir()
+    assert list((folder / "emails").iterdir()) == []
+    assert str(folder / "emails") + ":/emails:ro" in calls[-1]
+
+
 # ============================================================================
 # Eml Validation
 # ============================================================================

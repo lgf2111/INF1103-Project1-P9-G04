@@ -227,8 +227,9 @@ I can also use an absolute folder path, such as `/c/Users/me/Downloads/emails`
 in Git Bash or `/home/me/emails` on Linux. This selects saved files; it does not
 connect to a mailbox or add support for otherwise unsupported MIME formats.
 
-The default `emails/` directory contains instructions only. Put exported messages
-there locally or select another folder; personal imports are ignored by Git.
+The Docker helper creates an empty local `emails/` directory when the default
+folder is needed. Put exported messages there or select another folder; personal
+imports are excluded from Git and the Docker image.
 For a real-example demonstration, use
 `PHISHREPORT_EMAIL_DIR="tests/fixtures" ./docker.sh run` in Bash. These three public
 fixtures are necessary offline regression dependencies; their source and purpose

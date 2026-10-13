@@ -73,6 +73,10 @@ elif [ "$command" = "run" ]; then
         exit 1
     fi
 
+    # The default import folder is local runtime state, not a tracked placeholder.
+    if [ -z "${PHISHREPORT_EMAIL_DIR:-}" ]; then
+        mkdir -p "$PROJECT_DIR/emails"
+    fi
     EMAIL_DIR="${PHISHREPORT_EMAIL_DIR:-$PROJECT_DIR/emails}"
     case "$EMAIL_DIR" in
         /*|[A-Za-z]:[\\/]*) ;;
