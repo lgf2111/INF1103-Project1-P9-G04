@@ -137,6 +137,19 @@ corrupt history. After migration I use `.phishreport-data/reports.json` for my
 Docker history; running host Python from the repository root still uses the
 separate root `reports.json`.
 
+### Local history and recovery
+
+I save new assessments locally as schema version 2: the channel, original
+message and explained result. No shared database is needed. Supported older
+records remain readable without manufacturing missing fields.
+
+Missing history starts empty. Unreadable, malformed JSON or invalid stored
+field types are logged and handled without crashing the menu. The original
+file is preserved; saving refuses to overwrite unreadable or corrupt history.
+I back up and inspect that file before correcting it, rather than resetting it
+silently. An assessment whose save fails is displayed with a save warning;
+it is different from an AI failure, which produces no completed assessment.
+
 ### Email folder inside Docker
 
 I select **2. Import an email** and enter **`/emails`** when asked for the email

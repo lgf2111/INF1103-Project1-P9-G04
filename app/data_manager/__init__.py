@@ -100,6 +100,49 @@ def _validate_v2(record):
     return record
 
 
+def _validate_legacy(record):
+    """Validate present historical fields without inventing missing information."""
+    for key in ("channel", "sender", "message", "link", "file_name", "submitted_category"):
+        value = record.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("Invalid legacy text field: " + key)
+    for key in ("has_link", "has_file", "clicked", "downloaded"):
+        value = record.get(key)
+        if value is not None and type(value) is not bool:
+            raise ValueError("Invalid legacy action field: " + key)
+
+    result = record.get("result")
+    if result is not None and not isinstance(result, dict):
+        raise ValueError("Invalid legacy assessment.")
+
+    # Both historical outcome locations reach the public display functions.
+    for outcome in (record, result if result is not None else {}):
+        priority = outcome.get("priority")
+        if priority is not None and not isinstance(priority, str):
+            raise ValueError("Invalid legacy priority.")
+        value = outcome.get("score")
+        if value is not None and type(value) not in (int, float):
+            raise ValueError("Invalid legacy score.")
+        for key in ("reasons", "checklist"):
+            if key in outcome and (
+                not isinstance(outcome[key], list)
+                or any(not isinstance(item, str) for item in outcome[key])
+            ):
+                raise ValueError("Invalid legacy assessment list: " + key)
+
+    if "details" in record:
+        details = record["details"]
+        if not isinstance(details, dict):
+            raise ValueError("Invalid legacy details.")
+        for key in ("emails", "phone_numbers", "ip_addresses"):
+            if key in details and (
+                not isinstance(details[key], list)
+                or any(not isinstance(item, str) for item in details[key])
+            ):
+                raise ValueError("Invalid legacy extraction list: " + key)
+    return record
+
+
 def _validate_report(record):
     """Validate stored structure without inventing missing legacy data or scoring."""
     if not isinstance(record, dict):
@@ -107,7 +150,7 @@ def _validate_report(record):
     if "schema_version" not in record:
         if set(record) == REPORT_FIELDS:
             return _validate_summary(record)
-        return record  # Older local records retain their original fields.
+        return _validate_legacy(record)
     if type(record["schema_version"]) is not int or record["schema_version"] not in (1, 2):
         raise ValueError("Unsupported report version.")
     if record["schema_version"] == 2:

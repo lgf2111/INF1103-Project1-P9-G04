@@ -3,6 +3,7 @@
 import json
 import logging
 from copy import deepcopy
+from pathlib import Path
 from unittest.mock import Mock
 
 import data_manager
@@ -411,3 +412,61 @@ def test_default_load_handles_read_error_without_exposing_exception(monkeypatch,
     with caplog.at_level(logging.WARNING, logger="data_manager"):
         assert data_manager.load() == []
     assert "PRIVATE_PATH" not in caplog.text
+
+
+@pytest.mark.parametrize("changes", [
+    {"priority": 7}, {"message": []}, {"result": [1]}, {"channel": []},
+    {"clicked": "yes"}, {"downloaded": 1}, {"sender": {}},
+    {"link": []}, {"file_name": 3}, {"submitted_category": []},
+    {"score": True}, {"result": {"priority": 7}},
+    {"result": {"score": "90"}}, {"result": {"reasons": [1]}},
+    {"result": {"checklist": None}}, {"details": []},
+    {"details": {"emails": "bad"}}, {"details": {"phone_numbers": [1]}},
+    {"details": {"ip_addresses": None}},
+])
+def test_legacy_field_corruption_recovers_without_replacing_file(
+    storage, monkeypatch, capsys, caplog, changes
+):
+    """Keep malformed historical fields away from display and strict writes."""
+    source = Path(__file__).resolve().parents[1] / "emails" / "sample-1.eml"
+    legacy = {"message": source.read_text(encoding="utf-8"), **changes}
+    storage.write_text(json.dumps([legacy]), encoding="utf-8")
+    before = storage.read_bytes()
+
+    with caplog.at_level(logging.WARNING, logger="data_manager"):
+        assert data_manager.load() == []
+    assert "Could not read local report history" in caplog.text
+    with pytest.raises(ValueError):
+        data_manager.load(strict=True)
+    with pytest.raises(ValueError):
+        data_manager.save(_report())
+
+    # Startup, explicit history viewing and normal exit must all remain usable.
+    monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
+    choices = iter(["4", "5"])
+    monkeypatch.setattr(main.io_manager, "main_menu", lambda: next(choices))
+    main.main()
+    output = capsys.readouterr().out
+    assert "Could not load local report history" in output
+    assert "Bye!" in output
+    assert storage.read_bytes() == before
+
+
+@pytest.mark.parametrize("legacy", [
+    {}, {"message": (
+        Path(__file__).resolve().parents[1] / "emails" / "sample-1.eml"
+    ).read_text(encoding="utf-8")},
+    {"channel": None, "message": None, "sender": None, "result": None},
+    {"score": 20.5, "priority": "LOW", "details": {"emails": []}},
+    {"result": {"score": 45, "priority": "MEDIUM", "reasons": [], "checklist": []}},
+])
+def test_supported_partial_legacy_fields_remain_readable(storage, capsys, legacy):
+    """Preserve accepted older shapes without inventing absent findings or actions."""
+    storage.write_text(json.dumps([legacy]), encoding="utf-8")
+    before = storage.read_bytes()
+    records = data_manager.load(strict=True)
+    main.io_manager.display_list(records)
+    main.io_manager.display_record(records[0])
+    assert records == [legacy]
+    assert "Saved reports" in capsys.readouterr().out
+    assert storage.read_bytes() == before
