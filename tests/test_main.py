@@ -1,4 +1,4 @@
-# Offline integration tests: real AI/logic/JSON; fictional input, mocked HTTP and database.
+# Offline integration tests: real AI/logic/JSON; fictional input and mocked HTTP.
 import base64
 import json
 import logging
@@ -29,11 +29,6 @@ def app_boundary(tmp_path, monkeypatch):
     monkeypatch.setattr(ai_manager.urllib.request, "urlopen", transport)
     monkeypatch.setattr(main.io_manager, "show_message", Mock())
     monkeypatch.setattr(main.io_manager, "display_result", Mock())
-    monkeypatch.setattr(data_manager, "fetch", Mock(return_value=[]))
-    monkeypatch.setattr(data_manager, "upload", Mock(return_value=1))
-    monkeypatch.setattr(data_manager.psycopg, "connect", Mock(
-        side_effect=AssertionError("Offline tests must not connect to PostgreSQL"),
-    ))
     # Reset the central logging so each test configures a fresh file logger in
     # its own tmp_path, and restore the root logger afterwards.
     main.logging_setup._configured = False
@@ -124,7 +119,6 @@ def test_eml_retry_and_decoded_source_reach_real_pipeline(
     if invented_contact:
         assert records == []
         main.io_manager.display_result.assert_not_called()
-        data_manager.upload.assert_not_called()
     else:
         assert len(records) == 1
         assert records[0]["message"] == "Subject: Fictional request\n\n" + body
@@ -183,7 +177,8 @@ def test_successful_assessment_reaches_real_logic_and_storage(app_boundary, monk
     main.check_message()
 
     saved = data_manager.load()
-    assert saved == [{**record, "schema_version": 1, "ai": _findings(),
+    assert saved == [{"schema_version": 2, "channel": record["channel"],
+                      "message": record["message"],
                       "result": main.io_manager.display_result.call_args.args[0]}]
     assert record == original
     result = main.io_manager.display_result.call_args.args[0]
@@ -191,7 +186,6 @@ def test_successful_assessment_reaches_real_logic_and_storage(app_boundary, monk
     assert result["checklist"]
     main.io_manager.display_result.assert_called_once()
     main.io_manager.show_message.assert_not_called()
-    data_manager.upload.assert_called_once_with(saved)
     assert app_boundary.call_count == 1
 
 
@@ -318,7 +312,10 @@ def test_combined_caller_passes_validated_findings_to_logic_once(app_boundary, m
     evaluate.assert_called_once_with({**record, "ai": data})
     assert "ai" not in record
     save.assert_called_once()
-    assert save.call_args.args[0]["ai"]["details"] == data["details"]
+    assert save.call_args.args[0] == {
+        "schema_version": 2, "channel": record["channel"],
+        "message": record["message"], "result": result,
+    }
     main.io_manager.display_result.assert_called_once_with(result)
     app_boundary.assert_called_once()
 
@@ -363,10 +360,11 @@ def test_recovered_timeout_saves_and_displays_only_one_assessment(app_boundary, 
     assert app_boundary.call_count == 2
     saved = data_manager.load()
     assert len(saved) == 1
-    assert saved[0]["ai"] == _findings()
+    assert saved[0] == {"schema_version": 2, "channel": record["channel"],
+                        "message": record["message"],
+                        "result": main.io_manager.display_result.call_args.args[0]}
     main.io_manager.display_result.assert_called_once()
     main.io_manager.show_message.assert_not_called()
-    data_manager.upload.assert_called_once_with(saved)
 
 
 def test_timeout_fallback_reaches_real_logic_and_saves_once(app_boundary, monkeypatch):
@@ -380,10 +378,11 @@ def test_timeout_fallback_reaches_real_logic_and_saves_once(app_boundary, monkey
     assert app_boundary.call_count == 2
     assert json.loads(app_boundary.call_args.args[0].data)["model"] == "fictional/faster"
     saved = data_manager.load()
-    assert len(saved) == 1 and saved[0]["ai"] == _findings()
+    assert saved == [{"schema_version": 2, "channel": _record()["channel"],
+                      "message": _record()["message"],
+                      "result": main.io_manager.display_result.call_args.args[0]}]
     main.io_manager.display_result.assert_called_once()
     main.io_manager.show_message.assert_not_called()
-    data_manager.upload.assert_called_once_with(saved)
 
 
 @pytest.mark.parametrize("choice, handler_name", [("3", "upload_file"), ("4", "view_reports")])

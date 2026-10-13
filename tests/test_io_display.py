@@ -105,8 +105,6 @@ def test_view_saved_reports_displays_full_details(monkeypatch, capsys):
         "result": {"priority": "HIGH", "score": 50}
     }
 
-    monkeypatch.setattr(main.data_manager, "fetch",
-                       lambda: (_ for _ in ()).throw(RuntimeError("PostgreSQL unavailable")))
     monkeypatch.setattr(main.data_manager, "load", lambda **kwargs: [record])
 
     main.view_reports()
@@ -157,6 +155,8 @@ def test_check_new_message_displays_full_record(monkeypatch, capsys):
     assert len(saved) == 1
     assert saved[0]["channel"] == "sms"
     assert saved[0]["message"] == message
-    assert saved[0]["ai"]["details"] == details
+    assert set(saved[0]) == {"schema_version", "channel", "message", "result"}
+    assert saved[0]["schema_version"] == 2
+    assert set(saved[0]["result"]) == {"score", "priority", "reasons", "checklist"}
 
     assert len(api_calls) == 1
