@@ -317,7 +317,7 @@ def test_read_eml_details_rejects_empty_message(tmp_path):
         encoding="utf-8",
     )
 
-    with pytest.raises(ValueError, match="cannot be blank"):
+    with pytest.raises(ValueError, match="No readable email message"):
         io_manager.read_eml_details(empty_email)
 
 
