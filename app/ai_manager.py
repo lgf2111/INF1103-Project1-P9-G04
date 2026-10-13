@@ -13,8 +13,8 @@ import urllib.error
 import urllib.request
 from email.utils import parsedate_to_datetime
 
-from misc import logging_setup
-from misc.ai_prompts import EXTRACTION_INSTRUCTIONS, FINDINGS_INSTRUCTIONS
+import logging_setup
+from ai_prompts import EXTRACTION_INSTRUCTIONS, FINDINGS_INSTRUCTIONS
 
 # Failure logging
 

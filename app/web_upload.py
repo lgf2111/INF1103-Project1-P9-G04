@@ -1,4 +1,4 @@
-# misc/web_upload.py
+# web_upload.py
 # EXPERIMENTAL: minimal, lazy, one-shot file upload using only the standard
 # library (http.server) - no extra dependencies, no classes defined (C1 safe).
 #

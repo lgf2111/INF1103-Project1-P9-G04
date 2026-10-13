@@ -83,7 +83,7 @@ def _record():
 def test_browser_html_email_uses_canonical_source_before_logic_and_save(
     app_boundary, monkeypatch, invented_contact, disclosure, expected_score,
 ):
-    from misc import web_upload
+    import web_upload
 
     raw = (b"From: fictional@example.test\r\nSubject: Fictional security notice\r\n"
            b"Content-Type: text/html; charset=utf-8\r\n\r\n"
@@ -120,7 +120,7 @@ def test_browser_html_email_uses_canonical_source_before_logic_and_save(
     b"Content-Type: text/html\r\n\r\n<script>No message</script>",
 ])
 def test_invalid_browser_email_stops_before_ai_or_save(app_boundary, monkeypatch, content):
-    from misc import web_upload
+    import web_upload
 
     monkeypatch.setattr(web_upload, "start_and_wait_for_upload", Mock(return_value={
         "filename":"fictional.eml", "content":content,
@@ -132,7 +132,7 @@ def test_invalid_browser_email_stops_before_ai_or_save(app_boundary, monkeypatch
 
 
 def test_real_browser_http_to_html_ai_logic_and_json(app_boundary, monkeypatch):
-    from misc import web_upload
+    import web_upload
 
     ready = threading.Event()
     servers, errors = [], []

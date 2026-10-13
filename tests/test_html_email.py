@@ -1,7 +1,7 @@
 """Fictional MIME/HTML fixtures: preserve source evidence without executing it."""
 import io_manager
 import pytest
-from misc.email_html import html_to_text
+from email_html import html_to_text
 
 
 def _email(html, headers=b""):

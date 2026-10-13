@@ -5,7 +5,7 @@ import json
 import os
 import tempfile
 
-from misc import logging_setup
+import logging_setup
 
 logger = logging_setup.get_logger(__name__)
 

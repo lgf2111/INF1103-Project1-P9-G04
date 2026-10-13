@@ -19,7 +19,8 @@ from email.header import decode_header
 from email.parser import BytesParser
 from pathlib import Path
 
-from misc.email_html import html_to_text
+import local_settings
+from email_html import html_to_text
 
 MAX_EML_BYTES = 2 * 1024 * 1024
 MAX_MIME_PARTS = 100
@@ -390,9 +391,7 @@ EML_PAGE_SIZE = 5               # how many .eml files to show at a time
 
 def get_eml_folder():
     """Return the saved email folder, asking for it the first time and saving it."""
-    from misc import config
-
-    folder = config.get(EML_FOLDER_KEY)
+    folder = local_settings.get_setting(EML_FOLDER_KEY)
     if folder and Path(folder).is_dir():
         return folder
 
@@ -408,7 +407,7 @@ def get_eml_folder():
         if not Path(entered).is_dir():
             print("That folder does not exist. Please enter a valid folder path.")
             continue
-        config.set(EML_FOLDER_KEY, entered)
+        local_settings.save_setting(EML_FOLDER_KEY, entered)
         print("Saved. You won't be asked again (option available to change later).")
         return entered
 

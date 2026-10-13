@@ -1,4 +1,4 @@
-# misc/config.py
+# local_settings.py
 # Tiny local settings store (JSON). Used for machine-specific preferences like
 # the user's email folder, so we only ask for them once. OWNER: Lee Guan Feng.
 #
@@ -7,37 +7,37 @@
 import json
 import os
 
-from misc import logging_setup
+import logging_setup
 
 logger = logging_setup.get_logger(__name__)
 
 FILE = ".phishreport_config.json"
 
 
-def load():
+def load_settings() -> dict:
     """Return the saved settings as a dict, or {} if none/unreadable."""
     if not os.path.exists(FILE):
         return {}
     try:
-        with open(FILE, encoding="utf-8") as f:
-            data = json.load(f)
+        with open(FILE, encoding="utf-8") as settings_file:
+            data = json.load(settings_file)
         return data if isinstance(data, dict) else {}
     except (OSError, ValueError):
         logging_setup.log_failure(logger, "Could not read local config; using defaults.")
         return {}
 
 
-def get(key, default=None):
+def get_setting(key: str, default=None):
     """Return a single saved setting."""
-    return load().get(key, default)
+    return load_settings().get(key, default)
 
 
-def set(key, value):
+def save_setting(key: str, value) -> None:
     """Save a single setting, keeping the other saved values intact."""
-    data = load()
+    data = load_settings()
     data[key] = value
     try:
-        with open(FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2)
+        with open(FILE, "w", encoding="utf-8") as settings_file:
+            json.dump(data, settings_file, indent=2)
     except OSError:
         logging_setup.log_failure(logger, "Could not save local config.")
