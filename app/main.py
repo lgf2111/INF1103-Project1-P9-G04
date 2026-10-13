@@ -24,8 +24,10 @@ def _friendly_ai_error(error):
     """
     text = str(error).lower()
     if "timed out" in text or "could not complete" in text:
-        return ("The check failed: could not reach the AI service. "
-                "Check your internet connection and try again.")
+        return (
+            "The check failed: could not reach the AI service. "
+            "Check your internet connection and try again."
+        )
     if "http 5" in text:
         return "The check failed: the AI service is temporarily unavailable. Try again shortly."
     if "http 429" in text:
@@ -58,6 +60,7 @@ def load_env() -> bool:
     for key, value in values.items():
         os.environ.setdefault(key, value)
     return True
+
 
 def check_message(record=None):
     """Validate one combined AI response before assessment, saving or display.
@@ -92,22 +95,22 @@ def check_message(record=None):
         io_manager.show_message("Sorry, the check failed: " + str(error))
         return
 
-    report = {**assessed_record, "schema_version": 1, "result": result}
+    # Retain the original message and assessment in the agreed version-2 format.
+    report = {
+        "schema_version": 2,
+        "channel": record["channel"],
+        "message": record["message"],
+        "result": result,
+    }
     try:
         data_manager.save(report)
     except (OSError, ValueError):
         logging_setup.log_failure(logger, "Local report save failed")
-        io_manager.show_message(
-            "Could not save the local report; existing history preserved "
-            "and database upload not attempted."
-        )
-    except RuntimeError as error:
-        # The local write completed before the failed database request.
-        logging_setup.log_failure(logger, "Database upload failed after local save")
-        io_manager.show_message("Report saved locally, but database saving failed: " + str(error))
+        io_manager.show_message("Could not save the local report; existing history preserved.")
 
     # io_manager.display_result expects the logic result dictionary.
     io_manager.display_result(result)
+
 
 def upload_file():
     """Parse uploaded email through the same I/O contract as folder imports."""
@@ -124,35 +127,28 @@ def upload_file():
 
     check_message(record)
 
-def load_reports() -> list[dict] | None:
-    """Read both histories; return None when local history is unavailable and DB empty."""
-    try:
-        records = data_manager.fetch()
-    except (RuntimeError, ValueError) as error:
-        # Explain the unavailable source before reading the local copy.
-        logging_setup.log_failure(logger, "Reading reports from PostgreSQL failed")
-        io_manager.show_message("PostgreSQL unavailable; checking reports.json: " + str(error))
-        records = []
 
-    # A failed upload can leave newer reports only in the local copy.
+def load_reports() -> list[dict] | None:
+    """Read JSON history; distinguish an unavailable file from empty history."""
     try:
-        local_records = data_manager.load(strict=True)
+        return data_manager.load(strict=True)
     except (OSError, ValueError):
         logging_setup.log_failure(logger, "Reading local report history failed")
         io_manager.show_message("Could not load local report history; existing file preserved.")
-        return records if records else None
-    return data_manager.combine_reports(records, local_records)
+        return None
+
 
 def view_reports():
-    """Load database or local history and send it to I/O for display."""
+    """Load local JSON history and send it to I/O for display."""
     records = load_reports()
     if records is not None:
         io_manager.display_list(records)
 
+
 def main():
     env_loaded = load_env()
     # Set up behind-the-scenes logging to the logs/ folder before anything else,
-    # so any failure (AI, database, file) is recorded. Set LOG_LEVEL=DEBUG in
+    # so any failure (AI or file) is recorded. Set LOG_LEVEL=DEBUG in
     # .env to also capture full tracebacks while debugging.
     if not logging_setup.setup_logging():
         io_manager.show_message("Warning: diagnostic logging is unavailable.")
@@ -186,12 +182,12 @@ def main():
                 io_manager.show_message("Bye!")
                 break
             else:
-                io_manager.show_message(
-                    "Please choose 1, 2, 3, 4 or 5.")
+                io_manager.show_message("Please choose 1, 2, 3, 4 or 5.")
     except (KeyboardInterrupt, EOFError):
         # Ctrl+C (interrupt) or Ctrl+D (end of input): exit cleanly, no traceback.
         io_manager.show_message("\nInterrupted. Goodbye!")
     logger.info("Application exited")
+
 
 if __name__ == "__main__":
     main()

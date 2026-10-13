@@ -1,37 +1,17 @@
 # data_manager.py
-# Saves reports locally and in PostgreSQL. OWNER: Pair C.
+# Saves, loads and queries local JSON reports. OWNER: Pair C.
 
 import json
 import os
 import tempfile
 
-import psycopg
 from misc import logging_setup
-from psycopg.rows import dict_row
 
 logger = logging_setup.get_logger(__name__)
 
 FILE = "reports.json"
 
-
-def _ensure_schema(cursor):
-    cursor.execute(
-        "CREATE TABLE IF NOT EXISTS reports ("
-        "id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY, "
-        "channel TEXT NOT NULL, "
-        "sender TEXT, "
-        "message TEXT NOT NULL, "
-        "link TEXT, "
-        "file_name TEXT, "
-        "details JSONB NOT NULL, "
-        "score INTEGER, "
-        "priority TEXT)"
-    )
-    cursor.execute("ALTER TABLE reports ADD COLUMN IF NOT EXISTS score INTEGER")
-    cursor.execute("ALTER TABLE reports ADD COLUMN IF NOT EXISTS priority TEXT")
-
-
-LEGACY_FIELDS = {
+REPORT_FIELDS = {
     "channel",
     "sender",
     "message",
@@ -41,6 +21,8 @@ LEGACY_FIELDS = {
     "score",
     "priority",
 }
+
+
 INPUT_FIELDS = {
     "channel",
     "sender",
@@ -55,47 +37,66 @@ INPUT_FIELDS = {
 }
 
 
-def _validate_legacy(record):
-    """Check present legacy fields without filling gaps or changing stored values."""
-    # Older records may omit metadata or use null for unavailable values.
-    for key in ("channel", "sender", "message", "link", "file_name", "submitted_category"):
-        value = record.get(key)
-        if value is not None and not isinstance(value, str):
-            raise ValueError("Invalid legacy text field: " + key)
-    for key in ("has_link", "has_file", "clicked", "downloaded"):
-        value = record.get(key)
-        if value is not None and type(value) is not bool:
-            raise ValueError("Invalid legacy action field: " + key)
+def _validate_summary(record):
+    """Validate the eight-field storage contract without changing the report."""
+    if not isinstance(record, dict) or set(record) != REPORT_FIELDS:
+        raise ValueError("Reports must contain exactly the eight agreed fields.")
+    if not isinstance(record["channel"], str):
+        raise ValueError("Invalid report channel.")
+    if not isinstance(record["message"], str) or not record["message"].strip():
+        raise ValueError("Invalid report message.")
+    for key in ("sender", "link", "file_name"):
+        if record[key] is not None and not isinstance(record[key], str):
+            raise ValueError("Invalid report metadata.")
 
-    result = record.get("result")
-    if result is not None and not isinstance(result, dict):
-        raise ValueError("Invalid legacy assessment.")
+    # Store extraction as three lists, without normalizing or inventing values.
+    details = record["details"]
+    if not isinstance(details, dict) or set(details) != {"emails", "phone_numbers", "ip_addresses"}:
+        raise ValueError("Invalid stored extraction.")
+    for values in details.values():
+        if not isinstance(values, list) or any(
+            not isinstance(value, str) or not value.strip() for value in values
+        ):
+            raise ValueError("Invalid stored text lists.")
+    if type(record["score"]) is not int or not 0 <= record["score"] <= 100:
+        raise ValueError("Invalid stored score.")
+    if record["priority"] not in ("LOW", "MEDIUM", "HIGH"):
+        raise ValueError("Invalid stored priority.")
+    return record
 
-    # History supports both top-level outcomes and nested assessment outcomes.
-    for outcome in (record, result if result is not None else {}):
-        priority = outcome.get("priority")
-        if priority is not None and not isinstance(priority, str):
-            raise ValueError("Invalid legacy priority.")
-        value = outcome.get("score")
-        if value is not None and type(value) not in (int, float):
-            raise ValueError("Invalid legacy score.")
-        for key in ("reasons", "checklist"):
-            if key in outcome and (
-                not isinstance(outcome[key], list)
-                or any(not isinstance(item, str) for item in outcome[key])
-            ):
-                raise ValueError("Invalid legacy assessment list: " + key)
 
-    if "details" in record:
-        details = record["details"]
-        if not isinstance(details, dict):
-            raise ValueError("Invalid legacy details.")
-        for key in ("emails", "phone_numbers", "ip_addresses"):
-            if key in details and (
-                not isinstance(details[key], list)
-                or any(not isinstance(item, str) for item in details[key])
-            ):
-                raise ValueError("Invalid legacy extraction list: " + key)
+def _validate_result(result):
+    """Check the score, priority and guidance shared by versioned reports."""
+    if not isinstance(result, dict) or set(result) != {"score", "priority", "reasons", "checklist"}:
+        raise ValueError("Invalid stored assessment.")
+    if type(result["score"]) is not int or not 0 <= result["score"] <= 100:
+        raise ValueError("Invalid stored score.")
+    if result["priority"] not in ("LOW", "MEDIUM", "HIGH"):
+        raise ValueError("Invalid stored priority.")
+    for key in ("reasons", "checklist"):
+        values = result[key]
+        if not isinstance(values, list) or any(
+            not isinstance(value, str) or not value.strip() for value in values
+        ):
+            raise ValueError("Invalid stored text lists.")
+
+
+def _validate_v2(record):
+    """Validate the exact version-2 storage contract without changing values."""
+    if not isinstance(record, dict) or set(record) != {
+        "schema_version",
+        "channel",
+        "message",
+        "result",
+    }:
+        raise ValueError("Version-2 reports must contain exactly the four agreed fields.")
+    if type(record["schema_version"]) is not int or record["schema_version"] != 2:
+        raise ValueError("New reports must use schema version 2.")
+    for key in ("channel", "message"):
+        if not isinstance(record[key], str) or not record[key].strip():
+            raise ValueError("Invalid report text: " + key)
+    # Keep the original message intact; validation never strips or truncates it.
+    _validate_result(record["result"])
     return record
 
 
@@ -104,9 +105,13 @@ def _validate_report(record):
     if not isinstance(record, dict):
         raise ValueError("Stored reports must be objects.")
     if "schema_version" not in record:
-        return _validate_legacy(record)
-    if type(record["schema_version"]) is not int or record["schema_version"] != 1:
+        if set(record) == REPORT_FIELDS:
+            return _validate_summary(record)
+        return record  # Older local records retain their original fields.
+    if type(record["schema_version"]) is not int or record["schema_version"] not in (1, 2):
         raise ValueError("Unsupported report version.")
+    if record["schema_version"] == 2:
+        return _validate_v2(record)
     if set(record) != INPUT_FIELDS | {"schema_version", "ai", "result"}:
         raise ValueError("Incomplete versioned report.")
     if not isinstance(record["channel"], str):
@@ -130,14 +135,8 @@ def _validate_report(record):
     details = ai["details"]
     if not isinstance(details, dict) or set(details) != {"emails", "phone_numbers", "ip_addresses"}:
         raise ValueError("Invalid stored extraction.")
-    result = record["result"]
-    if not isinstance(result, dict) or set(result) != {"score", "priority", "reasons", "checklist"}:
-        raise ValueError("Invalid stored assessment.")
-    if type(result["score"]) is not int or not 0 <= result["score"] <= 100:
-        raise ValueError("Invalid stored score.")
-    if result["priority"] not in ("LOW", "MEDIUM", "HIGH"):
-        raise ValueError("Invalid stored priority.")
-    for values in [*details.values(), result["reasons"], result["checklist"]]:
+    _validate_result(record["result"])
+    for values in details.values():
         if not isinstance(values, list) or any(
             not isinstance(value, str) or not value.strip() for value in values
         ):
@@ -145,48 +144,13 @@ def _validate_report(record):
     return record
 
 
-def _database_record(record):
-    """Adapt complete records to the existing eight-column PostgreSQL schema."""
-    _validate_report(record)
-    if "schema_version" not in record:
-        if set(record) != LEGACY_FIELDS:
-            raise ValueError("Legacy database reports require the eight agreed fields.")
-        return record
-    return {
-        **{key: record[key] for key in ("channel", "sender", "message", "link", "file_name")},
-        "details": {"schema_version": 1, "record": record},
-        "score": record["result"]["score"],
-        "priority": record["result"]["priority"],
-    }
-
-
-def _restore_record(row):
-    """Recover complete JSONB payloads; leave old database rows unchanged."""
-    if not isinstance(row, dict) or set(row) != LEGACY_FIELDS:
-        raise ValueError("Invalid database report.")
-    payload = row["details"]
-    if not isinstance(payload, dict):
-        raise ValueError("Invalid database details.")
-    if "schema_version" not in payload:
-        return _validate_report(row)
-    if set(payload) != {"schema_version", "record"} or type(payload["schema_version"]) is not int:
-        raise ValueError("Invalid database payload.")
-    if payload["schema_version"] != 1:
-        raise ValueError("Unsupported database payload version.")
-    record = _validate_report(payload["record"])
-    if "schema_version" not in record or _database_record(record) != row:
-        raise ValueError("Database payload does not match report columns.")
-    return record
-
-
 def save(record):
-    """Atomically append locally before optional database upload.
+    """Append a version-2 report atomically, preserving existing records.
 
-    ValueError/OSError means no successful local save or database attempt.
-    RuntimeError means local save succeeded but PostgreSQL upload failed.
+    ValueError/OSError means the report could not be saved.
     Single-process CLI only: concurrent writers are not supported.
     """
-    _database_record(record)  # Reject invalid new records before touching history.
+    _validate_v2(record)  # Enforce the new contract before touching history.
     records = load(strict=True)
     records.append(record)
     temporary = None
@@ -206,89 +170,6 @@ def save(record):
     finally:
         if temporary is not None and os.path.exists(temporary):
             os.unlink(temporary)
-    upload([record])
-
-
-def upload(records: list[dict]) -> int:
-    """Insert complete or legacy reports into eight existing PostgreSQL columns.
-
-    Creates the reports table if absent and inserts the batch in one transaction.
-    Returns the number inserted. Repeating an upload inserts another copy.
-
-    Raises:
-        ValueError: If a versioned report is invalid or a legacy report lacks eight fields.
-        RuntimeError: If configuration is missing or the database operation fails.
-    """
-    if not isinstance(records, list):
-        raise ValueError("Reports must be a list.")
-    database_records = [_database_record(record) for record in records]
-
-    # Read configuration after main has loaded .env; never include it in errors.
-    database_url = os.environ.get("DATABASE_URL", "").strip().strip("\"'")
-    if not database_url:
-        raise RuntimeError("Set DATABASE_URL before saving to PostgreSQL.")
-
-    try:
-        # The connection context commits on success and rolls back on failure.
-        with psycopg.connect(database_url, connect_timeout=10) as connection:
-            with connection.cursor() as cursor:
-                _ensure_schema(cursor)
-                # Bind report values separately from SQL, including nested details.
-                cursor.executemany(
-                    "INSERT INTO reports "
-                    "(channel, sender, message, link, file_name, details, score, priority) "
-                    "VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s)",
-                    [
-                        (
-                            record["channel"],
-                            record["sender"],
-                            record["message"],
-                            record["link"],
-                            record["file_name"],
-                            json.dumps(record["details"]),
-                            record["score"],
-                            record["priority"],
-                        )
-                        for record in database_records
-                    ],
-                )
-    except psycopg.Error as error:
-        # Safe by default (reason only); full traceback with the real cause when
-        # LOG_LEVEL=DEBUG. The public message stays generic so no URL is shown.
-        logging_setup.log_failure(logger, "PostgreSQL upload failed")
-        raise RuntimeError("Could not save reports to PostgreSQL.") from error
-
-    return len(records)
-
-
-def fetch() -> list[dict]:
-    """Read complete/legacy reports from the existing columns in insertion order.
-
-    Returns:
-        Complete versioned records or unchanged legacy eight-field records.
-
-    Raises:
-        RuntimeError: If configuration is missing or the database read fails.
-    """
-    # Read current settings without revealing the connection URL in errors.
-    database_url = os.environ.get("DATABASE_URL", "").strip().strip("\"'")
-    if not database_url:
-        raise RuntimeError("Set DATABASE_URL before viewing PostgreSQL reports.")
-
-    try:
-        with psycopg.connect(database_url, connect_timeout=10, row_factory=dict_row) as connection:
-            with connection.cursor() as cursor:
-                _ensure_schema(cursor)
-                # JSONB details are decoded by the driver into Python dictionaries.
-                cursor.execute(
-                    "SELECT channel, sender, message, link, file_name, details, "
-                    "score, priority "
-                    "FROM reports ORDER BY id"
-                )
-                return [_restore_record(row) for row in cursor.fetchall()]
-    except psycopg.Error as error:
-        logging_setup.log_failure(logger, "PostgreSQL read failed")
-        raise RuntimeError("Could not load reports from PostgreSQL.") from error
 
 
 def load(*, strict=False):
@@ -325,24 +206,6 @@ def _read_records():
     return records
 
 
-def combine_reports(database_records, local_records):
-    """Show both sources, matching identical copies once per occurrence.
-
-    Without stable report IDs, equality is only a display reconciliation rule.
-    Keep the greater occurrence count of each complete dictionary, preserve
-    database order, then append unmatched local records in local order. Do not
-    merge differently shaped legacy records, modify sources or upload anything.
-    """
-    combined = list(database_records)
-    unmatched = list(database_records)
-    for record in local_records:
-        if record in unmatched:
-            unmatched.remove(record)
-        else:
-            combined.append(record)
-    return combined
-
-
 def query(filter_fn):
-    # return only the records that match the given check
+    """Return local reports matching the predicate without changing storage."""
     return [record for record in load() if filter_fn(record)]
