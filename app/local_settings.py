@@ -5,6 +5,8 @@
 # The file is gitignored, so each person's settings stay on their own machine.
 
 import json
+import os
+import tempfile
 
 import logging_setup
 
@@ -13,18 +15,29 @@ logger = logging_setup.get_logger(__name__)
 FILE = ".phishreport_config.json"
 
 
-def load_settings() -> dict:
-    """Return the saved settings as a dict, or {} if none/unreadable."""
+def _unique_settings(pairs):
+    data = {}
+    for key, value in pairs:
+        if key in data:
+            raise ValueError("Local settings contain duplicate fields.")
+        data[key] = value
+    return data
+
+
+def load_settings(*, strict: bool = False) -> dict:
+    """Read preferences; strict writes must distinguish corruption from absence."""
     try:
         with open(FILE, encoding="utf-8") as settings_file:
-            data = json.load(settings_file)
+            data = json.load(settings_file, object_pairs_hook=_unique_settings)
         if not isinstance(data, dict):
             raise ValueError("Local settings must be a JSON object.")
         return data
     except FileNotFoundError:
         return {}
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         logging_setup.log_failure(logger, "Could not read local config; using defaults.")
+        if strict:
+            raise
         return {}
 
 
@@ -33,12 +46,30 @@ def get_setting(key: str, default=None):
     return load_settings().get(key, default)
 
 
-def save_setting(key: str, value) -> None:
-    """Save a single setting, keeping the other saved values intact."""
-    data = load_settings()
-    data[key] = value
+def save_setting(key: str, value) -> bool:
+    """Atomically save a preference; preserve existing bytes on any failed update."""
+    temporary = None
     try:
-        with open(FILE, "w", encoding="utf-8") as settings_file:
-            json.dump(data, settings_file, indent=2)
-    except OSError:
+        data = load_settings(strict=True)
+        data[key] = value
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=os.path.dirname(os.path.abspath(FILE)),
+            suffix=".tmp", delete=False,
+        ) as settings_file:
+            temporary = settings_file.name
+            json.dump(data, settings_file, indent=2, allow_nan=False)
+            settings_file.flush()
+            os.fsync(settings_file.fileno())
+        os.replace(temporary, FILE)
+        return True
+    except (OSError, ValueError, RecursionError):
         logging_setup.log_failure(logger, "Could not save local config.")
+        return False
+    finally:
+        if temporary is not None:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                logging_setup.log_failure(logger, "Could not remove temporary local config.")

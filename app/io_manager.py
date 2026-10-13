@@ -382,8 +382,10 @@ def get_eml_folder():
         if not _is_email_folder(entered):
             print("That folder does not exist. Please enter a valid folder path.")
             continue
-        local_settings.save_setting(EML_FOLDER_KEY, entered)
-        print("Saved. You won't be asked again (option available to change later).")
+        if local_settings.save_setting(EML_FOLDER_KEY, entered):
+            print("Saved. You won't be asked again while this folder remains available.")
+        else:
+            print("Could not save the folder preference; using it for this selection only.")
         return entered
 
 

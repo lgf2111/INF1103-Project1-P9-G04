@@ -172,6 +172,8 @@ def _handle(handler):
 
 def start_and_wait_for_upload():
     """Handle requests until one bounded file arrives; return original bytes."""
+    if type(PORT) is not int or not 0 <= PORT <= 65535:
+        raise ValueError("UPLOAD_PORT must be an integer from 0 to 65535.")
     _result["upload"] = None
     _result["done"] = False
 
