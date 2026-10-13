@@ -42,7 +42,7 @@ def _resolve_level():
     Unknown values fall back to INFO so a typo never silences logging.
     """
     name = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
-    return getattr(logging, name, logging.INFO)
+    return logging.getLevelNamesMapping().get(name, logging.INFO)
 
 
 def debug_enabled():

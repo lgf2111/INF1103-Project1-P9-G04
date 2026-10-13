@@ -5,7 +5,6 @@
 # The file is gitignored, so each person's settings stay on their own machine.
 
 import json
-import os
 
 import logging_setup
 
@@ -16,12 +15,14 @@ FILE = ".phishreport_config.json"
 
 def load_settings() -> dict:
     """Return the saved settings as a dict, or {} if none/unreadable."""
-    if not os.path.exists(FILE):
-        return {}
     try:
         with open(FILE, encoding="utf-8") as settings_file:
             data = json.load(settings_file)
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            raise ValueError("Local settings must be a JSON object.")
+        return data
+    except FileNotFoundError:
+        return {}
     except (OSError, ValueError):
         logging_setup.log_failure(logger, "Could not read local config; using defaults.")
         return {}

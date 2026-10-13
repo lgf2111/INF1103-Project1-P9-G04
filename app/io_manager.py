@@ -354,22 +354,32 @@ EML_FOLDER_KEY = "eml_folder"   # key in the local config file
 EML_PAGE_SIZE = 5               # how many .eml files to show at a time
 
 
+def _is_email_folder(folder: object) -> bool:
+    """Check external preference/input values before constructing a filesystem path."""
+    if not isinstance(folder, str) or not folder.strip():
+        return False
+    try:
+        return Path(folder).is_dir()
+    except (OSError, ValueError):
+        return False
+
+
 def get_eml_folder():
     """Return the saved email folder, asking for it the first time and saving it."""
     folder = local_settings.get_setting(EML_FOLDER_KEY)
-    if folder and Path(folder).is_dir():
+    if _is_email_folder(folder):
         return folder
 
     # First run (or the saved folder is gone): ask and save.
     if folder:
-        print(f"Saved email folder '{folder}' is no longer available.")
+        print("Saved email folder is invalid or no longer available.")
     print("First time: tell PhishReport which folder holds your .eml files.")
     while True:
         entered = input("Enter the path to your email folder: ").strip().strip('"')
         if not entered:
             print("Folder path cannot be blank.")
             continue
-        if not Path(entered).is_dir():
+        if not _is_email_folder(entered):
             print("That folder does not exist. Please enter a valid folder path.")
             continue
         local_settings.save_setting(EML_FOLDER_KEY, entered)
