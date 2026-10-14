@@ -32,6 +32,7 @@ UPLOAD_TYPE_MESSAGE = (
 
 
 def main_menu():
+    """Display the CLI menu and return a validated, normalized menu choice."""
     print("\n=== PhishReport ===")
     print("1. Check a new message (Manual Input)")
     print("2. Import an email (.eml file)")
@@ -47,6 +48,11 @@ def main_menu():
 
 
 def get_valid_choice(prompt, valid_choices, error_message):
+    """Prompt until stripped, lowercase input matches one of valid_choices.
+
+    Print error_message after an invalid answer. EOF and keyboard interruption
+    propagate to the main loop for a consistent application exit.
+    """
     choice = input(prompt).strip().lower()
 
     while choice not in valid_choices:
@@ -97,6 +103,7 @@ def collect_input_from_upload(upload):
 
 
 def show_upload_instructions(host, port):
+    """Print the browser upload address and waiting instructions; do not start a server."""
     print(f"\nOpen http://{host}:{port} in your browser to upload an .eml email.")
     print("Waiting for upload... (Ctrl+C to cancel)")
 
@@ -111,6 +118,10 @@ def collect_input_from_folder() -> dict | None:
 
 
 def ask_yes_no(question):
+    """Prompt until yes/y or no/n is entered, ignoring case and surrounding spaces.
+
+    Return a boolean; leave cancellation handling to the application loop.
+    """
     answer = input(question).strip().lower()
 
     while answer not in ("y", "yes", "n", "no"):
@@ -120,6 +131,7 @@ def ask_yes_no(question):
 
 
 def get_channel():
+    """Return the user-selected channel: email, sms or chat."""
     return get_valid_choice(
         "Enter channel (Email/SMS/Chat): ",
         ("email", "sms", "chat"),
@@ -128,6 +140,7 @@ def get_channel():
 
 
 def get_sender():
+    """Return stripped sender text, or None for a blank answer; do not verify identity."""
     sender = input("Enter sender information (press Enter if unknown): ").strip()
 
     if sender == "":
@@ -137,6 +150,7 @@ def get_sender():
 
 
 def get_message():
+    """Prompt for a single nonblank line and return its stripped message text."""
     message = input("Enter the suspicious message: ").strip()
 
     while message == "":
@@ -146,6 +160,11 @@ def get_message():
 
 
 def validate_mime_limits(email_message):
+    """Check MIME part count, nesting depth and selected structural defects.
+
+    Walk iteratively to bound traversal of untrusted email input. Return None
+    when accepted; raise ValueError on a limit violation or rejected defect.
+    """
     stack = [(email_message, 0)]
     part_count = 0
 
@@ -179,6 +198,12 @@ def validate_mime_limits(email_message):
 
 
 def read_eml_details(file_path):
+    """Read a bounded regular email file and return its decoded sender and message.
+
+    Verify the opened descriptor is a regular file before reading. Delegate
+    MIME validation to read_eml_bytes; propagate OSError or ValueError to the
+    input flow so it can report the failure and offer another selection.
+    """
     path = Path(file_path)
     if not path.is_file():
         raise ValueError("Email path must be a regular file.")
@@ -199,7 +224,13 @@ def read_eml_details(file_path):
 
 
 def read_eml_bytes(raw_email):
-    """Parse the same bounded bytes for filesystem and browser email imports."""
+    """Parse bounded email bytes into a (sender, message) tuple.
+
+    Validate MIME structure and reject duplicate From or Subject headers.
+    Include a decoded subject when present, normalize body line endings,
+    and enforce the final message limit. Missing sender becomes None.
+    Raise ValueError for rejected input; no files or URLs are opened here.
+    """
     # Reject email files larger than 2 MiB.
     if len(raw_email) > MAX_EML_BYTES:
         raise ValueError("Email file exceeds the size limit.")
@@ -271,7 +302,12 @@ def read_eml_header(email_message, name):
 
 
 def read_eml_body(email_message):
-    """Include readable plain/HTML representations; exclude images and attachments."""
+    """Return joined readable plain-text and HTML bodies in source order.
+
+    Retain both representations of alternatives for assessment. Skip
+    attachments and inline images; reject unsupported body types, empty
+    output or excessive text with ValueError. HTML targets remain text.
+    """
     bodies = []
     had_html = False
     stack = [email_message]
@@ -309,8 +345,13 @@ def read_eml_body(email_message):
 
 
 def decode_eml_part(body_part, allow_empty=False):
+    """Decode a text MIME part using its declared charset and transfer encoding.
 
-    # Reject emails without a readable plain-text body.
+    Reject unsupported or malformed encodings and non-text payloads with
+    ValueError. Return stripped text; allow an empty result only when
+    allow_empty is True so the caller can combine multipart content.
+    """
+    # The shared decoder handles both plain-text and HTML parts.
     if body_part is None:
         raise ValueError("No readable plain-text message found.")
 
@@ -365,7 +406,11 @@ def _is_email_folder(folder: object) -> bool:
 
 
 def get_eml_folder():
-    """Return the saved email folder, asking for it the first time and saving it."""
+    """Return a usable saved folder or prompt until a valid folder is supplied.
+
+    Attempt to save the selection. A preference-save failure produces a
+    warning but does not prevent using the folder for the current import.
+    """
     folder = local_settings.get_setting(EML_FOLDER_KEY)
     if _is_email_folder(folder):
         return folder
@@ -397,7 +442,11 @@ def list_eml_files(folder):
 
 
 def choose_eml_file(folder):
-    """Show the latest .eml files, paginate on request, return the chosen path."""
+    """Show files in pages and return the selected path, or None on cancel/no files.
+
+    Permit selection from any page already shown. Retry invalid choices;
+    propagate filesystem errors to get_eml_from_folder for user feedback.
+    """
     files = list_eml_files(folder)
     if not files:
         print(f"No .eml files found in '{folder}'.")
@@ -434,7 +483,11 @@ def choose_eml_file(folder):
 
 
 def get_eml_from_folder():
-    """Pick a .eml from the saved folder and load it (sender, message)."""
+    """Return the selected email as (sender, message), or None if none is selected.
+
+    Report directory errors and stop selection. Report individual file
+    failures and allow another selection without returning partial content.
+    """
     folder = get_eml_folder()
     while True:
         try:
@@ -455,6 +508,11 @@ def get_eml_from_folder():
 
 
 def get_link_information():
+    """Return (has_link, link), requiring nonblank text when a link is reported.
+
+    Return (False, None) when absent. Collect the supplied text without
+    visiting the link or validating its destination.
+    """
     has_link = ask_yes_no("Was a link included? (yes/no): ")
 
     if not has_link:
@@ -469,6 +527,11 @@ def get_link_information():
 
 
 def get_file_information():
+    """Return (has_file, file_name), requiring a name when a file is reported.
+
+    Return (False, None) when absent. This question collects metadata only;
+    it does not open or inspect the named file.
+    """
     has_file = ask_yes_no("Was a file included? (yes/no): ")
 
     if not has_file:
@@ -483,6 +546,7 @@ def get_file_information():
 
 
 def get_submitted_category():
+    """Return password, otp or None from the validated disclosure answer."""
     submitted = get_valid_choice(
         "Did you give a password or code? (password/otp/no): ",
         ("password", "otp", "no"),
@@ -496,6 +560,11 @@ def get_submitted_category():
 
 
 def collect_user_actions(has_link, has_file):
+    """Return clicked, downloaded and submitted_category from exposure questions.
+
+    Ask about clicks/downloads only when the corresponding item was reported;
+    otherwise record False. Always ask whether credentials were submitted.
+    """
     if has_link:
         clicked = ask_yes_no("Did you click the link? (yes/no): ")
     else:
@@ -558,7 +627,11 @@ def display_record(record: dict) -> None:
 
 
 def display_list(records: list[dict]) -> None:
-    """Display saved summaries without altering or reassessing their outcomes."""
+    """Display validated saved summaries without altering or reassessing outcomes.
+
+    Support nested versioned results and root-level legacy summaries. Show
+    missing outcomes as unavailable and shorten only the displayed preview.
+    """
     if not records:
         print("No saved reports yet.")
         return
@@ -580,4 +653,5 @@ def display_list(records: list[dict]) -> None:
 
 
 def show_message(text):
+    """Print an application-supplied status or error message to the terminal."""
     print(text)

@@ -65,8 +65,9 @@ def load_env() -> bool:
 def check_message(record=None):
     """Validate one combined AI response before assessment, saving or display.
 
-    If no record is given, collect one interactively. A caller (e.g. the file
-    upload option) may pass a pre-built record instead.
+    Collect input interactively when record is None; otherwise use the supplied
+    record. Stop assessment on handled AI/validation failures. Save the
+    version-2 outcome locally, then display it even if persistence fails.
     """
     if record is None:
         record = io_manager.collect_input()
@@ -108,7 +109,7 @@ def check_message(record=None):
         logging_setup.log_failure(logger, "Local report save failed")
         io_manager.show_message("Could not save the local report; existing history preserved.")
 
-    # io_manager.display_result expects the logic result dictionary.
+    # A storage failure does not discard an assessment already completed successfully.
     io_manager.display_result(result)
 
 
@@ -129,7 +130,11 @@ def upload_file():
 
 
 def load_reports() -> list[dict] | None:
-    """Read JSON history; distinguish an unavailable file from empty history."""
+    """Return validated JSON history, or None after reporting a read failure.
+
+    An empty list means missing/empty history; None means history could not
+    be read safely. Keep this distinction when deciding what to display.
+    """
     try:
         return data_manager.load(strict=True)
     except (OSError, ValueError):
@@ -146,10 +151,14 @@ def view_reports():
 
 
 def main():
+    """Initialize configuration and logging, then run the interactive menu loop.
+
+    Check stored history on startup and delegate each choice to its manager
+    flow. Handle EOF and keyboard interruption as an application exit.
+    """
     env_loaded = load_env()
-    # Set up behind-the-scenes logging to the logs/ folder before anything else,
-    # so any failure (AI or file) is recorded. Set LOG_LEVEL=DEBUG in
-    # .env to also capture full tracebacks while debugging.
+    # Load environment settings before logging so LOG_LEVEL is respected.
+    # Set LOG_LEVEL=DEBUG to include tracebacks in subsequent failure diagnostics.
     if not logging_setup.setup_logging():
         io_manager.show_message("Warning: diagnostic logging is unavailable.")
     if not env_loaded:

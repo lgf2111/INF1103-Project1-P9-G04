@@ -106,6 +106,7 @@ def build_prompt(record: dict) -> str:
                     ValueError,
                 )
             metadata[key] = value
+    # JSON encoding preserves source text and separates it from instruction formatting.
     return (
         FINDINGS_INSTRUCTIONS
         + EXTRACTION_INSTRUCTIONS
@@ -144,7 +145,7 @@ def _max_attempts():
 
 
 def call_api(prompt: str) -> str:
-    """Return completed content, retrying a transient transport failure once.
+    """Return completed content with a configured bound on transient retries.
 
     Require nonblank prompt text, otherwise raise ValueError before configuration/HTTP.
     Preserve valid prompt text exactly as supplied.
@@ -281,7 +282,11 @@ def _rate_limit_delay(headers):
 
 
 def _completed_content(data):
-    """Validate each envelope container before consuming the model's content."""
+    """Return the first completed, non-refused choice as unchanged response text.
+
+    Validate the provider envelope before extracting content. Raise RuntimeError
+    for rejected responses; content JSON/schema checks belong to later stages.
+    """
     if not isinstance(data, dict) or data.get("error") is not None:
         raise failure(
             "call_api",
@@ -368,7 +373,11 @@ def validate_details(data, message):
 
 
 def _validate_detail_schema(data):
-    """Check the shared extraction shape and syntax without needing source text."""
+    """Check the exact three detail lists and each returned value's syntax.
+
+    Accept empty lists and repeated values. Raise ValueError for invalid
+    entries; do not check reachability, ownership, reputation or completeness.
+    """
     if not isinstance(data, dict) or set(data) != set(DETAIL_KEYS):
         raise ValueError("AI details must contain exactly: " + ", ".join(DETAIL_KEYS))
     formats = {
@@ -391,7 +400,12 @@ def _validate_detail_schema(data):
 
 
 def _validate_source_details(data, message):
-    """Check returned occurrences using the existing extraction boundaries."""
+    """Return unchanged details after matching exact occurrences in the message.
+
+    Advance independently through each detail list to enforce source order
+    and distinct occurrences for repeats. Raise ValueError for a mismatch;
+    this checks returned values, not whether the AI found every possible value.
+    """
     _validate_detail_schema(data)
     if not isinstance(message, str):
         raise ValueError("The original message must be text.")

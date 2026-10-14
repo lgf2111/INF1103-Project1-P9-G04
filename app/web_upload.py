@@ -88,7 +88,12 @@ _result = {"upload": None, "done": False}
 
 
 def parse_upload(content_type, body):
-    """Parse one bounded multipart form file without changing its original bytes."""
+    """Return filename and original content bytes from one bounded multipart upload.
+
+    Require a single .eml file field and valid framing; raise ValueError for
+    rejected headers, structure or size. Email decoding belongs to the I/O
+    layer after upload, so accepted bytes are not rewritten here.
+    """
     if len(body) > MAX_REQUEST_BYTES:
         raise ValueError(SIZE_ERROR)
     if not isinstance(content_type, str) or "\r" in content_type or "\n" in content_type:
@@ -136,7 +141,11 @@ def parse_upload(content_type, body):
 
 
 def _handle(handler):
-    """Serve the form on GET, store the uploaded file on POST. Plain function."""
+    """Serve the upload form or process a POST through the supplied HTTP handler.
+
+    Store a valid upload in shared _result and mark it done. Rejected uploads
+    receive an HTTP error and leave the server available for another attempt.
+    """
     if handler.command == "GET":
         handler.send_response(200)
         handler.send_header("Content-Type", "text/html")
@@ -171,7 +180,12 @@ def _handle(handler):
 
 
 def start_and_wait_for_upload():
-    """Handle requests until one bounded file arrives; return original bytes."""
+    """Block until one valid upload arrives, then return its filename/content dict.
+
+    Reset shared upload state for each session and serve requests serially.
+    Release the socket on exit, including cancellation. Configuration and
+    server errors propagate to the application upload flow.
+    """
     if type(PORT) is not int or not 0 <= PORT <= 65535:
         raise ValueError("UPLOAD_PORT must be an integer from 0 to 65535.")
     _result["upload"] = None
@@ -189,11 +203,16 @@ def start_and_wait_for_upload():
 
 
 def _make_handler(request, address, server):
-    """Configure an existing stdlib handler instance using functions only."""
+    """Configure and return a standard-library HTTP handler without subclassing.
+
+    Install request callbacks before initialization, which processes the
+    request. Bound socket operations with a timeout and suppress access logs.
+    """
     handler = http.server.BaseHTTPRequestHandler.__new__(http.server.BaseHTTPRequestHandler)
     handler.do_GET = lambda: _handle(handler)
     handler.do_POST = lambda: _handle(handler)
     handler.log_message = lambda *args: None
     request.settimeout(15)
+    # Initialization dispatches the request, so callbacks must already be attached.
     http.server.BaseHTTPRequestHandler.__init__(handler, request, address, server)
     return handler
