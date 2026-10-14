@@ -27,7 +27,12 @@ LINE_BREAKS = "\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 
 
 def html_to_text(source, limit, allow_empty=False):
-    """Preserve body text and URL attributes, counting normalized output characters."""
+    """Convert HTML source into bounded text without rendering or fetching URLs.
+
+    Retain visible text and selected attribute values; omit ignored sections.
+    The limit counts normalized output characters. Raise ValueError if the
+    limit is exceeded, or the result is empty unless allow_empty is True.
+    """
     state = {"chunks": [], "length": 0, "ignored": [], "pending": ""}
     parser = HTMLParser(convert_charrefs=True)
     # Configure an existing library object; no team-authored class/subclass.
@@ -44,6 +49,11 @@ def html_to_text(source, limit, allow_empty=False):
 
 
 def _append(state, text, limit):
+    """Append normalized text to shared parser state within the character limit.
+
+    Mutate chunks, length and pending whitespace in place. Raise ValueError
+    when output exceeds the limit; callers must abandon that parse on failure.
+    """
     # Keep whitespace pending until another word arrives. Leading/trailing
     # formatting and repeated blank lines then never consume the text budget.
     for match in re.finditer(r"\s+|\S+", text):
@@ -64,6 +74,11 @@ def _append(state, text, limit):
 
 
 def _start(state, tag, attrs, limit):
+    """Update parser state for an opening tag and retain relevant attributes.
+
+    Track ignored sections and block spacing. URL values are preserved as
+    text without being resolved or fetched; cid: and data: targets are omitted.
+    """
     if tag in IGNORED:
         state["ignored"].append(tag)
         return
@@ -71,6 +86,7 @@ def _start(state, tag, attrs, limit):
         return
     if tag in BLOCKS:
         _append(state, "\n", limit)
+    # Preserve destinations alongside visible labels so the assessment can compare them.
     for name, value in attrs:
         if value and name in ("href", "src", "action"):
             if not value.lower().startswith(("cid:", "data:")):
@@ -80,8 +96,10 @@ def _start(state, tag, attrs, limit):
 
 
 def _end(state, tag, limit):
+    """Close an ignored section or add pending block spacing to parser state."""
     if state["ignored"]:
         if tag in state["ignored"]:
+            # Close the most recent matching ignored section and its nested sections.
             index = len(state["ignored"]) - 1 - state["ignored"][::-1].index(tag)
             del state["ignored"][index:]
         return
@@ -90,5 +108,6 @@ def _end(state, tag, limit):
 
 
 def _empty(state, tag, attrs, limit):
+    """Process a self-closing tag through the shared opening and closing rules."""
     _start(state, tag, attrs, limit)
     _end(state, tag, limit)

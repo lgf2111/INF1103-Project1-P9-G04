@@ -25,7 +25,9 @@ def _unique_fields(pairs):
 
 
 def _invalid_constant(value):
+    """Reject NaN and infinity through the JSON decoder callback with ValueError."""
     raise ValueError("Local history contains a non-JSON constant.")
+
 
 REPORT_FIELDS = {
     "channel",
@@ -54,7 +56,11 @@ INPUT_FIELDS = {
 
 
 def _validate_summary(record):
-    """Validate the eight-field storage contract without changing the report."""
+    """Return an unchanged legacy eight-field report after validating its fields.
+
+    Raise ValueError for invalid types, detail lists, score or priority. This
+    checks stored structure, not contact syntax or the original assessment.
+    """
     if not isinstance(record, dict) or set(record) != REPORT_FIELDS:
         raise ValueError("Reports must contain exactly the eight agreed fields.")
     if not isinstance(record["channel"], str):
@@ -82,7 +88,11 @@ def _validate_summary(record):
 
 
 def _validate_result(result):
-    """Check the score, priority and guidance shared by versioned reports."""
+    """Validate the exact score, priority, reasons and checklist fields.
+
+    Return None on success; raise ValueError without changing the result on
+    failure. Empty guidance lists are accepted, but blank list entries are not.
+    """
     if not isinstance(result, dict) or set(result) != {"score", "priority", "reasons", "checklist"}:
         raise ValueError("Invalid stored assessment.")
     if type(result["score"]) is not int or not 0 <= result["score"] <= 100:
@@ -117,7 +127,12 @@ def _validate_v2(record):
 
 
 def _validate_legacy(record):
-    """Validate present historical fields without inventing missing information."""
+    """Return historical data after checking the fields that are present.
+
+    Missing fields and unknown fields are retained unchanged. Validate both
+    root and nested outcomes because either can reach the history display.
+    Raise ValueError for unsafe stored field types; do not reassess the report.
+    """
     for key in ("channel", "sender", "message", "link", "file_name", "submitted_category"):
         value = record.get(key)
         if value is not None and not isinstance(value, str):
@@ -212,10 +227,12 @@ def save(record: dict) -> None:
     Single-process CLI only: concurrent writers are not supported.
     """
     _validate_v2(record)  # Enforce the new contract before touching history.
+    # Abort on unreadable history rather than replacing it with only the new report.
     records = load(strict=True)
     records.append(record)
     temporary = None
     try:
+        # Keep the temporary file on the same filesystem for atomic replacement.
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
@@ -225,6 +242,7 @@ def save(record: dict) -> None:
         ) as stream:
             temporary = stream.name
             json.dump(records, stream, indent=2, ensure_ascii=False, allow_nan=False)
+            # Flush buffered content before replacing the existing history file.
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, FILE)
@@ -237,8 +255,8 @@ def load(*, strict: bool = False) -> list[dict]:
     """Read history; log and return [] on failure by default, as required in Phase 1.
 
     Internal save/history callers use strict=True to distinguish failed reads from
-    empty files and preserve corrupt history. Missing files are empty in either mode.
-    No terminal output or exception details enter diagnostics.
+    empty history and preserve corrupt files. Missing files are empty in either mode.
+    Emit no terminal output; traceback details follow the configured logging level.
     """
     try:
         return _read_records()
@@ -252,7 +270,12 @@ def load(*, strict: bool = False) -> list[dict]:
 
 
 def _read_records():
-    """Read and validate the file without converting failures into empty history."""
+    """Return all validated reports, or [] when the file does not exist.
+
+    Reject the whole read if any record is invalid; never return partial
+    history. Malformed content raises ValueError; filesystem errors propagate.
+    This function does not repair or write the file.
+    """
     try:
         with open(FILE, encoding="utf-8") as stream:
             records = json.load(
@@ -270,5 +293,9 @@ def _read_records():
 
 
 def query(filter_fn: Callable[[dict], bool]) -> list[dict]:
-    """Return local reports matching the predicate without changing storage."""
+    """Load local reports and return those accepted by filter_fn, in stored order.
+
+    Use the normal load behavior: missing or unreadable history yields [].
+    Predicate errors propagate to the caller. No storage writes are performed.
+    """
     return [record for record in load() if filter_fn(record)]

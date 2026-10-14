@@ -49,7 +49,11 @@ def _priority(value: int) -> str:
 
 
 def route(record: dict) -> dict:
-    """Validate a record and return its score and priority without modifying it."""
+    """Return a dictionary containing score and priority for the supplied record.
+
+    Delegate validation and scoring to score exactly once. Propagate ValueError
+    for rejected records and leave the original record unchanged.
+    """
     value = score(record)
     # Keep the calculated score and its corresponding priority together.
     return {"score": value, "priority": _priority(value)}
@@ -66,6 +70,7 @@ def evaluate(record: dict) -> dict:
     value = outcome["score"]
     priority = outcome["priority"]
     findings = record["ai"]
+    # Retain every applicable explanation even though scoring uses only the first rule.
     reasons = []
     category = record["submitted_category"]
     if category == "password":
@@ -85,6 +90,7 @@ def evaluate(record: dict) -> dict:
     if not reasons:
         reasons.append("The AI reported no suspicious indicators in the supplied content.")
 
+    # Start with priority guidance, then add steps for the reported exposure.
     if priority == "HIGH":
         checklist = [
             "Stop further interaction with the message.",
@@ -121,7 +127,11 @@ def evaluate(record: dict) -> dict:
 
 
 def _validate_record(record):
-    """Validate the record shape produced by io_manager.collect_input()."""
+    """Check required input fields without coercing or modifying their values.
+
+    Return None on success and raise ValueError for rejected fields. Additional
+    fields are allowed; score separately checks the required AI findings.
+    """
     required_keys = {
         "channel",
         "sender",

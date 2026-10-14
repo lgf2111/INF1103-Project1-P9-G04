@@ -11,8 +11,8 @@
 #   - LOG_LEVEL=DEBUG: unlocks full detail, including tracebacks, so you can see
 #     exactly why something failed while actively debugging.
 #
-# Either way the log goes to the gitignored logs/ folder, so it never leaves
-# your machine.
+# Logs are written to the local logs/ folder, excluded from normal Git tracking.
+# Debug tracebacks can contain sensitive context; logging mode controls that detail.
 
 import logging
 import os
@@ -46,7 +46,7 @@ def _resolve_level():
 
 
 def debug_enabled():
-    """True when the user asked for full detail (LOG_LEVEL=DEBUG).
+    """Return whether the configured level enables debug detail (DEBUG or lower).
 
     Callers use this to decide whether to log tracebacks/raw causes (debug) or a
     sanitised summary (default), so secrets stay out of normal logs.
