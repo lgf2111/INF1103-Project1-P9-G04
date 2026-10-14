@@ -2,48 +2,32 @@
 
 [![CI](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml/badge.svg)](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml)
 
-PhishReport is a procedural Python CLI for checking suspicious messages. It sends each new message to the Groq API, validates the AI findings, and applies rules using those findings and the user's reported actions. It displays a priority, a rule-based score and a response checklist, then saves the assessment as JSON.
+PhishReport is a procedural Python CLI application that helps users assess suspicious emails, SMS and chat messages. It uses the Groq API to identify indicators, applies rule-based scoring based on the findings and reported user actions, and provides a priority level and recommended response steps. Assessments are saved locally as JSON.
 
-This is the Phase 1 coursework application. The current code provides an integrated assessment flow; its implemented behavior, limitations and remaining submission checks are documented below. A result with no clear indicators does not guarantee that a message is safe.
+This repository contains the Phase 1 coursework application. **A LOW-priority result does not guarantee that a message is safe.**
 
 ## Project layout
 
 | Path | Purpose |
 | --- | --- |
-| `app/io_manager.py` | Collect terminal input and display results. |
-| `app/ai_manager.py` | Request and validate structured AI findings. |
+| `app/io_manager.py` | Collect input and display results. |
+| `app/ai_manager.py` | Request and validate AI findings. |
 | `app/logic_manager.py` | Apply assessment rules, scoring and routing. |
 | `app/data_manager.py` | Save, load and query JSON reports. |
 | `app/main.py` | Connect the managers and run the menu. |
-| `app/ai_prompts.py` | Fixed instructions used by the AI manager. |
-| `app/email_html.py` | Convert HTML to inert text without fetching resources. |
-| `app/local_settings.py` | Read and write machine-specific JSON preferences. |
-| `app/logging_setup.py` | Configure safe rotating diagnostic logs. |
-| `app/web_upload.py` | Receive one bounded browser upload; I/O handles assessment input. |
-| `tests/test_logic_manager.py` | Required offline logic tests with hardcoded AI findings. |
-| `tests/test_application.py` | Automated feature showcase and preserved application regressions. |
-| `tests/fixtures/` | Three essential, pinned public email fixtures; provenance included. |
-| `conftest.py` | Shared pytest import setup and registration of the `demo` selection. |
-
-## Coding practices
-
-The application follows Week 4, slides 32-42, within the Phase 1 manager requirements.
-The four named manager files contain their required functions. Supporting
-modules have descriptive names directly under app/; they do not replace managers.
-
-| Lecture principle | Application in this project |
-| --- | --- |
-| Single responsibility | Input/display, API validation, scoring and report persistence remain in their respective managers. |
-| DRY | Manual, folder and browser routes reuse one record/exposure builder and one email parser. |
-| KISS | Functions and dictionaries use explicit helper names without an extra framework. |
-| Input / process / output | main.py coordinates validated input, AI, domain rules, JSON save and display. |
-| Modular programming | Focused functions, typed public contracts, tested commit blocks and CI support maintainability. |
-| Validation | Messages, MIME, AI schema/source, stored records, saved folder paths and logging levels are checked before use. |
-| Meaningful naming | local_settings, get_setting and save_setting describe their purpose without a generic misc package. |
+| `app/ai_prompts.py` | Define the AI assessment instructions. |
+| `app/email_html.py` | Convert HTML email content to safe text. |
+| `app/local_settings.py` | Manage local preferences. |
+| `app/logging_setup.py` | Configure diagnostic logs. |
+| `app/web_upload.py` | Handle browser-based `.eml` uploads. |
+| `tests/test_logic_manager.py` | Offline logic tests. |
+| `tests/test_application.py` | Application tests and feature showcase. |
+| `tests/fixtures/` | Public sample emails for testing. |
+| `conftest.py` | Shared pytest configuration. |
 
 ## Set up
 
-Use Python 3.12 to match CI and the Docker image. Run these commands from the repository root.
+Use **Python 3.12** to match the CI and Docker environment. Run the following commands from the repository root.
 
 **Windows PowerShell**
 
@@ -63,58 +47,43 @@ python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Open `.env` and set `GROQ_API_KEY` to your key from the [Groq console](https://console.groq.com):
+Add your Groq API key to `.env`:
 
 ```text
 GROQ_API_KEY=your_key_here
 ```
 
-A key is required for a live assessment, but not for the offline tests. Use the pinned public real-email examples for demonstrations; never enter real passwords or one-time codes.
-
-The `.env` file is optional when settings are supplied by your shell or Docker.
-Save it as UTF-8 (a UTF-8 BOM is accepted), using the existing `KEY=value` format.
-Existing environment values take precedence; repeated file keys keep their first
-value. Blank lines, comments and lines without `=` are ignored.
-
-If the file cannot be read or decoded, or an assignment has an empty key or a NUL
-character, startup displays a warning and continues using existing environment
-settings. File settings are checked before any are applied, so an invalid or
-partly read file does not leave a partial configuration behind. The warning and
-its log entry contain no file contents or raw exception details. Missing API
-credentials still prevent a completed assessment; this recovery does not bypass AI.
+Get an API key from the [Groq console](https://console.groq.com). A key is required for live assessments but **not** for offline tests. Do not commit `.env` or enter real passwords or one-time codes as sample data.
 
 ## Run and test
 
+Start the application:
+
 ```bash
 python app/main.py
-python -m pytest tests/test_logic_manager.py -q
-python -m pytest tests/test_application.py -q
 ```
 
-The app lets you assess a message, view saved reports or quit. It writes `reports.json` in the directory from which you run it. The tests use sample AI responses and do not need network access.
+You can manually check a suspicious message, import or upload an `.eml` email, and view saved reports. New assessments require a valid response from the Groq API.
 
-For the concise automated feature showcase, run
-`python -m pytest tests/test_application.py -m demo -v`. Its 12 cases are in the
-first section of the application script. It exercises real public
-emails through manual/folder/browser input, multi-field scoring, exposure,
-uncertainty, failures and reload in a separate process. External AI HTTP is mocked;
-the local upload server, managers and storage are real. This is not a live-model
-demonstration or detection benchmark. The full application script retains meaningful
-lifecycle regressions in named sections. The application script contains 568 cases:
-12 showcase cases and 556 further regressions. The unchanged logic script contains
-72 cases, giving 640 overall. Counts include parameter variations, not 640 separate
-functions. Use `-m "not demo"` for the application regressions alone.
-`python -m pytest` runs both scripts. `conftest.py` is loaded automatically by
-pytest; it makes the app modules importable and registers the `demo` marker. It is
-required test configuration, not another test script or an application entry point.
+Run the automated tests:
 
-The existing logic script satisfies Framework section 5.3: `evaluate()`, `score()`
-and `route()`, hardcoded AI findings, multi-field rules, precedence, 35/70 boundary
-values and invalid inputs, without credentials. No redundant logic runner is needed.
+```bash
+python -m pytest
+```
+
+Run a specific test suite or the feature showcase:
+
+```bash
+python -m pytest tests/test_logic_manager.py -q
+python -m pytest tests/test_application.py -q
+python -m pytest tests/test_application.py -m demo -v
+```
+
+The README currently documents **640 test cases** (including parameter variations): 72 logic tests and 568 application tests, of which 12 are showcase cases. The tests mock external AI requests; they do not measure live-model detection accuracy.
 
 ### Assessment policy
 
-The first matching rule wins; every new assessment requires valid AI findings first.
+The first matching rule determines the score and priority. Every new assessment requires valid AI findings.
 
 | Condition | Score | Priority |
 | --- | --- | --- |
@@ -127,56 +96,21 @@ The first matching rule wins; every new assessment requires valid AI findings fi
 | AI insufficient context | 20 | LOW |
 | Otherwise | 10 | LOW |
 
-HIGH starts at 70 and MEDIUM at 35. Scores express response policy, not probability.
-Source checks validate returned contact syntax and ordered occurrences in the
-message; they do not establish completeness, sender identity or model truth.
-Identical input/findings produce identical rule results. Temperature zero does not
-guarantee identical fresh API findings. Instructor interpretation of repeatability
-and API scope for saved-history reads remains pending.
+**HIGH** begins at 70; **MEDIUM** begins at 35. Scores represent response priority, not the probability that a message is malicious.
 
 ### Import an email
 
-Choose **2. Import an email (.eml file)**, enter the folder containing your
-exported `.eml` files on first use, then select a file. The folder is remembered
-locally; `m` lists more files and `c` cancels selection. This reads exported files,
-not a live Outlook mailbox. In Docker, mount the folder and enter its container
-path (for example, `/emails`). Choose **3. Upload an email (.eml file)** to
-upload an `.eml` file through the browser. Both email routes use the same
-MIME parser, subject/sender handling and exposure questions.
+PhishReport supports three ways to submit a message:
 
-Choose **1. Check a new message (Manual Input)** to type an Email, SMS or Chat
-message. We include the subject and all inline plain-text/HTML body representations
-in the text sent for assessment, so differing HTML content is not silently omitted.
-Valid Base64, quoted-printable and declared character sets are decoded without
-silently replacing invalid characters. Missing sender/subject headers are allowed;
-duplicate or undecodable sender/subject headers are rejected. A forged or malformed
-sender address is preserved as untrusted text rather than repaired or authenticated.
+1. **Manual input:** Enter an email, SMS or chat message directly.
+2. **Folder import:** Select an exported `.eml` email from a local folder.
+3. **Browser upload:** Upload one `.eml` email through the local browser page at `http://localhost:8000` when the uploader is running.
 
-We support plain-text and HTML bodies in nested mixed, alternative and related
-containers. HTML is converted to inert text with link/form targets and image
-descriptions retained; scripts/styles are excluded, resources are never fetched,
-and HTML is never rendered or executed. Embedded images and attachments
-are excluded from content analysis. Other unsupported inline body types are rejected.
-For unsupported emails, restart the input flow and choose manual input to provide
-the relevant message text. We still ask separately about links, files, clicks,
-downloads and password/code disclosure; these actions are never inferred.
-
-Imports are limited to regular files of 2 MiB, 100 MIME parts, 32 nesting levels
-and 50,000 final message characters (including the subject). Browser uploads
-reject all other types with: "Only .eml email files are supported. Images and
-attachments are not analysed." Oversized browser uploads return HTTP 413;
-format/type errors return HTTP 400. Invalid imports
-display an error and ask for another file. These limits are team implementation
-choices, not additional coursework requirements.
-
-The browser uploader also limits requests and preserves original file bytes.
-Uploading the email itself does not mean a user downloaded an attachment in it.
-We still ask about actual clicks, attachment downloads and disclosure; the AI
-cannot infer those actions from email content.
+Both `.eml` methods use the same email parser. The application reads supported text/HTML email content but **does not analyse attachments or embedded images**. Non-`.eml` browser uploads are rejected. Each imported file is limited to **2 MiB**. Users are asked separately whether they clicked links, downloaded files or disclosed credentials.
 
 ## Run Docker with persistent reports
 
-Create `.env` as described above, start Docker, then build, test and run:
+With Docker running and `.env` configured, use **Git Bash** on Windows (or Bash on macOS/Linux):
 
 ```bash
 ./docker.sh build
@@ -184,143 +118,19 @@ Create `.env` as described above, start Docker, then build, test and run:
 ./docker.sh run
 ```
 
-On Windows, use **Git Bash**, or WSL with Docker integration enabled. On macOS
-and Linux, use Bash; if needed, first run `chmod +x docker.sh`. The helper
-resolves paths from its own project directory, so it can also be invoked from
-another working directory. Its test command disables external networking.
+Docker keeps reports, settings and logs in the host project's `.phishreport-data/` directory so they remain available between runs. The helper also mounts the project's `emails/` directory for local `.eml` imports and makes the browser uploader available at `http://localhost:8000`.
 
-Docker reports, settings and logs are stored in **`.phishreport-data/`** on
-the host. The helper mounts that directory at `/data`, sets it as the working
-directory and launches `/app/app/main.py`. It mounts the directory rather than
-`reports.json` itself because the data manager saves by atomically replacing the
-file; replacing an individually bind-mounted file fails in Docker.
-
-On first setup, the helper copies existing root `reports.json`, `.phishreport_config.json`
-and logs into the data directory if their destinations do not already exist.
-Later runs preserve the newer destination files. The original files remain
-untouched; this is a one-time copy, not ongoing synchronization. The helper does not reset
-corrupt history. After migration, Docker uses `.phishreport-data/reports.json` for
-Docker history; running host Python from the repository root still uses the
-separate root `reports.json`.
-
-### Local history and recovery
-
-The application saves new assessments locally as schema version 2: the channel, original
-message and explained result. No shared database is needed. Supported older
-records remain readable without manufacturing missing fields.
-
-Missing history starts empty. Unreadable, malformed JSON or invalid stored
-field types are logged and handled without crashing the menu. The original
-file is preserved; saving refuses to overwrite unreadable or corrupt history.
-Back up and inspect that file before correcting it, rather than resetting it
-silently. An assessment whose save fails is displayed with a save warning;
-it is different from an AI failure, which produces no completed assessment.
-
-### Email folder inside Docker
-
-Select **2. Import an email** and enter **`/emails`** when asked for the email
-folder. The helper mounts the project's `emails/` directory there read-only. The
-folder picker then remembers this container path across runs. A saved Windows or
-macOS host path is not automatically available inside a container; if old copied
-settings point to an unavailable path, enter `/emails` when prompted again.
-
-To use another folder, set `PHISHREPORT_EMAIL_DIR` for the run. Relative paths
-are resolved against the project, and spaces are supported:
-
-```bash
-PHISHREPORT_EMAIL_DIR="Saved emails" ./docker.sh run
-```
-
-An absolute folder path can also be used, such as `/c/Users/me/Downloads/emails`
-in Git Bash or `/home/me/emails` on Linux. This selects saved files; it does not
-connect to a mailbox or add support for otherwise unsupported MIME formats.
-
-The Docker helper creates an empty local `emails/` directory when the default
-folder is needed. Put exported messages there or select another folder; personal
-imports are excluded from Git and the Docker image.
-For a real-example demonstration, use
-`PHISHREPORT_EMAIL_DIR="tests/fixtures" ./docker.sh run` in Bash. These three public
-fixtures are necessary offline regression dependencies; their source and purpose
-are documented in `tests/fixtures/README.md`.
-
-The helper publishes menu option 3's upload page at
-http://localhost:8000, bound to the host's loopback interface.
-`.phishreport-data/`, root settings and logs are excluded from Git and the Docker image.
-
-`UPLOAD_PORT` defaults to 8000. Invalid text or out-of-range values fail the upload
-option safely. Keep the default with the Docker helper, which publishes port 8000.
-Corrupt settings are preserved; a folder can still be used for the current selection
-if its preference cannot be saved. Valid updates retain unrelated keys and replace
-the settings file atomically.
-
-### Check persistence after a restart
-
-Assess a supported real `.eml` using a configured API key, check that the app
-reports no local-save failure, and quit. Then run `./docker.sh run` again and
-select **4. View saved reports**. The same completed record should still exist,
-and the folder picker should retain `/emails`. Each team member records the tested
-commit and results on their own machine for the final submission version.
-
-An equivalent manual Bash run after setup uses directory mounts and the
-absolute application entry point:
-
-```bash
-docker run --rm -it -p 127.0.0.1:8000:8000 --env-file .env \
-  --mount "type=bind,source=$(pwd)/.phishreport-data,target=/data" \
-  --mount "type=bind,source=$(pwd)/emails,target=/emails,readonly" \
-  -w /data phishreport python /app/app/main.py
-```
-
-For Git Bash, use the helper, which explicitly converts host paths and prevents
-MSYS from rewriting container paths. A bare `docker run --rm ... phishreport`
-without a persistent directory mount still loses container-local reports.
-
-Verify the deliverables without external networking:
+To check the required suites directly in Docker without external network access:
 
 ```bash
 docker build -t phishreport .
 docker run --rm --network none phishreport python -m pytest tests/test_logic_manager.py -q
 docker run --rm --network none phishreport python -m pytest tests/test_application.py -q
-docker run --rm --network none phishreport python -m pytest tests/test_application.py -m demo -v
 ```
-
-## Submission documents and remaining gates
-
-Submission branch: `main`. Deadline: **14 October 2026, 23:59 Singapore time**.
-The report, current scope statement and release checklist are maintained locally
-in `.local/submission/` for separate course delivery, excluded from Git and Docker.
-The team confirms topic approval and Initial Details were completed before coding;
-the separate document delivery route is also confirmed. The reconciled current
-statement does not establish that every revision was separately approved: use the
-already approved version or confirm any material scope change with the team.
-Instructor interpretations of saved-history API scope and fresh-model repeatability
-remain unresolved in the GitHub record. Repository access/member clones and every
-member's final Docker checks need team confirmation. Rehearsal prepares the later
-demonstration; course receipts are retained when submission occurs.
-The complete compliance matrix, verification evidence and delivery checklist remain
-in the local submission audit. Reviewed local cleanup and completion of the report
-author placeholders also remain pending before final delivery.
-
-## Contributing
-
-The team uses `<type>/<issue-number>-<short-description>` branches, descriptive
-commits and focused pull requests to `main` linked to their issues. Behavior,
-tests, dependencies and documentation are committed in coherent blocks; original
-authorship and granular history are retained. The normal workflow requires a
-non-author review and resolved comments before merge. Arvin Lum explicitly waived
-teammate approval for the final audit session only; that exception does not apply
-to future work. CI is not teammate approval, and shared history is not force-pushed.
-
-CI runs Ruff, a tracked-Python class-definition check, pytest, a Docker build and
-network-disabled Docker tests. The automated manager-contract test also checks
-the procedural and terminal-I/O boundaries. Version tags trigger the existing
-test-gated GitHub Release workflow.
 
 ## Team contributions
 
-The records below distinguish original development from later integration.
-Linked commits and merged PRs provide the detailed authorship record; repository
-cleanup and refactoring do not transfer credit for earlier work.
+The following contributions are based on the project's recorded commits and merged pull requests. Links are provided for attribution and review.
 
 | Team member | Recorded contributions | Evidence |
 | --- | --- | --- |
