@@ -4,7 +4,7 @@
 
 PhishReport is a procedural Python CLI for checking suspicious messages. It sends each new message to the Groq API, validates the AI findings, and applies rules using those findings and the user's reported actions. It displays a priority, a rule-based score and a response checklist, then saves the assessment as JSON.
 
-This is the Phase 1 coursework application. The current code provides an integrated assessment flow; planned improvements and team decisions are in [ROADMAP.md](ROADMAP.md). A result with no clear indicators does not guarantee that a message is safe.
+This is the Phase 1 coursework application. The current code provides an integrated assessment flow; its implemented behavior, limitations and remaining submission checks are documented below. A result with no clear indicators does not guarantee that a message is safe.
 
 ## Project layout
 
@@ -25,20 +25,20 @@ This is the Phase 1 coursework application. The current code provides an integra
 | `tests/fixtures/` | Three essential, pinned public email fixtures; provenance included. |
 | `conftest.py` | Shared pytest import setup and registration of the `demo` selection. |
 
-## My coding practices
+## Coding practices
 
-I follow Week 4, slides 32-42, within the Phase 1 manager requirements.
+The application follows Week 4, slides 32-42, within the Phase 1 manager requirements.
 The four named manager files contain their required functions. Supporting
 modules have descriptive names directly under app/; they do not replace managers.
 
 | Lecture principle | Application in this project |
 | --- | --- |
-| Single responsibility | I keep input/display, API validation, scoring and report persistence in their respective managers. |
+| Single responsibility | Input/display, API validation, scoring and report persistence remain in their respective managers. |
 | DRY | Manual, folder and browser routes reuse one record/exposure builder and one email parser. |
-| KISS | I use functions and dictionaries, with explicit helper names and no extra framework. |
+| KISS | Functions and dictionaries use explicit helper names without an extra framework. |
 | Input / process / output | main.py coordinates validated input, AI, domain rules, JSON save and display. |
-| Modular programming | I keep focused functions, typed public contracts, tested commit blocks and CI. |
-| Validation | I validate messages, MIME, AI schema/source, stored records, saved folder paths and logging levels before use. |
+| Modular programming | Focused functions, typed public contracts, tested commit blocks and CI support maintainability. |
+| Validation | Messages, MIME, AI schema/source, stored records, saved folder paths and logging levels are checked before use. |
 | Meaningful naming | local_settings, get_setting and save_setting describe their purpose without a generic misc package. |
 
 ## Set up
@@ -166,7 +166,7 @@ and 50,000 final message characters (including the subject). Browser uploads
 reject all other types with: "Only .eml email files are supported. Images and
 attachments are not analysed." Oversized browser uploads return HTTP 413;
 format/type errors return HTTP 400. Invalid imports
-display an error and ask for another file. These limits are our implementation
+display an error and ask for another file. These limits are team implementation
 choices, not additional coursework requirements.
 
 The browser uploader also limits requests and preserves original file bytes.
@@ -176,7 +176,7 @@ cannot infer those actions from email content.
 
 ## Run Docker with persistent reports
 
-I create `.env` as described above, start Docker, then build, test and run:
+Create `.env` as described above, start Docker, then build, test and run:
 
 ```bash
 ./docker.sh build
@@ -184,54 +184,54 @@ I create `.env` as described above, start Docker, then build, test and run:
 ./docker.sh run
 ```
 
-On Windows I use **Git Bash**, or WSL with Docker integration enabled. On macOS
-and Linux I use Bash; if needed I first run `chmod +x docker.sh`. The helper
-resolves paths from its own project directory, so I can also invoke it from
+On Windows, use **Git Bash**, or WSL with Docker integration enabled. On macOS
+and Linux, use Bash; if needed, first run `chmod +x docker.sh`. The helper
+resolves paths from its own project directory, so it can also be invoked from
 another working directory. Its test command disables external networking.
 
-My Docker reports, settings and logs are stored in **`.phishreport-data/`** on
+Docker reports, settings and logs are stored in **`.phishreport-data/`** on
 the host. The helper mounts that directory at `/data`, sets it as the working
-directory and launches `/app/app/main.py`. I mount the directory rather than
+directory and launches `/app/app/main.py`. It mounts the directory rather than
 `reports.json` itself because the data manager saves by atomically replacing the
 file; replacing an individually bind-mounted file fails in Docker.
 
-On first setup I copy existing root `reports.json`, `.phishreport_config.json`
+On first setup, the helper copies existing root `reports.json`, `.phishreport_config.json`
 and logs into the data directory if their destinations do not already exist.
 Later runs preserve the newer destination files. The original files remain
-untouched; this is a one-time copy, not ongoing synchronization. I do not reset
-corrupt history. After migration I use `.phishreport-data/reports.json` for my
+untouched; this is a one-time copy, not ongoing synchronization. The helper does not reset
+corrupt history. After migration, Docker uses `.phishreport-data/reports.json` for
 Docker history; running host Python from the repository root still uses the
 separate root `reports.json`.
 
 ### Local history and recovery
 
-I save new assessments locally as schema version 2: the channel, original
+The application saves new assessments locally as schema version 2: the channel, original
 message and explained result. No shared database is needed. Supported older
 records remain readable without manufacturing missing fields.
 
 Missing history starts empty. Unreadable, malformed JSON or invalid stored
 field types are logged and handled without crashing the menu. The original
 file is preserved; saving refuses to overwrite unreadable or corrupt history.
-I back up and inspect that file before correcting it, rather than resetting it
+Back up and inspect that file before correcting it, rather than resetting it
 silently. An assessment whose save fails is displayed with a save warning;
 it is different from an AI failure, which produces no completed assessment.
 
 ### Email folder inside Docker
 
-I select **2. Import an email** and enter **`/emails`** when asked for the email
-folder. The helper mounts my project's `emails/` directory there read-only. The
+Select **2. Import an email** and enter **`/emails`** when asked for the email
+folder. The helper mounts the project's `emails/` directory there read-only. The
 folder picker then remembers this container path across runs. A saved Windows or
 macOS host path is not automatically available inside a container; if old copied
-settings point to an unavailable path, I enter `/emails` when prompted again.
+settings point to an unavailable path, enter `/emails` when prompted again.
 
-To use another folder, I set `PHISHREPORT_EMAIL_DIR` for the run. Relative paths
+To use another folder, set `PHISHREPORT_EMAIL_DIR` for the run. Relative paths
 are resolved against the project, and spaces are supported:
 
 ```bash
 PHISHREPORT_EMAIL_DIR="Saved emails" ./docker.sh run
 ```
 
-I can also use an absolute folder path, such as `/c/Users/me/Downloads/emails`
+An absolute folder path can also be used, such as `/c/Users/me/Downloads/emails`
 in Git Bash or `/home/me/emails` on Linux. This selects saved files; it does not
 connect to a mailbox or add support for otherwise unsupported MIME formats.
 
@@ -244,8 +244,8 @@ fixtures are necessary offline regression dependencies; their source and purpose
 are documented in `tests/fixtures/README.md`.
 
 The helper publishes menu option 3's upload page at
-http://localhost:8000, bound to the host's loopback interface. I keep
-`.phishreport-data/`, root settings and logs out of Git and the Docker image.
+http://localhost:8000, bound to the host's loopback interface.
+`.phishreport-data/`, root settings and logs are excluded from Git and the Docker image.
 
 `UPLOAD_PORT` defaults to 8000. Invalid text or out-of-range values fail the upload
 option safely. Keep the default with the Docker helper, which publishes port 8000.
@@ -255,13 +255,13 @@ the settings file atomically.
 
 ### Check persistence after a restart
 
-I assess a supported real `.eml` using a configured API key, check that the app
-reports no local-save failure, and quit. I then run `./docker.sh run` again and
+Assess a supported real `.eml` using a configured API key, check that the app
+reports no local-save failure, and quit. Then run `./docker.sh run` again and
 select **4. View saved reports**. The same completed record should still exist,
-and the folder picker should retain `/emails`. I record the tested commit and
-results for my laptop; each teammate must verify the final submission version.
+and the folder picker should retain `/emails`. Each team member records the tested
+commit and results on their own machine for the final submission version.
 
-For an equivalent manual Bash run after setup, I use directory mounts and the
+An equivalent manual Bash run after setup uses directory mounts and the
 absolute application entry point:
 
 ```bash
@@ -271,7 +271,7 @@ docker run --rm -it -p 127.0.0.1:8000:8000 --env-file .env \
   -w /data phishreport python /app/app/main.py
 ```
 
-For Git Bash I use the helper, which explicitly converts host paths and prevents
+For Git Bash, use the helper, which explicitly converts host paths and prevents
 MSYS from rewriting container paths. A bare `docker run --rm ... phishreport`
 without a persistent directory mount still loses container-local reports.
 
@@ -297,8 +297,36 @@ Instructor interpretations of saved-history API scope and fresh-model repeatabil
 remain unresolved in the GitHub record. Repository access/member clones and every
 member's final Docker checks need team confirmation. Rehearsal prepares the later
 demonstration; course receipts are retained when submission occurs.
-[ROADMAP.md](ROADMAP.md) records G1-G8 and the normal review workflow.
+The complete compliance matrix, verification evidence and delivery checklist remain
+in the local submission audit. Reviewed local cleanup and completion of the report
+author placeholders also remain pending before final delivery.
 
 ## Contributing
 
-See the [proposed team workflow](ROADMAP.md#team-standards-and-task-instructions) for task issues, branch names, checks and pull request reviews.
+The team uses `<type>/<issue-number>-<short-description>` branches, descriptive
+commits and focused pull requests to `main` linked to their issues. Behavior,
+tests, dependencies and documentation are committed in coherent blocks; original
+authorship and granular history are retained. The normal workflow requires a
+non-author review and resolved comments before merge. Arvin Lum explicitly waived
+teammate approval for the final audit session only; that exception does not apply
+to future work. CI is not teammate approval, and shared history is not force-pushed.
+
+CI runs Ruff, a tracked-Python class-definition check, pytest, a Docker build and
+network-disabled Docker tests. The automated manager-contract test also checks
+the procedural and terminal-I/O boundaries. Version tags trigger the existing
+test-gated GitHub Release workflow.
+
+## Team contributions
+
+The records below distinguish original development from later integration.
+Linked commits and merged PRs provide the detailed authorship record; repository
+cleanup and refactoring do not transfer credit for earlier work.
+
+| Team member | Recorded contributions | Evidence |
+| --- | --- | --- |
+| Lee Guan Feng | Application scaffolding, Groq transport, initial offline tests, Docker helper, CI/Ruff/class guard and release automation; later folder preferences/pagination, browser uploader, diagnostic logging and configurable retries. | [Foundation](https://github.com/lgf2111/INF1103-Project1-P9-G04/commit/fa11bf3), [offline tests](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/7), [release workflow](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/11), [folder picker](https://github.com/lgf2111/INF1103-Project1-P9-G04/commit/f91c0b5), [uploader](https://github.com/lgf2111/INF1103-Project1-P9-G04/commit/e9239a7), [logging](https://github.com/lgf2111/INF1103-Project1-P9-G04/commit/210a6cd). |
+| Jeremy Goh | Validated manual input, exposure questions and reusable choice validation; EML import, MIME/decoding limits, EML-only upload restrictions and associated regressions; co-authored the common real-email parser integration. | [Input](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/19), [choice validation](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/23), [EML import](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/39), [upload hardening](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/68), [co-authored parser](https://github.com/lgf2111/INF1103-Project1-P9-G04/commit/18409ab). |
+| Bryan Lee | Result, detailed-record and saved-summary displays, including the related display regressions. | [Display implementation](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/22). |
+| Bryan Ow | Initial record validation/evaluation and score/priority persistence; null/flat saved-result displays; later credential-only, interaction-only and uncertainty scoring refinements, logic tests and Docker persistence work. | [Initial evaluation](https://github.com/lgf2111/INF1103-Project1-P9-G04/commit/a442dc4), [saved displays](https://github.com/lgf2111/INF1103-Project1-P9-G04/commit/d5a4f9a), [policy and Docker](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/64), [co-authored persistence fix](https://github.com/lgf2111/INF1103-Project1-P9-G04/commit/2f6c56a). |
+| Xavier Heng | Extraction prompts/validation and contact-format boundaries, early AI-to-logic integration, public route interface and logic tests; migrated storage to the current version-2 JSON contract and adapted its tests. Earlier database work remains in Git history and is superseded in the submitted application. | [Extraction validation](https://github.com/lgf2111/INF1103-Project1-P9-G04/commit/f794b76), [contact boundaries](https://github.com/lgf2111/INF1103-Project1-P9-G04/commit/613d4fb), [route interface](https://github.com/lgf2111/INF1103-Project1-P9-G04/commit/abe2828), [JSON migration](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/69). |
+| Arvin Lum | Strict API/envelope/schema/source validation, combined single-call assessment and first-match policy integration; real-email/browser reliability, atomic history recovery and Docker fixes; physical manager files, procedural helpers, submission audit, regression consolidation/showcase and document reconciliation. These changes retain the original layer contributions above. | [AI integration](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/25), [real-email integration](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/59), [Docker fix, co-authored with Lee Guan Feng and Bryan Ow](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/67), [history recovery](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/72), [manager files](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/73), [final audit](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/79), [test simplification](https://github.com/lgf2111/INF1103-Project1-P9-G04/pull/81). |
