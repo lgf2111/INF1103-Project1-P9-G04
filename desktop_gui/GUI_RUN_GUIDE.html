@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Run the PhishReport Docker GUI in a native X11 window or through the browser-based noVNC fallback.">
+  <title>Run the PhishReport GUI | Quick start</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17212b;
+      --muted: #526170;
+      --line: #dce3e9;
+      --surface: #ffffff;
+      --canvas: #f2f5f7;
+      --accent: #1659a7;
+      --accent-soft: #edf5fd;
+      --warning: #805000;
+      --warning-soft: #fff7e6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--canvas);
+      line-height: 1.6;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; }
+    header {
+      padding: 54px 24px 44px;
+      color: #fff;
+      background: #14283b;
+    }
+    header > div, main, footer { width: min(940px, 100%); margin: 0 auto; }
+    .eyebrow {
+      margin: 0 0 10px;
+      color: #b7d4ee;
+      font-size: .78rem;
+      font-weight: 700;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    h1 { max-width: 700px; margin: 0; font-size: clamp(2rem, 5vw, 3.4rem); line-height: 1.08; }
+    header p:last-child { max-width: 700px; margin: 18px 0 0; color: #d5e0e9; font-size: 1.08rem; }
+    main { padding: 28px 20px 56px; }
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 24px;
+    }
+    nav a, .button {
+      display: inline-block;
+      padding: 9px 14px;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      color: var(--accent);
+      background: var(--surface);
+      font-weight: 650;
+      text-decoration: none;
+    }
+    nav a:hover, .button:hover { border-color: var(--accent); background: var(--accent-soft); }
+    section, .callout {
+      margin: 18px 0;
+      padding: 24px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+    }
+    section h2 { margin: 0 0 10px; font-size: 1.5rem; line-height: 1.25; }
+    section h3 { margin: 22px 0 7px; font-size: 1.05rem; }
+    p { margin: 10px 0; }
+    .muted { color: var(--muted); }
+    .callout {
+      border-color: #c9def1;
+      background: var(--accent-soft);
+    }
+    .warning {
+      border-color: #ecd8a8;
+      color: #503800;
+      background: var(--warning-soft);
+    }
+    .steps { padding-left: 1.35rem; }
+    .steps li { margin: 10px 0; padding-left: .2rem; }
+    code {
+      padding: .12rem .35rem;
+      border-radius: 4px;
+      background: #edf1f4;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .92em;
+      overflow-wrap: anywhere;
+    }
+    pre {
+      overflow-x: auto;
+      margin: 12px 0;
+      padding: 15px 17px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #f7f9fa;
+      line-height: 1.5;
+    }
+    pre code { padding: 0; background: transparent; }
+    .credentials {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .credential {
+      padding: 12px 14px;
+      border: 1px solid #d5e4f1;
+      border-radius: 8px;
+      background: #fff;
+    }
+    .credential strong { display: block; margin-bottom: 3px; font-size: .82rem; color: var(--muted); }
+    .faq dt { margin-top: 17px; font-weight: 700; }
+    .faq dd { margin: 5px 0 0; color: var(--muted); }
+    footer { padding: 0 20px 36px; color: var(--muted); font-size: .92rem; }
+    footer a { color: var(--accent); }
+    a:focus-visible, button:focus-visible { outline: 3px solid #f2b544; outline-offset: 3px; }
+    @media (max-width: 600px) {
+      header { padding: 40px 20px 34px; }
+      main { padding: 20px 14px 40px; }
+      section, .callout { padding: 19px; }
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div>
+    <p class="eyebrow">PhishReport · Docker GUI</p>
+    <h1>Run the desktop GUI</h1>
+    <p>Choose a native host window for the closest desktop feel, or use the browser-based fallback if you don't want to install an X server.</p>
+  </div>
+</header>
+
+<main>
+  <nav aria-label="Guide sections">
+    <a href="#before-you-start">Before you start</a>
+    <a href="#native">Native window</a>
+    <a href="#web">Browser fallback</a>
+    <a href="#troubleshooting">Troubleshooting</a>
+  </nav>
+
+  <div class="callout">
+    <strong>What this demo includes:</strong> The GUI opens in Docker and uses a local, fixed demo authentication service. You can try sign-in, registration/reset UI, the empty Overview, account menu, locked Settings, and sign-out. Message assessment and report-history screens are not part of this desktop GUI yet.
+  </div>
+
+  <section id="before-you-start">
+    <h2>Before you start</h2>
+    <ol class="steps">
+      <li>Install and start <a href="https://www.docker.com/products/docker-desktop/">Docker Desktop</a>.</li>
+      <li>Get the latest project files that include <code>run.sh</code>.</li>
+      <li>Open a terminal at the project folder. On Windows, use <strong>Git Bash</strong> or <strong>WSL</strong> for the commands below.</li>
+      <li>No Groq API key or host Python installation is needed for the GUI demo.</li>
+    </ol>
+    <p class="muted">The first launch builds the GUI Docker image and can take several minutes. Later launches reuse the image unless the source or Docker dependencies change.</p>
+  </section>
+
+  <section id="native">
+    <h2>Option A: native X11 window</h2>
+    <p>The app itself remains inside Docker; its window is drawn by an X server running on your computer. This is a desktop window, not a browser tab.</p>
+
+    <h3>macOS: XQuartz</h3>
+    <ol class="steps">
+      <li>Install <a href="https://www.xquartz.org/">XQuartz</a>, then open it from Applications or Spotlight.</li>
+      <li>Open <strong>XQuartz → Settings (or Preferences) → Security</strong>. Enable <strong>Authenticate connections</strong> and <strong>Allow connections from network clients</strong>.</li>
+      <li>Quit XQuartz completely and reopen it so the settings take effect.</li>
+    </ol>
+    <p>The launcher securely passes the current XQuartz authorization cookie to the GUI container using a temporary, read-only file and removes that file when the app exits. Do not use <code>xhost +</code>.</p>
+
+    <h3>Windows: VcXsrv</h3>
+    <ol class="steps">
+      <li>Install <a href="https://sourceforge.net/projects/vcxsrv/">VcXsrv</a> and start XLaunch with display <code>0</code>.</li>
+      <li>Allow VcXsrv through Windows Firewall only on a trusted <strong>Private</strong> network.</li>
+      <li>If VcXsrv access control blocks Docker Desktop, it may require the XLaunch <strong>Disable access control</strong> option. Use this only on a trusted network, close VcXsrv after use, and prefer the browser fallback if unsure.</li>
+    </ol>
+    <p class="muted">Native display support depends on the host X server and its access-control configuration. The macOS launcher passes XQuartz's cookie automatically.</p>
+
+    <h3>Launch</h3>
+    <p>From the repository root:</p>
+    <pre><code>bash run.sh gui</code></pre>
+    <p>The app should open in a native window. When finished, close the GUI or press <kbd>Ctrl</kbd>+<kbd>C</kbd> in the terminal. The temporary demo-auth container and Docker network are cleaned up automatically.</p>
+  </section>
+
+  <section id="web">
+    <h2>Option B: browser-based fallback</h2>
+    <p>Use this mode if you don't want to install/configure XQuartz or VcXsrv. The app still runs in Docker, but noVNC streams its virtual display to a local browser.</p>
+    <pre><code>bash run.sh gui-web</code></pre>
+    <p>Open the local address printed by the command. If needed, use:</p>
+    <pre><code>http://localhost:6080/vnc.html?autoconnect=true&amp;resize=scale</code></pre>
+    <p>The service is bound to <code>127.0.0.1</code>. Keep it local; do not expose the noVNC port to a public network. Press <kbd>Ctrl</kbd>+<kbd>C</kbd> in the terminal to stop it.</p>
+  </section>
+
+  <section>
+    <h2>Demo sign-in</h2>
+    <p>The local development API returns one fixed demo user. It doesn't create accounts, send email, or store real user data.</p>
+    <div class="credentials">
+      <div class="credential"><strong>Email</strong><code>demo@phishreport.test</code></div>
+      <div class="credential"><strong>Password</strong><code>phishreport-demo</code></div>
+    </div>
+    <p class="muted">Do not reuse this demo service or credentials for real accounts or production.</p>
+  </section>
+
+  <section id="troubleshooting">
+    <h2>Troubleshooting</h2>
+    <dl class="faq">
+      <dt>Native macOS launch says “could not connect to display”</dt>
+      <dd>Confirm XQuartz is open and both Security options above are enabled. In macOS Terminal, check its listener with <code>nc -vz 127.0.0.1 6000</code>. Then check Docker can reach it:
+        <pre><code>docker run --rm phishreport-gui-native python -c 'import socket; socket.create_connection(("host.docker.internal", 6000), 3); print("XQuartz reachable from Docker")'</code></pre>
+        If the first check fails, restart XQuartz after changing Security settings. If only the Docker check fails, check macOS firewall settings and Docker Desktop.
+      </dd>
+      <dt>“Authorization required” appears</dt>
+      <dd>Enable <strong>Authenticate connections</strong> in XQuartz Security and restart XQuartz. The current launcher should transfer the authorization cookie automatically. Don't bypass authorization with <code>xhost +</code>.</dd>
+      <dt>Qt mentions <code>xcb-cursor0</code></dt>
+      <dd>This may be a generic Qt platform-plugin hint. The GUI image includes <code>libxcb-cursor0</code>; first verify the host display and X11 authorization are reachable.</dd>
+      <dt>I just want to try the UI</dt>
+      <dd>Use <code>bash run.sh gui-web</code>. It avoids host X-server setup.</dd>
+      <dt>The Docker command or target is missing</dt>
+      <dd>Make sure you have the latest project version with <code>run.sh</code>, and that Docker Desktop is running. On Windows, run from Git Bash or WSL rather than PowerShell.</dd>
+    </dl>
+  </section>
+
+  <div class="callout warning">
+    <strong>Security note:</strong> X11 display access can expose or control windows in the X server session. Keep XQuartz/VcXsrv limited to trusted clients and networks. The demo authentication API is for local UI testing only.
+  </div>
+</main>
+
+<footer>
+  <p>More detail: <a href="README.md">Desktop GUI README</a> · <a href="../README.md">Project README</a></p>
+</footer>
+</body>
+</html>

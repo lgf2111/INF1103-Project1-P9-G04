@@ -69,12 +69,20 @@ You can manually check a suspicious message, import or upload an `.eml` email, a
 
 The optional Python desktop GUI adds authentication screens without replacing the CLI. See [`desktop_gui/README.md`](desktop_gui/README.md) for setup; the current backend API proposal is in [`desktop_gui/BACKEND_HANDOFF.md`](desktop_gui/BACKEND_HANDOFF.md).
 
+The next desktop assessment and saved-report screens are described in the [frontend handoff](desktop_gui/FRONTEND_HANDOFF.md) ([HTML](desktop_gui/FRONTEND_HANDOFF.html)). The [backend handoff](desktop_gui/BACKEND_HANDOFF.md) ([HTML](desktop_gui/BACKEND_HANDOFF.html)) describes the authentication contract and proposed assessment/history APIs the GUI will need; proposed APIs require backend agreement.
+
 ```bash
 python -m pip install -r desktop_gui/requirements.txt
 python -m desktop_gui.main
 ```
 
-To display the desktop GUI from Docker Desktop on macOS or Windows, run `./docker.sh gui` (Git Bash/WSL on Windows) or follow the cross-platform Docker commands in [`desktop_gui/README.md`](desktop_gui/README.md). The Docker GUI appears in a local browser; the standard Docker image continues to run the CLI.
+To display the desktop GUI from Docker in a native host window, install an X
+server (XQuartz on macOS or VcXsrv on Windows) and run `bash run.sh gui` as
+described in the [GUI run guide](desktop_gui/GUI_RUN_GUIDE.html). On Windows,
+run the Bash commands from Git Bash or WSL. The command starts a local demo
+authentication API automatically. The browser-based noVNC option remains
+available as `bash run.sh gui-web`. The standard Docker image continues to run
+the CLI.
 
 Run the automated tests:
 
@@ -90,7 +98,7 @@ python -m pytest tests/test_application.py -q
 python -m pytest tests/test_application.py -m demo -v
 ```
 
-The README currently documents **640 test cases** (including parameter variations): 72 logic tests and 568 application tests, of which 12 are showcase cases. The tests mock external AI requests; they do not measure live-model detection accuracy.
+The logic and application suites contain **643 test cases** (including parameter variations): 72 logic tests and 571 application tests, of which 12 are showcase cases. The tests mock external AI requests; they do not measure live-model detection accuracy.
 
 ### Assessment policy
 
@@ -121,15 +129,78 @@ Both `.eml` methods use the same email parser. The application reads supported t
 
 ## Run Docker with persistent reports
 
-With Docker running and `.env` configured, use **Git Bash** on Windows (or Bash on macOS/Linux):
+Install and start Docker Desktop (or Docker Engine on Linux). For CLI analysis,
+copy `.env.example` to `.env` and add your Groq API key. On Windows, use
+PowerShell to prepare the settings file, then open Git Bash in the repository
+(Git for Windows) or use WSL:
 
-```bash
-./docker.sh build
-./docker.sh test
-./docker.sh run
+```powershell
+Copy-Item .env.example .env
+notepad .env
 ```
 
-Docker keeps reports, settings and logs in the host project's `.phishreport-data/` directory so they remain available between runs. The helper also mounts the project's `emails/` directory for local `.eml` imports and makes the browser uploader available at `http://localhost:8000`.
+On macOS/Linux, prepare it with:
+
+```bash
+cp .env.example .env
+# Edit .env and set GROQ_API_KEY.
+```
+
+Then run commands from the repository root in Bash on macOS/Linux or Git
+Bash/WSL on Windows:
+
+```bash
+bash run.sh build
+bash run.sh test
+bash run.sh run
+```
+
+`run.sh` builds the image automatically when needed, so `bash run.sh run` is
+also enough for a first launch after configuring `.env`. Docker keeps reports,
+settings and logs in the host project's `.phishreport-data/` directory so they
+remain available between runs. The runner mounts the project's `emails/`
+directory for local `.eml` imports and makes the browser uploader available at
+`http://localhost:8000`.
+
+To try the desktop GUI in a native X11 window with its fixed demo account (no
+Groq key required), install and start the host display server first:
+
+- **macOS:** Install and start [XQuartz](https://www.xquartz.org/), enable
+  **Authenticate connections** and **Allow connections from network clients**
+  in XQuartz Settings → Security, then quit and restart XQuartz. The runner
+  passes a temporary Xauthority cookie to the GUI container. Keep XQuartz
+  access restricted to trusted local clients; do not use a blanket `xhost +`
+  rule.
+- **Windows:** Install and start [VcXsrv](https://sourceforge.net/projects/vcxsrv/)
+  on display `0`. Allow it through Windows Firewall only on private networks.
+  VcXsrv may require disabling access control for the Docker container to
+  connect; use it only on a trusted network and close it after testing.
+
+Then run from Bash (Git Bash/WSL on Windows):
+
+```bash
+bash run.sh gui
+```
+
+The application opens in an X11 window on the host. Sign in with
+`demo@phishreport.test` / `phishreport-demo`. The runner starts and cleans up
+the development-only demo auth API on a private Docker network. To use another
+auth API, set `PHISHREPORT_API_URL` before starting the command. The default
+display is `host.docker.internal:0`; override it with `PHISHREPORT_DISPLAY` if
+your X server uses a different address.
+If macOS reports that the display cannot be opened, verify XQuartz is
+listening on TCP port 6000 (`nc -vz 127.0.0.1 6000`) and reachable from the
+container as described in [`desktop_gui/README.md`](desktop_gui/README.md).
+
+If installing a host X server is not desirable, the browser-streamed mode is
+still available:
+
+```bash
+bash run.sh gui-web
+```
+
+Open the printed local URL in a browser. The noVNC port is bound to
+`127.0.0.1`; do not expose it publicly.
 
 To check the required suites directly in Docker without external network access:
 
