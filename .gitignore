@@ -3,6 +3,7 @@
 *.pdf
 !docs/*.pdf
 !docs/**/*.pdf
+docs/personal/
 
 # API keys and other machine-specific settings
 .env
