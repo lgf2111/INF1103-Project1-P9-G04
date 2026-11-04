@@ -13,6 +13,7 @@
 # You need Docker Desktop open, and a .env file with your GROQ_API_KEY.
 
 IMAGE="phishreport"
+GUI_IMAGE="${IMAGE}-gui"
 
 # stop and show the error if any command fails
 set -e
@@ -112,6 +113,17 @@ elif [ "$command" = "test" ]; then
     echo "Running the tests inside the container..."
     docker run --rm --network none "$IMAGE" pytest
 
+elif [ "$command" = "gui" ]; then
+    API_URL="${PHISHREPORT_API_URL:-http://host.docker.internal:8000}"
+    echo "Building the desktop GUI image..."
+    docker build --target gui -t "$GUI_IMAGE" "$(docker_path "$PROJECT_DIR")"
+    echo "Open http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
+    echo "Authentication API: $API_URL"
+    docker run --rm -it \
+        -p 127.0.0.1:6080:6080 \
+        -e "PHISHREPORT_API_URL=$API_URL" \
+        "$GUI_IMAGE"
+
 elif [ "$command" = "shell" ]; then
     # Open an interactive shell INSIDE the container so you can look around
     # (Docker containers have no SSH; this is how you "get inside" one).
@@ -134,6 +146,7 @@ else
     echo ""
     echo "  build   build the Docker image"
     echo "  run     run the app (needs .env with GROQ_API_KEY)"
+    echo "  gui     build and open the desktop GUI in a local browser"
     echo "  test    run the tests in the container"
     echo "  shell   open a shell inside the container"
     echo "  clean   delete the image"

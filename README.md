@@ -65,6 +65,17 @@ python app/main.py
 
 You can manually check a suspicious message, import or upload an `.eml` email, and view saved reports. New assessments require a valid response from the Groq API.
 
+### Desktop authentication GUI
+
+The optional Python desktop GUI adds authentication screens without replacing the CLI. See [`desktop_gui/README.md`](desktop_gui/README.md) for setup; the current backend API proposal is in [`desktop_gui/BACKEND_HANDOFF.md`](desktop_gui/BACKEND_HANDOFF.md).
+
+```bash
+python -m pip install -r desktop_gui/requirements.txt
+python -m desktop_gui.main
+```
+
+To display the desktop GUI from Docker Desktop on macOS or Windows, run `./docker.sh gui` (Git Bash/WSL on Windows) or follow the cross-platform Docker commands in [`desktop_gui/README.md`](desktop_gui/README.md). The Docker GUI appears in a local browser; the standard Docker image continues to run the CLI.
+
 Run the automated tests:
 
 ```bash
