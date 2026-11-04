@@ -1,6 +1,22 @@
+from pathlib import Path
+
 import pytest
 
 from desktop_gui.docker_entrypoint import _validate_display_size
+
+
+def test_dockerfile_defines_native_x11_gui_target():
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
+    assert "FROM base AS gui-native" in dockerfile
+    assert "ENV DISPLAY=host.docker.internal:0" in dockerfile
+    assert 'CMD ["python", "-m", "desktop_gui.main"]' in dockerfile
+
+
+def test_dockerfile_keeps_novnc_gui_target():
+    dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
+    assert "FROM gui-native AS gui" in dockerfile
+    assert "EXPOSE 6080" in dockerfile
+    assert 'CMD ["python", "-m", "desktop_gui.docker_entrypoint"]' in dockerfile
 
 
 @pytest.mark.parametrize(
