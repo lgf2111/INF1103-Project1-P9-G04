@@ -6,6 +6,9 @@ from copy import deepcopy
 
 import logic_manager
 import pytest
+from logic_core import LogicManager
+from logic_core.rule_engine import PriorityRuleEngine
+from logic_core.rules import DefaultRule, SuspiciousRule
 
 
 # Response-priority rules use fictional, already validated AI findings.
@@ -137,6 +140,44 @@ def test_response_priority_scenarios(changes, expected_score, expected_priority)
         "priority": expected_priority,
     }
     assert record == original
+
+
+def test_class_based_manager_evaluates_ai_enriched_record():
+    manager = LogicManager()
+    record = _assessment_record(
+        findings={"suspicious": True, "credential_request": True}
+    )
+    original = deepcopy(record)
+
+    assert manager.score(record) == 60
+    assert manager.route(record) == {"score": 60, "priority": "MEDIUM"}
+    result = manager.evaluate(record)
+
+    assert result["score"] == 60
+    assert result["priority"] == "MEDIUM"
+    assert result["reasons"] and result["checklist"]
+    assert record == original
+
+
+def test_rule_engine_uses_injected_rules_in_order():
+    record = _assessment_record(
+        findings={"suspicious": True, "credential_request": True}
+    )
+    manager = LogicManager(
+        rule_engine=PriorityRuleEngine((SuspiciousRule(), DefaultRule()))
+    )
+
+    # The shared rule contract lets the engine use different concrete rules
+    # without adding rule-specific branches to the engine.
+    assert manager.score(record) == 45
+
+
+def test_class_based_manager_rejects_invalid_ai_findings():
+    manager = LogicManager()
+    record = _assessment_record(findings={"suspicious": "false"})
+
+    with pytest.raises(ValueError, match="AI finding must be true or false"):
+        manager.evaluate(record)
 
 
 def test_contact_link_and_file_presence_do_not_increase_response_priority():
