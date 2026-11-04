@@ -137,7 +137,9 @@ def test_login_uses_background_request_and_preserves_password_whitespace(app):
 
         assert api.login_calls == [("person@example.com", password)]
         assert window._user == {"id": "user-1", "email": "person@example.com"}
-        assert window.stack.currentWidget() is window.account_page
+        assert window.root_stack.currentWidget() is window.dashboard_shell
+        assert window.app_pages.currentWidget() is window.dashboard_page
+        assert window.profile_button.text() == "P"
     finally:
         window.close()
 
@@ -151,5 +153,51 @@ def test_login_rejects_empty_password_before_backend_call(app):
         assert window.auth_pages["login"].field_errors["password"].text() == (
             "Enter your password."
         )
+    finally:
+        window.close()
+
+
+def test_profile_menu_opens_locked_settings_and_returns_to_overview(app):
+    window, _api = make_window()
+    try:
+        window._signed_in(
+            {"id": "user-1", "email": "person@example.com", "name": "Pat Example"}
+        )
+        assert window.profile_button.text() == "PE"
+        assert window.profile_button.accessibleName() == "Account menu for Pat Example"
+
+        window.settings_action.trigger()
+        assert window.app_pages.currentWidget() is window.settings_page
+        assert any(
+            label.text() == "Settings are locked"
+            for label in window.settings_page.findChildren(QLabel)
+        )
+
+        back_button = next(
+            button
+            for button in window.settings_page.findChildren(QPushButton)
+            if button.text() == "Back to overview"
+        )
+        back_button.click()
+        assert window.app_pages.currentWidget() is window.dashboard_page
+    finally:
+        window.close()
+
+
+def test_profile_menu_sign_out_returns_to_login(app):
+    window, api = make_window()
+    try:
+        window._signed_in({"id": "user-1", "email": "person@example.com"})
+        window.sign_out_action.trigger()
+
+        for _ in range(20):
+            QTest.qWait(25)
+            if window._user is None:
+                break
+
+        assert api.sign_out_calls == 1
+        assert window._user is None
+        assert window.root_stack.currentWidget() is window.auth_root
+        assert window.stack.currentWidget() is window.auth_pages["login"]
     finally:
         window.close()

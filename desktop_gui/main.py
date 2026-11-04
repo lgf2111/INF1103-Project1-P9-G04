@@ -10,7 +10,7 @@ from collections.abc import Callable
 from functools import partial
 from typing import Any
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal, Slot
+from PySide6.QtCore import QPoint, Qt, QThread, QTimer, Signal, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QMainWindow,
+    QMenu,
     QPushButton,
     QStackedWidget,
     QVBoxLayout,
@@ -92,6 +93,38 @@ QPushButton#textButton {
 }
 QPushButton#textButton:hover { color: #1d5fbf; }
 QFrame#rule { color: #d7dbe0; }
+QWidget#appShell { background: #ffffff; }
+QWidget#appHeader { background: #ffffff; border-bottom: 1px solid #e8e8e8; }
+QLabel#appBrand { font-size: 16px; font-weight: 600; }
+QPushButton#profileButton {
+    min-width: 40px;
+    max-width: 40px;
+    min-height: 40px;
+    max-height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: 20px;
+    background: #e8edf2;
+    color: #202a35;
+    font-weight: 600;
+}
+QPushButton#profileButton:hover { background: #dce3ea; }
+QMenu {
+    background: #ffffff;
+    border: 1px solid #d7dbe0;
+    padding: 5px;
+}
+QMenu::item { min-height: 32px; padding: 0 12px; }
+QMenu::item:selected { background: #f2f4f7; }
+QMenu::item:disabled { color: #555b63; }
+QWidget#appCanvas { background: #ffffff; }
+QFrame#emptyPanel {
+    border: 1px solid #e8e8e8;
+    border-radius: 8px;
+    background: #ffffff;
+}
+QLabel#panelTitle { font-size: 16px; font-weight: 500; }
+QLabel#lockedTitle { font-size: 18px; font-weight: 500; }
 """
 
 
@@ -483,7 +516,12 @@ class MainWindow(QMainWindow):
 
         root_layout.addWidget(self.brand_panel, 9)
         root_layout.addWidget(self.pages, 11)
-        self.setCentralWidget(root)
+        self.root_stack = QStackedWidget()
+        self.auth_root = root
+        self.root_stack.addWidget(root)
+        self.dashboard_shell = self._build_dashboard_shell()
+        self.root_stack.addWidget(self.dashboard_shell)
+        self.setCentralWidget(self.root_stack)
         self.setStyleSheet(STYLESHEET)
         self.show_page("reset" if reset_token else "login")
 
@@ -494,6 +532,7 @@ class MainWindow(QMainWindow):
 
     def show_page(self, route: str) -> None:
         routes = {"login": 0, "signup": 1, "forgot": 2}
+        self.root_stack.setCurrentWidget(self.auth_root)
         if route == "reset" and self.reset_page:
             self.stack.setCurrentWidget(self.reset_page)
             self.reset_page.setFocus()
@@ -620,12 +659,16 @@ class MainWindow(QMainWindow):
 
     def _signed_in(self, user: dict[str, str]) -> None:
         self._user = user
-        if hasattr(self, "account_page"):
-            self.stack.removeWidget(self.account_page)
-            self.account_page.deleteLater()
-        self.account_page = self._build_account_page(user)
-        self.stack.addWidget(self.account_page)
-        self.stack.setCurrentWidget(self.account_page)
+        name = user.get("name", "").strip()
+        self.profile_button.setText(self._user_initials(name or user["email"]))
+        self.profile_button.setAccessibleName(
+            f"Account menu for {name or user['email']}"
+        )
+        self.profile_identity_action.setText(name or "Your account")
+        self.profile_email_action.setText(user["email"])
+        self.account_notice.hide()
+        self.app_pages.setCurrentWidget(self.dashboard_page)
+        self.root_stack.setCurrentWidget(self.dashboard_shell)
 
     def _account_created(self, result: dict[str, Any]) -> None:
         if result["verificationRequired"]:
@@ -652,40 +695,144 @@ class MainWindow(QMainWindow):
             "success",
         )
 
-    def _build_account_page(self, user: dict[str, str]) -> QWidget:
-        page = QWidget()
-        layout = QVBoxLayout(page)
+    def _build_dashboard_shell(self) -> QWidget:
+        shell = QWidget()
+        shell.setObjectName("appShell")
+        layout = QVBoxLayout(shell)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addStretch(1)
-        title = QLabel("You’re signed in")
-        title.setObjectName("pageTitle")
-        layout.addWidget(title)
-        email = QLabel(user["email"])
-        email.setObjectName("intro")
-        email.setContentsMargins(0, 10, 0, 18)
-        layout.addWidget(email)
-        note = QLabel(
-            "Your PhishReport workspace will be connected here in a later phase."
-        )
-        note.setObjectName("intro")
-        note.setWordWrap(True)
-        layout.addWidget(note)
+        layout.setSpacing(0)
+
+        header = QWidget()
+        header.setObjectName("appHeader")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(28, 12, 28, 12)
+        header_layout.setSpacing(10)
+        header_layout.addWidget(brand_mark())
+        brand = QLabel("PhishReport")
+        brand.setObjectName("appBrand")
+        header_layout.addWidget(brand)
+        header_layout.addStretch(1)
+
+        self.profile_button = QPushButton("P")
+        self.profile_button.setObjectName("profileButton")
+        self.profile_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.profile_button.setAccessibleName("Account menu")
+        self.profile_menu = QMenu(self.profile_button)
+        self.profile_identity_action = self.profile_menu.addAction("Your account")
+        self.profile_identity_action.setEnabled(False)
+        self.profile_email_action = self.profile_menu.addAction("")
+        self.profile_email_action.setEnabled(False)
+        self.profile_menu.addSeparator()
+        self.settings_action = self.profile_menu.addAction("Settings (locked)")
+        self.settings_action.triggered.connect(self._show_locked_settings)
+        self.sign_out_action = self.profile_menu.addAction("Sign out")
+        self.sign_out_action.triggered.connect(self._sign_out)
+        self.profile_button.clicked.connect(self._show_profile_menu)
+        header_layout.addWidget(self.profile_button)
+        layout.addWidget(header)
+
         self.account_notice = QLabel()
         self.account_notice.setObjectName("notice")
         self.account_notice.setProperty("severity", "error")
         self.account_notice.setWordWrap(True)
         self.account_notice.hide()
         layout.addWidget(self.account_notice)
-        layout.addSpacing(20)
-        self.sign_out_button = QPushButton("Sign out")
-        self.sign_out_button.clicked.connect(self._sign_out)
-        layout.addWidget(self.sign_out_button)
+
+        self.app_pages = QStackedWidget()
+        self.dashboard_page = self._build_dashboard_page()
+        self.settings_page = self._build_locked_settings_page()
+        self.app_pages.addWidget(self.dashboard_page)
+        self.app_pages.addWidget(self.settings_page)
+        layout.addWidget(self.app_pages)
+        return shell
+
+    def _build_dashboard_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("appCanvas")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(36, 32, 36, 36)
+        layout.setSpacing(0)
+
+        title = QLabel("Overview")
+        title.setObjectName("pageTitle")
+        layout.addWidget(title)
+        description = QLabel("Your PhishReport workspace.")
+        description.setObjectName("intro")
+        description.setContentsMargins(0, 6, 0, 24)
+        layout.addWidget(description)
+
+        panel = QFrame()
+        panel.setObjectName("emptyPanel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(20, 18, 20, 18)
+        panel_layout.setSpacing(8)
+        panel_title = QLabel("Message assessments")
+        panel_title.setObjectName("panelTitle")
+        panel_layout.addWidget(panel_title)
+        empty_text = QLabel(
+            "There are no assessments to show yet. Message analysis will appear "
+            "here when the workspace is connected."
+        )
+        empty_text.setObjectName("intro")
+        empty_text.setWordWrap(True)
+        panel_layout.addWidget(empty_text)
+        layout.addWidget(panel)
         layout.addStretch(1)
         return page
 
+    def _build_locked_settings_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("appCanvas")
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(36, 32, 36, 36)
+        layout.setSpacing(0)
+
+        title = QLabel("Settings")
+        title.setObjectName("pageTitle")
+        layout.addWidget(title)
+        description = QLabel("Account preferences")
+        description.setObjectName("intro")
+        description.setContentsMargins(0, 6, 0, 24)
+        layout.addWidget(description)
+
+        panel = QFrame()
+        panel.setObjectName("emptyPanel")
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(20, 18, 20, 18)
+        panel_layout.setSpacing(8)
+        locked_title = QLabel("Settings are locked")
+        locked_title.setObjectName("lockedTitle")
+        panel_layout.addWidget(locked_title)
+        locked_text = QLabel("Account settings are not available in this preview.")
+        locked_text.setObjectName("intro")
+        locked_text.setWordWrap(True)
+        panel_layout.addWidget(locked_text)
+        layout.addWidget(panel)
+
+        back_button = QPushButton("Back to overview")
+        back_button.setObjectName("textButton")
+        back_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        back_button.clicked.connect(self._show_overview)
+        layout.addWidget(back_button, alignment=Qt.AlignmentFlag.AlignLeft)
+        layout.addStretch(1)
+        return page
+
+    def _show_profile_menu(self) -> None:
+        self.profile_menu.popup(
+            self.profile_button.mapToGlobal(
+                QPoint(0, self.profile_button.height())
+            )
+        )
+
+    def _show_locked_settings(self) -> None:
+        self.app_pages.setCurrentWidget(self.settings_page)
+
+    def _show_overview(self) -> None:
+        self.app_pages.setCurrentWidget(self.dashboard_page)
+
     def _sign_out(self) -> None:
-        self.sign_out_button.setEnabled(False)
-        self.sign_out_button.setText("Signing out…")
+        self.sign_out_action.setEnabled(False)
+        self.sign_out_action.setText("Signing out…")
         self._run_api(
             self.api.sign_out,
             lambda _result: self._signed_out(),
@@ -694,13 +841,23 @@ class MainWindow(QMainWindow):
 
     def _signed_out(self) -> None:
         self._user = None
+        self.sign_out_action.setEnabled(True)
+        self.sign_out_action.setText("Sign out")
         self.show_page("login")
 
     def _account_sign_out_failed(self, error: AuthApiError) -> None:
-        self.sign_out_button.setEnabled(True)
-        self.sign_out_button.setText("Sign out")
+        self.sign_out_action.setEnabled(True)
+        self.sign_out_action.setText("Sign out")
         self.account_notice.setText(str(error))
         self.account_notice.show()
+
+    @staticmethod
+    def _user_initials(name_or_email: str) -> str:
+        words = name_or_email.split()
+        if len(words) == 1 and "@" in words[0]:
+            words = [words[0].split("@", 1)[0]]
+        initials = "".join(word[0] for word in words[:2] if word)
+        return initials.upper() or "P"
 
     @staticmethod
     def _valid_email(email: str) -> bool:

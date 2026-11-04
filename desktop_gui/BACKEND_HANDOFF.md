@@ -49,4 +49,4 @@ The client currently expects the API origin in `PHISHREPORT_API_URL`, defaulting
 
 ## Frontend boundary
 
-`desktop_gui/main.py` implements the screens and presentation state. `desktop_gui/auth_api.py` is the HTTP boundary. The post-login screen is deliberately a placeholder: assessment and report features are reserved for later GUI phases.
+`desktop_gui/main.py` implements the screens and presentation state. `desktop_gui/auth_api.py` is the HTTP boundary. After sign-in, the GUI shows an empty dashboard shell with an initials-based profile avatar. Its menu opens a locked Settings screen or signs out. Assessment and report features are reserved for later GUI phases. The current user response has no image field, so the avatar uses the account name's initials.
