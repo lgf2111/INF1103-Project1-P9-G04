@@ -8,12 +8,13 @@ import ai_manager
 import data_manager
 import io_manager
 import logging_setup
-import logic_manager
+from logic_core import LogicManager
 
 # web_upload is imported lazily inside upload_file() so the web server code only
 # loads when the user actually chooses to upload a file.
 
 logger = logging_setup.get_logger(__name__)
+logic_manager = LogicManager()
 
 
 def _friendly_ai_error(error):
