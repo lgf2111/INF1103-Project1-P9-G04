@@ -1,32 +1,36 @@
 # PhishReport desktop GUI
 
-The desktop GUI is the presentation layer being built to migrate the project from CLI to GUI. The target is one Python desktop process: GUI screens call reusable application services in `cli/` directly, while Qt worker threads keep slow work off the UI thread. It should not spawn the CLI or require an HTTP assessment server. Keep the existing CLI working during the transition; `cli/main.py` remains its entry point until the GUI reaches feature parity.
+The desktop GUI is the presentation layer being built to migrate the project from CLI to GUI. The target is one Python desktop process: GUI screens call reusable application services in `app_cli/` directly, while Qt worker threads keep slow work off the UI thread. It should not spawn the CLI or require an HTTP assessment server. Keep the existing CLI working during the transition; `app_cli/main.py` remains its entry point until the GUI reaches feature parity.
 
 The current GUI has authentication screens and a dashboard shell only. Its HTTP auth client and development mock server are separate from message assessment; no assessment or report-history service is connected yet. See the [frontend handoff](../docs/handoffs/FRONTEND_HANDOFF.html) and [backend handoff](../docs/handoffs/BACKEND_HANDOFF.html) for the team boundary and proposed service contract.
 
 ## Run
 
-Use the project's single Python 3.12 virtual environment from the repository root:
+Use [uv](https://docs.astral.sh/uv/) from the repository root. No virtual
+environment needs to be created or activated; `uv run` supplies the packages
+from the shared root `requirements.txt` in an isolated cached environment:
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m gui.main
+uv run --python 3.14 --no-project --with-requirements requirements.txt python -m app_gui.main
 ```
 
-On Windows PowerShell, activate with `.\.venv\Scripts\Activate.ps1`. If `.venv` already exists for the CLI or tests, reuse it; do not create another environment for the GUI.
+Install uv using its
+[official instructions](https://docs.astral.sh/uv/getting-started/installation/).
+The command works in macOS/Linux shells, Windows PowerShell, Git Bash, and WSL.
 
 The current authentication prototype talks to an authentication API at `http://127.0.0.1:8000` by default. This is not an assessment API or a requirement for local analysis. To use another auth API origin:
 
 ```bash
-PHISHREPORT_API_URL=https://api.example.test python -m gui.main
+uv run --python 3.14 --no-project --with-requirements requirements.txt python -m app_gui.main
 ```
 
-Use an HTTPS API outside local development. To open the password-reset screen while developing, provide the token from the reset email:
+Set `PHISHREPORT_API_URL` in the shell before running the command to use a
+different auth API. Use an HTTPS API outside local development. To open the
+password-reset screen while developing, provide the token from the reset
+email:
 
 ```bash
-python -m gui.main --reset-token "token-from-email"
+uv run --python 3.14 --no-project --with-requirements requirements.txt python -m app_gui.main --reset-token "token-from-email"
 ```
 
 ### Try the GUI with the static demo API
@@ -34,7 +38,7 @@ python -m gui.main --reset-token "token-from-email"
 In a second terminal, start the development-only mock API:
 
 ```bash
-python -m gui.mock_auth_api
+uv run --python 3.14 --no-project --with-requirements requirements.txt python -m app_gui.mock_auth_api
 ```
 
 Then launch the GUI using the run commands above. Sign in with
@@ -127,12 +131,13 @@ The regular image remains the default Docker build target and still starts the C
 With the GUI dependency installed, run the focused desktop tests and existing project suite:
 
 ```bash
-python -m pytest tests/test_desktop_auth_api.py tests/test_desktop_gui.py tests/test_desktop_docker.py -q
-python -m pytest tests/test_desktop_mock_auth_api.py -q
-python -m pytest
+uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_desktop_auth_api.py tests/test_desktop_gui.py tests/test_desktop_docker.py -q
+uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_desktop_mock_auth_api.py -q
+uv run --python 3.14 --no-project --with-requirements requirements.txt pytest
 ```
 
-The root `requirements.txt` includes the GUI dependency so the same environment can run the CLI, GUI, and tests.
+The root `requirements.txt` includes the GUI dependency. uv caches its isolated
+environment outside the repository and reuses it for subsequent commands.
 
 ## Scope
 

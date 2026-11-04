@@ -10,17 +10,17 @@ This repository contains the Phase 1 coursework application. **A LOW-priority re
 
 | Path | Purpose |
 | --- | --- |
-| `cli/io_manager.py` | Collect input and display results. |
-| `cli/ai_manager.py` | Request and validate AI findings. |
-| `cli/logic_manager.py` | Apply assessment rules, scoring and routing. |
-| `cli/data_manager.py` | Save, load and query JSON reports. |
-| `cli/main.py` | Connect the managers and run the menu. |
-| `cli/ai_prompts.py` | Define the AI assessment instructions. |
-| `cli/email_html.py` | Convert HTML email content to safe text. |
-| `cli/local_settings.py` | Manage local preferences. |
-| `cli/logging_setup.py` | Configure diagnostic logs. |
-| `cli/web_upload.py` | Handle browser-based `.eml` uploads. |
-| `gui/` | PySide desktop interface, authentication prototype and UI modules. |
+| `app_cli/io_manager.py` | Collect input and display results. |
+| `app_cli/ai_manager.py` | Request and validate AI findings. |
+| `app_cli/logic_manager.py` | Apply assessment rules, scoring and routing. |
+| `app_cli/data_manager.py` | Save, load and query JSON reports. |
+| `app_cli/main.py` | Connect the managers and run the menu. |
+| `app_cli/ai_prompts.py` | Define the AI assessment instructions. |
+| `app_cli/email_html.py` | Convert HTML email content to safe text. |
+| `app_cli/local_settings.py` | Manage local preferences. |
+| `app_cli/logging_setup.py` | Configure diagnostic logs. |
+| `app_cli/web_upload.py` | Handle browser-based `.eml` uploads. |
+| `app_gui/` | PySide desktop interface, authentication prototype and UI modules. |
 | `docs/` | Organized guides, teammate handoffs, and project references. |
 | `requirements.txt` | Shared dependencies for the CLI, GUI, and tests. |
 | `tests/test_logic_manager.py` | Offline logic tests. |
@@ -30,23 +30,21 @@ This repository contains the Phase 1 coursework application. **A LOW-priority re
 
 ## Set up
 
-Use **Python 3.12** to match the CI and Docker environment. Run the following commands from the repository root.
+Use **Python 3.14** and [uv](https://docs.astral.sh/uv/) to match the CI and
+Docker environment. Install uv once using its
+[official instructions](https://docs.astral.sh/uv/getting-started/installation/),
+then run commands from the repository root. No project virtual environment
+needs to be created or activated.
 
 **Windows PowerShell**
 
 ```powershell
-py -3.12 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
 **macOS or Linux**
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
 cp .env.example .env
 ```
 
@@ -63,21 +61,23 @@ Get an API key from the [Groq console](https://console.groq.com). A key is requi
 Start the application:
 
 ```bash
-python cli/main.py
+uv run --python 3.14 --no-project --with-requirements requirements.txt python app_cli/main.py
 ```
 
 You can manually check a suspicious message, import or upload an `.eml` email, and view saved reports. New assessments require a valid response from the Groq API.
 
 ### Desktop authentication GUI
 
-The Python desktop GUI is being migrated to the primary interface while the CLI remains available during the transition. The target is one desktop process: GUI screens call shared Python services in `cli/` directly, with Qt workers for slow operations—not a second assessment server. See the [frontend handoff](docs/handoffs/FRONTEND_HANDOFF.md) and [backend handoff](docs/handoffs/BACKEND_HANDOFF.md) for team ownership and the proposed service contract.
+The Python desktop GUI is being migrated to the primary interface while the CLI remains available during the transition. The target is one desktop process: GUI screens call shared Python services in `app_cli/` directly, with Qt workers for slow operations—not a second assessment server. See the [frontend handoff](docs/handoffs/FRONTEND_HANDOFF.md) and [backend handoff](docs/handoffs/BACKEND_HANDOFF.md) for team ownership and the proposed service contract.
 
 The [frontend handoff](docs/handoffs/FRONTEND_HANDOFF.md) ([HTML](docs/handoffs/FRONTEND_HANDOFF.html)) describes the planned assessment and saved-report screens. The [backend handoff](docs/handoffs/BACKEND_HANDOFF.md) ([HTML](docs/handoffs/BACKEND_HANDOFF.html)) describes the in-process assessment service contract. The current HTTP authentication demo is separate and does not provide assessment; the GUI service integration is not implemented yet.
 
 ```bash
-python -m pip install -r requirements.txt
-python -m gui.main
+uv run --python 3.14 --no-project --with-requirements requirements.txt python -m app_gui.main
 ```
+
+`uv run` creates and reuses an isolated environment in uv's cache from the
+shared root `requirements.txt`; it does not create a `.venv` in the repository.
 
 To display the desktop GUI from Docker in a native host window, install an X
 server (XQuartz on macOS or VcXsrv on Windows) and run `bash run.sh gui` as
@@ -90,15 +90,15 @@ the CLI.
 Run the automated tests:
 
 ```bash
-python -m pytest
+uv run --python 3.14 --no-project --with-requirements requirements.txt pytest
 ```
 
 Run a specific test suite or the feature showcase:
 
 ```bash
-python -m pytest tests/test_logic_manager.py -q
-python -m pytest tests/test_application.py -q
-python -m pytest tests/test_application.py -m demo -v
+uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_logic_manager.py -q
+uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_application.py -q
+uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_application.py -m demo -v
 ```
 
 The logic and application suites contain **643 test cases** (including parameter variations): 72 logic tests and 571 application tests, of which 12 are showcase cases. The tests mock external AI requests; they do not measure live-model detection accuracy.
@@ -193,7 +193,7 @@ display is `host.docker.internal:0`; override it with `PHISHREPORT_DISPLAY` if
 your X server uses a different address.
 If macOS reports that the display cannot be opened, verify XQuartz is
 listening on TCP port 6000 (`nc -vz 127.0.0.1 6000`) and reachable from the
-container as described in [`gui/README.md`](gui/README.md) and the [documentation index](docs/README.md).
+container as described in [`app_gui/README.md`](app_gui/README.md) and the [documentation index](docs/README.md).
 
 If installing a host X server is not desirable, the browser-streamed mode is
 still available:

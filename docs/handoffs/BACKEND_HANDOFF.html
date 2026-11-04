@@ -36,10 +36,10 @@
 <main>
   <h1>Backend handoff: desktop GUI</h1>
   <h2>Target architecture: one local desktop app</h2>
-  <p>The migration target is one Python desktop application process, not a GUI plus a separate assessment server. Backend teammates should make reusable application services in <code>cli/</code>; frontend teammates should call those Python functions directly from <code>gui/</code>. Slow calls run in Qt worker threads so the interface remains responsive. The GUI must not start <code>cli/main.py</code> as a subprocess or call the interactive CLI menu.</p>
-  <p>Keep the existing analysis, rules, AI integration, parser, and persistence code. Extract or wrap the needed workflows behind a small service boundary (for example <code>cli/services/</code>) rather than rewriting the application in a new folder. Keep <code>cli/main.py</code> as a CLI adapter during migration; both CLI and GUI can call the shared services until the GUI reaches feature parity.</p>
+  <p>The migration target is one Python desktop application process, not a GUI plus a separate assessment server. Backend teammates should make reusable application services in <code>app_cli/</code>; frontend teammates should call those Python functions directly from <code>app_gui/</code>. Slow calls run in Qt worker threads so the interface remains responsive. The GUI must not start <code>app_cli/main.py</code> as a subprocess or call the interactive CLI menu.</p>
+  <p>Keep the existing analysis, rules, AI integration, parser, and persistence code. Extract or wrap the needed workflows behind a small service boundary (for example <code>app_cli/services/</code>) rather than rewriting the application in a new folder. Keep <code>app_cli/main.py</code> as a CLI adapter during migration; both CLI and GUI can call the shared services until the GUI reaches feature parity.</p>
   <p><strong>Current implementation status:</strong> the GUI assessment and report screens are not integrated with these services yet. The authentication screens currently use an HTTP client and a development-only mock auth server. That prototype is separate from assessment; it does not make an HTTP assessment backend necessary. Whether real online accounts are a product requirement remains a separate decision.</p>
-  <p>The authentication client is implemented in <a href="../../gui/auth_api.py"><code>auth_api.py</code></a>. The service contracts and examples below are proposals to agree on, not claims that the functions or APIs already exist.</p>
+  <p>The authentication client is implemented in <a href="../../app_gui/auth_api.py"><code>auth_api.py</code></a>. The service contracts and examples below are proposals to agree on, not claims that the functions or APIs already exist.</p>
 
   <h2>Optional authentication API contract</h2>
   <p>This section documents the current authentication prototype only. It is not the architecture for local message analysis. If the team decides to keep online user accounts, backend owners can implement this contract as a separate service. If the product is local-only, decide whether to replace or remove the current auth screens/client rather than making assessment depend on an account server.</p>
@@ -80,10 +80,10 @@
   <p>The current auth client expects the API origin in <code>PHISHREPORT_API_URL</code>, defaulting to <code>http://127.0.0.1:8000</code>. Endpoint names, cookie policy, reset-link delivery, and registration verification behavior are proposals that require agreement before implementing real online accounts.</p>
 
   <h2>Frontend boundary</h2>
-  <p><code>gui/main.py</code> implements screens and presentation state. <code>gui/auth_api.py</code> is currently the HTTP boundary for the optional authentication prototype only. After sign-in, the GUI shows an empty dashboard shell with an initials-based profile avatar. Its menu opens a locked Settings screen or signs out. The current user response has no image field, so the avatar uses the account name's initials.</p>
+  <p><code>app_gui/main.py</code> implements screens and presentation state. <code>app_gui/auth_api.py</code> is currently the HTTP boundary for the optional authentication prototype only. After sign-in, the GUI shows an empty dashboard shell with an initials-based profile avatar. Its menu opens a locked Settings screen or signs out. The current user response has no image field, so the avatar uses the account name's initials.</p>
 
   <h2>In-process assessment service needed by the GUI (proposed)</h2>
-  <p>The frontend needs a typed Python service boundary for assessment. It must not call the CLI's interactive <code>check_message()</code> flow: that flow prompts on stdin and mixes application work with terminal presentation. Extract or wrap the workflow behind reusable functions under <code>cli/</code> (for example, <code>cli/services/</code>) and call those functions directly from the GUI process. Keep the service independent of Qt; use Qt workers in <code>gui/</code> to run slow AI or file work without blocking the event loop.</p>
+  <p>The frontend needs a typed Python service boundary for assessment. It must not call the CLI's interactive <code>check_message()</code> flow: that flow prompts on stdin and mixes application work with terminal presentation. Extract or wrap the workflow behind reusable functions under <code>app_cli/</code> (for example, <code>app_cli/services/</code>) and call those functions directly from the GUI process. Keep the service independent of Qt; use Qt workers in <code>app_gui/</code> to run slow AI or file work without blocking the event loop.</p>
 
   <h3>Assess a message</h3>
   <p>Agree on a typed Python input model. This illustrative shape is a service call contract, not an HTTP request:</p>
@@ -153,7 +153,7 @@
   <h2>Related docs</h2>
   <ul>
     <li><a href="FRONTEND_HANDOFF.md">FRONTEND_HANDOFF.md</a> (<a href="FRONTEND_HANDOFF.html">HTML</a>) — UI/UX scope and frontend acceptance criteria.</li>
-    <li><a href="../../gui/README.md">GUI README</a> — desktop setup and demo auth API.</li>
+    <li><a href="../../app_gui/README.md">GUI README</a> — desktop setup and demo auth API.</li>
   </ul>
 </main>
 </body>

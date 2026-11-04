@@ -230,7 +230,7 @@ current behavior to preserve unless the backend owners agree on a change.
 - [`BACKEND_HANDOFF.md`](./BACKEND_HANDOFF.md) — in-process assessment
   contract, current authentication prototype, and data-handling requirements.
   An [HTML version](./BACKEND_HANDOFF.html) is also available.
-- [`../../gui/README.md`](../../gui/README.md) — desktop GUI setup and module
+- [`../../app_gui/README.md`](../../app_gui/README.md) — desktop GUI setup and module
   guide.
 - [`../../README.md`](../../README.md) — CLI assessment, channels, report storage,
   and `.eml` behavior.

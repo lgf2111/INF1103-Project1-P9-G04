@@ -148,8 +148,8 @@
   <section id="architecture">
     <h2>What runs—and the migration target</h2>
     <p><strong>Today:</strong> <code>bash run.sh gui</code> builds and launches the PySide GUI container and a separate, temporary demo-auth container. The second container exists only because the current sign-in prototype uses HTTP. It is not the phishing-analysis backend, does not call the CLI, and does not analyze messages.</p>
-    <p><strong>Target:</strong> one Python desktop-app process. Backend teammates expose reusable Python functions under <code>cli/</code>; the GUI calls them directly from <code>gui/</code>. Slow analysis runs in Qt worker threads so the window stays responsive. No HTTP assessment server or second Python backend process is required for local analysis.</p>
-    <p>The existing <code>cli/main.py</code> is the interactive CLI entry point, not the GUI. During migration, keep it as a CLI adapter and have both interfaces use shared service functions. Do not start the CLI from a GUI button or duplicate the application in a new folder. The demo authentication HTTP service is a separate prototype; decide independently whether real online accounts are needed.</p>
+    <p><strong>Target:</strong> one Python desktop-app process. Backend teammates expose reusable Python functions under <code>app_cli/</code>; the GUI calls them directly from <code>app_gui/</code>. Slow analysis runs in Qt worker threads so the window stays responsive. No HTTP assessment server or second Python backend process is required for local analysis.</p>
+    <p>The existing <code>app_cli/main.py</code> is the interactive CLI entry point, not the GUI. During migration, keep it as a CLI adapter and have both interfaces use shared service functions. Do not start the CLI from a GUI button or duplicate the application in a new folder. The demo authentication HTTP service is a separate prototype; decide independently whether real online accounts are needed.</p>
     <p>For team ownership and the proposed service contract, see the <a href="../handoffs/FRONTEND_HANDOFF.html">frontend handoff</a> and <a href="../handoffs/BACKEND_HANDOFF.html">backend handoff</a>.</p>
   </section>
 
@@ -234,7 +234,7 @@
 </main>
 
 <footer>
-  <p>More detail: <a href="../../gui/README.md">Desktop GUI README</a> · <a href="../../README.md">Project README</a> · <a href="../handoffs/FRONTEND_HANDOFF.html">Frontend handoff</a> · <a href="../handoffs/BACKEND_HANDOFF.html">Backend handoff</a></p>
+  <p>More detail: <a href="../../app_gui/README.md">Desktop GUI README</a> · <a href="../../README.md">Project README</a> · <a href="../handoffs/FRONTEND_HANDOFF.html">Frontend handoff</a> · <a href="../handoffs/BACKEND_HANDOFF.html">Backend handoff</a></p>
 </footer>
 </body>
 </html>

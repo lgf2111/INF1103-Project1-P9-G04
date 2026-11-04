@@ -2,9 +2,9 @@
 
 ## Target architecture: one local desktop app
 
-The migration target is one Python desktop application process, not a GUI plus a separate assessment server. Backend teammates should make reusable application services in `cli/`; frontend teammates should call those Python functions directly from `gui/`. Slow calls run in Qt worker threads so the interface remains responsive. The GUI must not start `cli/main.py` as a subprocess or call the interactive CLI menu.
+The migration target is one Python desktop application process, not a GUI plus a separate assessment server. Backend teammates should make reusable application services in `app_cli/`; frontend teammates should call those Python functions directly from `app_gui/`. Slow calls run in Qt worker threads so the interface remains responsive. The GUI must not start `app_cli/main.py` as a subprocess or call the interactive CLI menu.
 
-Keep the existing analysis, rules, AI integration, parser, and persistence code. Extract or wrap the needed workflows behind a small service boundary (for example `cli/services/`) rather than rewriting the application in a new folder. Keep `cli/main.py` as a CLI adapter during migration; both CLI and GUI can call the shared services until the GUI reaches feature parity.
+Keep the existing analysis, rules, AI integration, parser, and persistence code. Extract or wrap the needed workflows behind a small service boundary (for example `app_cli/services/`) rather than rewriting the application in a new folder. Keep `app_cli/main.py` as a CLI adapter during migration; both CLI and GUI can call the shared services until the GUI reaches feature parity.
 
 **Current implementation status:** the GUI assessment and report screens are not integrated with these services yet. The authentication screens currently use an HTTP client and a development-only mock auth server. That prototype is separate from assessment; it does not make an HTTP assessment backend necessary. Whether real online accounts are a product requirement remains a separate decision.
 
@@ -57,16 +57,16 @@ The current auth client expects the API origin in `PHISHREPORT_API_URL`, default
 
 ## Frontend boundary
 
-`gui/main.py` implements screens and presentation state. `gui/auth_api.py` is currently the HTTP boundary for the optional authentication prototype only. After sign-in, the GUI shows an empty dashboard shell with an initials-based profile avatar. Its menu opens a locked Settings screen or signs out. Assessment and report features are reserved for later GUI phases. The current user response has no image field, so the avatar uses the account name's initials.
+`app_gui/main.py` implements screens and presentation state. `app_gui/auth_api.py` is currently the HTTP boundary for the optional authentication prototype only. After sign-in, the GUI shows an empty dashboard shell with an initials-based profile avatar. Its menu opens a locked Settings screen or signs out. Assessment and report features are reserved for later GUI phases. The current user response has no image field, so the avatar uses the account name's initials.
 
 ## In-process assessment service needed by the GUI (proposed)
 
 The frontend needs a typed Python service boundary for assessment. It must not
 call the CLI's interactive `check_message()` flow: that flow prompts on stdin
 and mixes application work with terminal presentation. Extract the workflow
-into reusable functions under `cli/` (for example `cli/services/`) and call
+into reusable functions under `app_cli/` (for example `app_cli/services/`) and call
 them directly from the GUI process. Keep the service independent of Qt; use
-Qt workers in `gui/` to run slow AI or file work without blocking the
+Qt workers in `app_gui/` to run slow AI or file work without blocking the
 event loop.
 
 ### Assess a message

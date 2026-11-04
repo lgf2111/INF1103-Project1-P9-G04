@@ -22,4 +22,4 @@ materials separate.
 - [Demo flow](project/demo-flow.html) ([full version](project/demo-flow-full.html))
 
 For general project setup and CLI usage, see the [root README](../README.md).
-For GUI-specific setup and module layout, see the [GUI README](../gui/README.md).
+For GUI-specific setup and module layout, see the [GUI README](../app_gui/README.md).
