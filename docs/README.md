@@ -15,11 +15,9 @@ materials separate.
 - [Backend handoff](handoffs/BACKEND_HANDOFF.md) ([HTML](handoffs/BACKEND_HANDOFF.html))
   — proposed in-process service boundary and current authentication prototype.
 
-## Project references
+## References
 
 - [Coursework documents](coursework/) — assignment and grading PDFs.
-- [Contribution notes](project/contributions.html)
-- [Demo flow](project/demo-flow.html) ([full version](project/demo-flow-full.html))
 
 For general project setup and CLI usage, see the [root README](../README.md).
 For GUI-specific setup and module layout, see the [GUI README](../app_gui/README.md).
