@@ -3,8 +3,8 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-from desktop_gui.auth_api import AuthApiClient, AuthApiError
-from desktop_gui.mock_auth_api import (
+from gui.auth_api import AuthApiClient, AuthApiError
+from gui.mock_auth_api import (
     DEMO_EMAIL,
     DEMO_PASSWORD,
     DEMO_USER,

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml/badge.svg)](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml)
 
-PhishReport is a procedural Python CLI application that helps users assess suspicious emails, SMS and chat messages. It uses the Groq API to identify indicators, applies rule-based scoring based on the findings and reported user actions, and provides a priority level and recommended response steps. Assessments are saved locally as JSON.
+PhishReport is a Python application currently delivered through a procedural CLI, with a PySide desktop GUI under development as the target interface. The app assesses suspicious emails, SMS and chat messages using the Groq API and rule-based scoring, then provides a priority level and recommended response steps. Assessments are saved locally as JSON.
 
 This repository contains the Phase 1 coursework application. **A LOW-priority result does not guarantee that a message is safe.**
 
@@ -10,16 +10,19 @@ This repository contains the Phase 1 coursework application. **A LOW-priority re
 
 | Path | Purpose |
 | --- | --- |
-| `app/io_manager.py` | Collect input and display results. |
-| `app/ai_manager.py` | Request and validate AI findings. |
-| `app/logic_manager.py` | Apply assessment rules, scoring and routing. |
-| `app/data_manager.py` | Save, load and query JSON reports. |
-| `app/main.py` | Connect the managers and run the menu. |
-| `app/ai_prompts.py` | Define the AI assessment instructions. |
-| `app/email_html.py` | Convert HTML email content to safe text. |
-| `app/local_settings.py` | Manage local preferences. |
-| `app/logging_setup.py` | Configure diagnostic logs. |
-| `app/web_upload.py` | Handle browser-based `.eml` uploads. |
+| `cli/io_manager.py` | Collect input and display results. |
+| `cli/ai_manager.py` | Request and validate AI findings. |
+| `cli/logic_manager.py` | Apply assessment rules, scoring and routing. |
+| `cli/data_manager.py` | Save, load and query JSON reports. |
+| `cli/main.py` | Connect the managers and run the menu. |
+| `cli/ai_prompts.py` | Define the AI assessment instructions. |
+| `cli/email_html.py` | Convert HTML email content to safe text. |
+| `cli/local_settings.py` | Manage local preferences. |
+| `cli/logging_setup.py` | Configure diagnostic logs. |
+| `cli/web_upload.py` | Handle browser-based `.eml` uploads. |
+| `gui/` | PySide desktop interface, authentication prototype and UI modules. |
+| `docs/` | Organized guides, teammate handoffs, and project references. |
+| `requirements.txt` | Shared dependencies for the CLI, GUI, and tests. |
 | `tests/test_logic_manager.py` | Offline logic tests. |
 | `tests/test_application.py` | Application tests and feature showcase. |
 | `tests/fixtures/` | Public sample emails for testing. |
@@ -60,25 +63,25 @@ Get an API key from the [Groq console](https://console.groq.com). A key is requi
 Start the application:
 
 ```bash
-python app/main.py
+python cli/main.py
 ```
 
 You can manually check a suspicious message, import or upload an `.eml` email, and view saved reports. New assessments require a valid response from the Groq API.
 
 ### Desktop authentication GUI
 
-The optional Python desktop GUI adds authentication screens without replacing the CLI. See [`desktop_gui/README.md`](desktop_gui/README.md) for setup; the current backend API proposal is in [`desktop_gui/BACKEND_HANDOFF.md`](desktop_gui/BACKEND_HANDOFF.md).
+The Python desktop GUI is being migrated to the primary interface while the CLI remains available during the transition. The target is one desktop process: GUI screens call shared Python services in `cli/` directly, with Qt workers for slow operations—not a second assessment server. See the [frontend handoff](docs/handoffs/FRONTEND_HANDOFF.md) and [backend handoff](docs/handoffs/BACKEND_HANDOFF.md) for team ownership and the proposed service contract.
 
-The next desktop assessment and saved-report screens are described in the [frontend handoff](desktop_gui/FRONTEND_HANDOFF.md) ([HTML](desktop_gui/FRONTEND_HANDOFF.html)). The [backend handoff](desktop_gui/BACKEND_HANDOFF.md) ([HTML](desktop_gui/BACKEND_HANDOFF.html)) describes the authentication contract and proposed assessment/history APIs the GUI will need; proposed APIs require backend agreement.
+The [frontend handoff](docs/handoffs/FRONTEND_HANDOFF.md) ([HTML](docs/handoffs/FRONTEND_HANDOFF.html)) describes the planned assessment and saved-report screens. The [backend handoff](docs/handoffs/BACKEND_HANDOFF.md) ([HTML](docs/handoffs/BACKEND_HANDOFF.html)) describes the in-process assessment service contract. The current HTTP authentication demo is separate and does not provide assessment; the GUI service integration is not implemented yet.
 
 ```bash
-python -m pip install -r desktop_gui/requirements.txt
-python -m desktop_gui.main
+python -m pip install -r requirements.txt
+python -m gui.main
 ```
 
 To display the desktop GUI from Docker in a native host window, install an X
 server (XQuartz on macOS or VcXsrv on Windows) and run `bash run.sh gui` as
-described in the [GUI run guide](desktop_gui/GUI_RUN_GUIDE.html). On Windows,
+described in the [GUI run guide](docs/guides/GUI_RUN_GUIDE.html). On Windows,
 run the Bash commands from Git Bash or WSL. The command starts a local demo
 authentication API automatically. The browser-based noVNC option remains
 available as `bash run.sh gui-web`. The standard Docker image continues to run
@@ -190,7 +193,7 @@ display is `host.docker.internal:0`; override it with `PHISHREPORT_DISPLAY` if
 your X server uses a different address.
 If macOS reports that the display cannot be opened, verify XQuartz is
 listening on TCP port 6000 (`nc -vz 127.0.0.1 6000`) and reachable from the
-container as described in [`desktop_gui/README.md`](desktop_gui/README.md).
+container as described in [`gui/README.md`](gui/README.md) and the [documentation index](docs/README.md).
 
 If installing a host X server is not desirable, the browser-streamed mode is
 still available:

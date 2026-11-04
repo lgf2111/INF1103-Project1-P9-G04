@@ -1,0 +1,182 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PhishReport — Full Demo Flow (10 min)</title>
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; padding: 40px 16px; line-height: 1.6;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: #0f172a; color: #e2e8f0;
+    }
+    .wrap { max-width: 960px; margin: 0 auto; }
+    h1 { font-size: 28px; margin: 0 0 4px; }
+    .sub { color: #94a3b8; margin: 0 0 8px; font-size: 14px; }
+    .total { color: #60a5fa; font-size: 14px; margin: 0 0 24px; font-weight: 600; }
+
+    .timeline { position: relative; margin-left: 10px; padding-left: 28px;
+      border-left: 2px solid rgba(96,165,250,0.35); }
+    .seg { position: relative; margin-bottom: 20px; }
+    .seg::before {
+      content: ""; position: absolute; left: -36px; top: 4px;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #60a5fa; box-shadow: 0 0 0 4px rgba(96,165,250,0.18);
+    }
+    .seg.live::before { background: #34d399; box-shadow: 0 0 0 4px rgba(52,211,153,0.18); }
+    .seg.buffer::before { background: #fcd34d; box-shadow: 0 0 0 4px rgba(252,211,77,0.18); }
+    .card {
+      background: rgba(255,255,255,0.05);
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 14px; padding: 16px 22px;
+    }
+    .card.live { background: rgba(52,211,153,0.07); border-color: rgba(52,211,153,0.3); }
+    .card.buffer { background: rgba(252,211,77,0.07); border-color: rgba(252,211,77,0.3); }
+    .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+    .time { font-variant-numeric: tabular-nums; font-weight: 700; color: #f8fafc;
+      background: rgba(96,165,250,0.18); border-radius: 8px; padding: 2px 10px; font-size: 13px; }
+    .live .time { background: rgba(52,211,153,0.2); }
+    .buffer .time { background: rgba(252,211,77,0.2); }
+    .title { font-size: 18px; font-weight: 600; margin: 0; }
+    .who { color: #60a5fa; font-size: 13px; font-weight: 700; }
+    .live .who { color: #34d399; }
+    .row { margin: 6px 0; font-size: 14.5px; }
+    .label {
+      display: inline-block; min-width: 72px; font-size: 11px; letter-spacing: .4px;
+      text-transform: uppercase; color: #94a3b8; vertical-align: top;
+    }
+    .say { color: #e2e8f0; font-style: italic; }
+    .do { color: #a7f3d0; }
+    .note { color: #fcd34d; }
+    .steps { margin: 6px 0 0; padding-left: 20px; }
+    .steps li { margin: 4px 0; }
+    code { background: rgba(255,255,255,0.1); padding: 1px 6px; border-radius: 5px; font-size: 13px; }
+    footer { color: #64748b; font-size: 12px; margin-top: 24px; text-align: center; }
+    .prep { background: rgba(252,211,77,0.08); border: 1px solid rgba(252,211,77,0.3);
+      border-radius: 12px; padding: 14px 20px; margin-bottom: 24px; font-size: 14px; }
+    .prep h3 { margin: 0 0 6px; color: #fcd34d; font-size: 15px; }
+    .prep ul { margin: 0; padding-left: 20px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>PhishReport — Full Demo Flow</h1>
+    <p class="sub">Phishing &amp; exposure assessment CLI: paste/import a message, the AI interprets it, our rules give a priority, score and action checklist; reports saved locally.</p>
+    <p class="total">Total: 10:00 &nbsp;•&nbsp; Bryan runs all features live (3 min), then 6 members × 1 min, then 1 min buffer</p>
+
+    <div class="prep">
+      <h3>Before you start (pre-demo checklist)</h3>
+      <ul>
+        <li>App run once already so <code>reports.json</code> has a saved report (for option 4).</li>
+        <li><code>.env</code> has a working <code>GROQ_API_KEY</code>; internet on; terminal font large.</li>
+        <li>Phishing message copied to clipboard; a known-good plain-text <code>.eml</code> in the saved email folder.</li>
+        <li>Browser open on a second window for option 3 (<code>localhost:8000</code>).</li>
+        <li>App launched to the menu before the clock starts.</li>
+      </ul>
+    </div>
+
+    <div class="timeline">
+
+      <!-- Bryan: full live demo -->
+      <div class="seg live"><div class="card live">
+        <div class="head">
+          <span class="time">0:00–3:00</span>
+          <p class="title">Live feature demo — options 1 → 2 → 3 → 4</p>
+          <span class="who">Bryan (driving the app)</span>
+        </div>
+        <div class="row"><span class="label">Say</span><span class="say">"Let me walk through the four things PhishReport does, end to end."</span></div>
+        <ol class="steps">
+          <li><strong>Option 1 — Check a new message:</strong> paste an obvious phishing message, answer the follow-ups, show the result: <strong>priority (HIGH)</strong>, <strong>score</strong>, <strong>reasons</strong>, <strong>checklist</strong>. (~1 min)</li>
+          <li><strong>Option 2 — Import an email (.eml):</strong> pick a <code>.eml</code> from the saved folder list (newest first), show its assessment. (~40s)</li>
+          <li><strong>Option 3 — Upload an email (.eml):</strong> open <code>localhost:8000</code>, click to upload the <code>.eml</code>, show the result come back in the CLI. (~40s)</li>
+          <li><strong>Option 4 — View saved reports:</strong> list the saved reports (including the ones just created); mention storage is local JSON. (~20s)</li>
+        </ol>
+        <div class="row"><span class="label">Note</span><span class="note">Use a clearly-phishing message for HIGH, and a pre-tested plain-text .eml. Keep it one clean pass — this is the heart of the demo.</span></div>
+      </div></div>
+
+      <!-- Jeremy -->
+      <div class="seg"><div class="card">
+        <div class="head">
+          <span class="time">3:00–4:00</span>
+          <p class="title">Input layer &amp; email import</p>
+          <span class="who">Jeremy</span>
+        </div>
+        <div class="row"><span class="label">Say</span><span class="say">"I built the I/O input flow — the menu, validated prompts, and the user-action questions. I also added the .eml import you just saw and hardened the email parsing."</span></div>
+        <div class="row"><span class="label">Show</span><span class="do">Point to the menu and the <code>.eml</code> import path; mention safe limits (size, MIME parts/depth, plain-text only, .eml-only uploads).</span></div>
+      </div></div>
+
+      <!-- Jeff -->
+      <div class="seg"><div class="card">
+        <div class="head">
+          <span class="time">4:00–5:00</span>
+          <p class="title">[Assign topic]</p>
+          <span class="who">Jeff</span>
+        </div>
+        <div class="row"><span class="label">Say</span><span class="say">"[Jeff describes the part he owns — e.g. a specific feature, validation, or supporting work.]"</span></div>
+        <div class="row"><span class="label">Show</span><span class="do">Point to the relevant part of the cli/code for his contribution.</span></div>
+        <div class="row"><span class="label">Note</span><span class="note">"Jeff" wasn't in the commit authors I mapped — fill in his actual contribution here before the demo.</span></div>
+      </div></div>
+
+      <!-- Arvin -->
+      <div class="seg"><div class="card">
+        <div class="head">
+          <span class="time">5:00–6:00</span>
+          <p class="title">App integration, data layer &amp; robustness</p>
+          <span class="who">Arvin</span>
+        </div>
+        <div class="row"><span class="label">Say</span><span class="say">"I implemented the four manager files and wired the pipeline together, built the atomic JSON saving, and made the app recover gracefully from bad input, malformed emails and config errors."</span></div>
+        <div class="row"><span class="label">Show</span><span class="do">Briefly: the four-manager structure; optionally trigger a handled error (bad input) to show it doesn't crash.</span></div>
+      </div></div>
+
+      <!-- Bryan Ow -->
+      <div class="seg"><div class="card">
+        <div class="head">
+          <span class="time">6:00–7:00</span>
+          <p class="title">Scoring &amp; report persistence</p>
+          <span class="who">Bryan Ow</span>
+        </div>
+        <div class="row"><span class="label">Say</span><span class="say">"I added the evaluation that produces the score and category, standardised the score to a 0–100 scale, and made sure each report stores its score and priority."</span></div>
+        <div class="row"><span class="label">Show</span><span class="do">Open <code>reports.json</code> and point to the stored <strong>score</strong> and <strong>priority</strong> on a saved record.</span></div>
+      </div></div>
+
+      <!-- Xavier -->
+      <div class="seg"><div class="card">
+        <div class="head">
+          <span class="time">7:00–8:00</span>
+          <p class="title">Logic Manager &amp; AI handoff</p>
+          <span class="who">Xavier</span>
+        </div>
+        <div class="row"><span class="label">Say</span><span class="say">"I built the Logic Manager — the rules that turn the AI's findings into a priority, score and route. I also connected the AI-to-logic handoff, and we moved storage from a shared database back to local JSON so users can't see each other's data."</span></div>
+        <div class="row"><span class="label">Show</span><span class="do">Point to the priority/score logic; mention the rule that combines multiple AI fields.</span></div>
+      </div></div>
+
+      <!-- Bryan Lee -->
+      <div class="seg"><div class="card">
+        <div class="head">
+          <span class="time">8:00–9:00</span>
+          <p class="title">Assessment &amp; report display</p>
+          <span class="who">Bryan Lee</span>
+        </div>
+        <div class="row"><span class="label">Say</span><span class="say">"I built how results are shown — the full assessment display and the saved-report history list, including handling missing or empty fields cleanly."</span></div>
+        <div class="row"><span class="label">Show</span><span class="do">Re-run option 4 (view saved reports) and point to the formatted priority/score/preview per report.</span></div>
+      </div></div>
+
+      <!-- Buffer -->
+      <div class="seg buffer"><div class="card buffer">
+        <div class="head">
+          <span class="time">9:00–10:00</span>
+          <p class="title">Buffer — questions &amp; catch-up</p>
+          <span class="who">Whole team</span>
+        </div>
+        <div class="row"><span class="label">Use for</span><span class="do">Overflow if any slot ran long, answering the panel's questions, or one bonus item (CI green checks + badge, Docker run, or <code>LOG_LEVEL=DEBUG</code> logs).</span></div>
+        <div class="row"><span class="label">Say</span><span class="say">"That's PhishReport — paste or import a message, get an explainable, saved assessment, backed by CI, Docker and graceful error handling. Questions?"</span></div>
+      </div></div>
+
+    </div>
+
+    <footer>10-minute plan. Bryan drives the live app (0–3 min); each member then explains their own part for 1 minute. Keep the live demo (0–3) tight — it's what the panel remembers.</footer>
+  </div>
+</body>
+</html>

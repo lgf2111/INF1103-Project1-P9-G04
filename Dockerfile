@@ -3,7 +3,7 @@ FROM python:3.12-slim AS base
 
 WORKDIR /app
 
-# Install the CLI/test dependencies first for better Docker layer caching.
+# Install the project dependencies first for better Docker layer caching.
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
@@ -37,11 +37,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxrender1 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir --retries 5 --timeout 120 -r desktop_gui/requirements.txt
-
 ENV DISPLAY=host.docker.internal:0
 ENV QT_X11_NO_MITSHM=1
-CMD ["python", "-m", "desktop_gui.main"]
+CMD ["python", "-m", "gui.main"]
 
 FROM gui-native AS gui
 
@@ -56,10 +54,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV DISPLAY=:99
 EXPOSE 6080
-CMD ["python", "-m", "desktop_gui.docker_entrypoint"]
+CMD ["python", "-m", "gui.docker_entrypoint"]
 
 FROM base AS cli
 
 # The file-upload option serves a one-shot page on port 8000.
 EXPOSE 8000
-CMD ["python", "app/main.py"]
+CMD ["python", "cli/main.py"]

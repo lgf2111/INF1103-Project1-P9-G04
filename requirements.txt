@@ -1,9 +1,10 @@
 # Runtime code uses the Python standard library.
-# Pytest is the only direct third-party dependency (offline test and demo scripts).
-# Its required transitive packages are pinned below; these are not app runtime imports.
+# PySide6-Essentials provides the desktop GUI; pytest and its pinned dependencies
+# support the offline test and demo scripts.
 # Keep the verified versions; do not install Groq, requests or database clients.
 iniconfig==2.3.0
 packaging==26.3
 pluggy==1.6.0
 Pygments==2.21.0
 pytest==9.1.1
+PySide6-Essentials==6.10.2

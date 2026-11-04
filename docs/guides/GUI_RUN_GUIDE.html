@@ -135,14 +135,23 @@
 <main>
   <nav aria-label="Guide sections">
     <a href="#before-you-start">Before you start</a>
+    <a href="#architecture">What runs</a>
     <a href="#native">Native window</a>
     <a href="#web">Browser fallback</a>
     <a href="#troubleshooting">Troubleshooting</a>
   </nav>
 
   <div class="callout">
-    <strong>What this demo includes:</strong> The GUI opens in Docker and uses a local, fixed demo authentication service. You can try sign-in, registration/reset UI, the empty Overview, account menu, locked Settings, and sign-out. Message assessment and report-history screens are not part of this desktop GUI yet.
+    <strong>Current demo scope:</strong> The GUI opens in Docker and uses a local, fixed demo authentication service. You can try sign-in, registration/reset UI, the empty Overview, account menu, locked Settings, and sign-out. Message assessment and report-history screens are not integrated yet; this command does not run an assessment backend.
   </div>
+
+  <section id="architecture">
+    <h2>What runs—and the migration target</h2>
+    <p><strong>Today:</strong> <code>bash run.sh gui</code> builds and launches the PySide GUI container and a separate, temporary demo-auth container. The second container exists only because the current sign-in prototype uses HTTP. It is not the phishing-analysis backend, does not call the CLI, and does not analyze messages.</p>
+    <p><strong>Target:</strong> one Python desktop-app process. Backend teammates expose reusable Python functions under <code>cli/</code>; the GUI calls them directly from <code>gui/</code>. Slow analysis runs in Qt worker threads so the window stays responsive. No HTTP assessment server or second Python backend process is required for local analysis.</p>
+    <p>The existing <code>cli/main.py</code> is the interactive CLI entry point, not the GUI. During migration, keep it as a CLI adapter and have both interfaces use shared service functions. Do not start the CLI from a GUI button or duplicate the application in a new folder. The demo authentication HTTP service is a separate prototype; decide independently whether real online accounts are needed.</p>
+    <p>For team ownership and the proposed service contract, see the <a href="../handoffs/FRONTEND_HANDOFF.html">frontend handoff</a> and <a href="../handoffs/BACKEND_HANDOFF.html">backend handoff</a>.</p>
+  </section>
 
   <section id="before-you-start">
     <h2>Before you start</h2>
@@ -178,12 +187,12 @@
     <h3>Launch</h3>
     <p>From the repository root:</p>
     <pre><code>bash run.sh gui</code></pre>
-    <p>The app should open in a native window. When finished, close the GUI or press <kbd>Ctrl</kbd>+<kbd>C</kbd> in the terminal. The temporary demo-auth container and Docker network are cleaned up automatically.</p>
+    <p>The authentication demo should open in a native window. When finished, close the GUI or press <kbd>Ctrl</kbd>+<kbd>C</kbd> in the terminal. The temporary demo-auth container and Docker network are cleaned up automatically. Assessment is not wired into this demo yet.</p>
   </section>
 
   <section id="web">
     <h2>Option B: browser-based fallback</h2>
-    <p>Use this mode if you don't want to install/configure XQuartz or VcXsrv. The app still runs in Docker, but noVNC streams its virtual display to a local browser.</p>
+    <p>Use this mode if you don't want to install/configure XQuartz or VcXsrv. The same current authentication demo runs in Docker, but noVNC streams its virtual display to a local browser. It does not add assessment/backend functionality.</p>
     <pre><code>bash run.sh gui-web</code></pre>
     <p>Open the local address printed by the command. If needed, use:</p>
     <pre><code>http://localhost:6080/vnc.html?autoconnect=true&amp;resize=scale</code></pre>
@@ -225,7 +234,7 @@
 </main>
 
 <footer>
-  <p>More detail: <a href="README.md">Desktop GUI README</a> · <a href="../README.md">Project README</a></p>
+  <p>More detail: <a href="../../gui/README.md">Desktop GUI README</a> · <a href="../../README.md">Project README</a> · <a href="../handoffs/FRONTEND_HANDOFF.html">Frontend handoff</a> · <a href="../handoffs/BACKEND_HANDOFF.html">Backend handoff</a></p>
 </footer>
 </body>
 </html>

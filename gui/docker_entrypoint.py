@@ -136,7 +136,7 @@ def main() -> int:
             "http://localhost:6080/vnc.html?autoconnect=true&resize=scale",
             flush=True,
         )
-        gui = subprocess.Popen([sys.executable, "-m", "desktop_gui.main"])
+        gui = subprocess.Popen([sys.executable, "-m", "gui.main"])
         while gui.poll() is None:
             for process in processes:
                 if process.poll() is not None:

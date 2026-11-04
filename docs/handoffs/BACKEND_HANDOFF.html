@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backend handoff: desktop GUI | PhishReport</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #17212b;
+      background: #f4f6f8;
+      line-height: 1.6;
+    }
+    body { margin: 0; }
+    main { max-width: 960px; margin: 32px auto; padding: 40px; background: #fff; }
+    h1, h2, h3 { line-height: 1.25; color: #122335; }
+    h1 { margin-top: 0; font-size: 2rem; }
+    h2 { margin-top: 2.2rem; padding-bottom: .35rem; border-bottom: 1px solid #dce2e8; }
+    h3 { margin-top: 1.5rem; }
+    a { color: #1659a7; }
+    li { margin: .4rem 0; }
+    code { padding: .12rem .3rem; background: #edf1f5; border-radius: 4px; }
+    pre { overflow-x: auto; padding: 1rem; background: #f1f3f5; border-radius: 6px; }
+    pre code { padding: 0; background: transparent; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: .55rem; border: 1px solid #dce2e8; text-align: left; vertical-align: top; }
+    th { background: #f4f6f8; }
+    @media (max-width: 640px) {
+      main { margin: 0; padding: 24px 18px; }
+      h1 { font-size: 1.65rem; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Backend handoff: desktop GUI</h1>
+  <h2>Target architecture: one local desktop app</h2>
+  <p>The migration target is one Python desktop application process, not a GUI plus a separate assessment server. Backend teammates should make reusable application services in <code>cli/</code>; frontend teammates should call those Python functions directly from <code>gui/</code>. Slow calls run in Qt worker threads so the interface remains responsive. The GUI must not start <code>cli/main.py</code> as a subprocess or call the interactive CLI menu.</p>
+  <p>Keep the existing analysis, rules, AI integration, parser, and persistence code. Extract or wrap the needed workflows behind a small service boundary (for example <code>cli/services/</code>) rather than rewriting the application in a new folder. Keep <code>cli/main.py</code> as a CLI adapter during migration; both CLI and GUI can call the shared services until the GUI reaches feature parity.</p>
+  <p><strong>Current implementation status:</strong> the GUI assessment and report screens are not integrated with these services yet. The authentication screens currently use an HTTP client and a development-only mock auth server. That prototype is separate from assessment; it does not make an HTTP assessment backend necessary. Whether real online accounts are a product requirement remains a separate decision.</p>
+  <p>The authentication client is implemented in <a href="../../gui/auth_api.py"><code>auth_api.py</code></a>. The service contracts and examples below are proposals to agree on, not claims that the functions or APIs already exist.</p>
+
+  <h2>Optional authentication API contract</h2>
+  <p>This section documents the current authentication prototype only. It is not the architecture for local message analysis. If the team decides to keep online user accounts, backend owners can implement this contract as a separate service. If the product is local-only, decide whether to replace or remove the current auth screens/client rather than making assessment depend on an account server.</p>
+  <p>All requests and successful non-empty responses use JSON. Errors use this shape:</p>
+  <pre><code>{
+  "error": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "Email or password is incorrect.",
+    "fieldErrors": {
+      "email": "Enter a valid email address."
+    }
+  }
+}</code></pre>
+  <p><code>fieldErrors</code> is optional and maps request field names to user-facing text.</p>
+  <table>
+    <thead><tr><th>Method and path</th><th>Request body</th><th>Success response</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST /api/auth/login</code></td><td><code>{"email":"...","password":"..."}</code></td><td><code>200 {"user":{"id":"...","email":"...","name":"..."}}</code></td></tr>
+      <tr><td><code>POST /api/auth/register</code></td><td><code>{"email":"...","password":"..."}</code></td><td><code>201 {"verificationRequired":true}</code>, or <code>201 {"verificationRequired":false,"user":{...}}</code></td></tr>
+      <tr><td><code>POST /api/auth/password/reset-request</code></td><td><code>{"email":"..."}</code></td><td><code>202 {"message":"If an account matches, reset instructions will be sent."}</code></td></tr>
+      <tr><td><code>POST /api/auth/password/reset</code></td><td><code>{"token":"...","password":"..."}</code></td><td><code>200 {"message":"Password updated."}</code></td></tr>
+      <tr><td><code>GET /api/auth/me</code></td><td>None</td><td><code>200 {"user":{"id":"...","email":"...","name":"..."}}</code></td></tr>
+      <tr><td><code>POST /api/auth/logout</code></td><td>None</td><td><code>204 No Content</code> (or <code>200</code> with JSON)</td></tr>
+    </tbody>
+  </table>
+  <p><code>name</code> is optional. When account verification is required, do not create a signed-in session. When registration signs the user in immediately, return <code>verificationRequired: false</code>, the user, and the session cookie.</p>
+
+  <h2>Session and authentication security</h2>
+  <ul>
+    <li>The client uses Python's in-memory <code>CookieJar</code>; it does not persist session cookies, passwords, or reset tokens to disk. Closing the desktop app ends the local session.</li>
+    <li>Prefer a short-lived, opaque, server-side session cookie with <code>HttpOnly</code>, <code>Secure</code> in production, and an appropriate <code>SameSite</code> policy. Invalidate the session on logout and password changes.</li>
+    <li>Require HTTPS except for local development. Validate certificate chains; do not disable TLS checks.</li>
+    <li>Use generic login and reset-request responses; rate-limit login, registration, and reset-request endpoints.</li>
+    <li>Reset tokens must be random, short-lived, single-use, and invalidated after reset. The email link should open the app with its token (register a <code>phishreport://reset</code> URL scheme when packaging); during development, pass it with <code>--reset-token</code>.</li>
+    <li>New passwords must be at least 12 characters to match client-side validation. The backend remains authoritative and should return a field error when its password policy rejects a value.</li>
+    <li>Never return password hashes, session secrets, reset tokens (other than the intended email link), or internal exception details in API responses.</li>
+  </ul>
+  <p>The current auth client expects the API origin in <code>PHISHREPORT_API_URL</code>, defaulting to <code>http://127.0.0.1:8000</code>. Endpoint names, cookie policy, reset-link delivery, and registration verification behavior are proposals that require agreement before implementing real online accounts.</p>
+
+  <h2>Frontend boundary</h2>
+  <p><code>gui/main.py</code> implements screens and presentation state. <code>gui/auth_api.py</code> is currently the HTTP boundary for the optional authentication prototype only. After sign-in, the GUI shows an empty dashboard shell with an initials-based profile avatar. Its menu opens a locked Settings screen or signs out. The current user response has no image field, so the avatar uses the account name's initials.</p>
+
+  <h2>In-process assessment service needed by the GUI (proposed)</h2>
+  <p>The frontend needs a typed Python service boundary for assessment. It must not call the CLI's interactive <code>check_message()</code> flow: that flow prompts on stdin and mixes application work with terminal presentation. Extract or wrap the workflow behind reusable functions under <code>cli/</code> (for example, <code>cli/services/</code>) and call those functions directly from the GUI process. Keep the service independent of Qt; use Qt workers in <code>gui/</code> to run slow AI or file work without blocking the event loop.</p>
+
+  <h3>Assess a message</h3>
+  <p>Agree on a typed Python input model. This illustrative shape is a service call contract, not an HTTP request:</p>
+  <pre><code>AssessmentRequest(
+    channel="email",
+    message="Please review this unusual payment request.",
+    sender="billing@example.test",
+    has_link=True,
+    link="https://example.test/pay",
+    has_file=False,
+    file_name=None,
+    clicked=False,
+    downloaded=False,
+    submitted_category=None,
+)</code></pre>
+  <p><code>channel</code> is <code>email</code>, <code>sms</code>, or <code>chat</code>; <code>sender</code> is optional. <code>link</code> and <code>file_name</code> are optional and only meaningful when the corresponding <code>has_link</code>/<code>has_file</code> value is true. Ask about clicks/downloads only when applicable and transmit the answers explicitly. <code>submitted_category</code> is <code>password</code>, <code>otp</code>, or <code>null</code> after the user answers. Reject contradictory or malformed combinations rather than silently rewriting answers.</p>
+  <p>Return a validated report/result object using the existing domain fields. This illustrates the result fields, not a required class name:</p>
+  <pre><code>AssessmentResult(
+    score=45,
+    priority="MEDIUM",
+    reasons=["Example explanation from the assessment engine."],
+    checklist=["Verify the request using a known official contact method."],
+)</code></pre>
+  <p>The <code>result</code> fields match the existing domain contract: integer <code>score</code> (0–100), <code>priority</code> (<code>LOW</code>, <code>MEDIUM</code>, or <code>HIGH</code>), and arrays of non-blank strings <code>reasons</code> and <code>checklist</code> (the arrays themselves may be empty). The score is a rule-based response-priority score, not a probability that the message is malicious. Do not make the frontend infer a result from a partial response.</p>
+  <p>Show an in-progress state, prevent duplicate submissions, and remain responsive. Define validation/provider error types, timeouts, progress reporting, and whether an in-flight call can be cancelled. Do not have a worker access widgets directly; return results or errors to the GUI thread through Qt signals. If retries can create duplicate saved reports, define how the service avoids that.</p>
+
+  <h3>Report history (proposed, required only if Reports is enabled)</h3>
+  <p>For the local desktop app, prefer local persistence through reusable data services. Agree on Python functions to list, load, and optionally delete reports, along with stable identifiers and timestamps if needed. The GUI should not manipulate <code>reports.json</code> directly or duplicate its schema.</p>
+  <p>Only use server-backed history if accounts/shared data are a confirmed product requirement. In that case, specify ownership, stable IDs, timestamps, pagination, retention, and deletion separately; those endpoints are not part of the one-process local assessment architecture.</p>
+  <p>Define ordering, missing/deleted record behavior, and whether a successful assessment is automatically saved. The existing CLI's local <code>reports.json</code> format has no stable ID or timestamp; preserve compatibility or migrate it deliberately rather than making the GUI assume a new schema.</p>
+
+  <h3>Errors and validation</h3>
+  <p>Use typed service errors with a stable code, safe message, and optional field-specific details. The frontend needs to distinguish:</p>
+  <ul>
+    <li>Invalid input or field validation.</li>
+    <li>Message or email input exceeding a configured limit.</li>
+    <li>AI provider unavailable or timed out.</li>
+    <li>Local persistence failure.</li>
+  </ul>
+  <p>Never convert an AI, validation, or storage failure into a LOW result or an empty success. Avoid exposing provider details, stack traces, secrets, or submitted content in error messages. If optional online authentication is retained, handle session expiry in its separate auth boundary without losing the user's unsent draft.</p>
+
+  <h2>Email import and input limits</h2>
+  <p>The existing CLI accepts <code>.eml</code> files up to 2 MiB, supports text/HTML email content, and does not analyse attachments or embedded images. The desktop should reuse the shared parser in-process and pass extracted fields to the assessment service; do not make an HTTP upload server just for the GUI. The current message-text limit is 50,000 characters; coordinate the limit with the frontend.</p>
+
+  <h2>Data handling, privacy, and operations</h2>
+  <p>Before enabling assessment, provide product-approved answers for the frontend to show near submission: whether the full message is sent to the AI provider, where it is processed, whether it is persisted locally or remotely, who can access it, the retention period, and how the user can delete it. Do not promise privacy, retention, or deletion behavior that the service does not enforce.</p>
+  <ul>
+    <li>Treat local assessment as independent from the current demo sign-in. Require online authentication only if product owners explicitly choose accounts or shared data; never expose one user's remote history to another.</li>
+    <li>Do not log message bodies, links, passwords, one-time codes, session cookies, or reset tokens. Redact request/exception telemetry.</li>
+    <li>Validate channel, lengths, optional sender and link/file metadata, and exposure answers in the service boundary.</li>
+    <li>Apply provider timeouts and bounded input sizes in the local service. Add request rate limits only if an online service is adopted.</li>
+    <li>Return only validated assessment output; do not expose raw model prompts, provider payloads, or internal exception details.</li>
+    <li>Persist reports locally according to an agreed retention policy; support deletion consistently if that feature is provided.</li>
+  </ul>
+
+  <h2>Frontend integration checklist</h2>
+  <ol>
+    <li>Agree on the in-process Python service signatures, result types, and typed errors; implement them by reusing existing logic and data managers.</li>
+    <li>Keep the service independent of Qt and terminal input/output so both GUI and CLI can call it.</li>
+    <li>Decide local report persistence and migration behavior before enabling Reports.</li>
+    <li>Confirm email parsing, input limits, and user-facing data-handling copy.</li>
+    <li>Test success, validation, timeout, provider outage, persistence failure, and malformed results without live provider calls.</li>
+    <li>Separately decide whether real online authentication is required. If so, agree on the auth HTTP contract and test session expiry and account flows.</li>
+  </ol>
+  <p><code>mock_auth_api.py</code> is a local-only, fixed-response authentication server; it does not implement assessment or report history. Extend it only as a separate development feature if frontend work needs those responses. It is not a production backend.</p>
+
+  <h2>Related docs</h2>
+  <ul>
+    <li><a href="FRONTEND_HANDOFF.md">FRONTEND_HANDOFF.md</a> (<a href="FRONTEND_HANDOFF.html">HTML</a>) — UI/UX scope and frontend acceptance criteria.</li>
+    <li><a href="../../gui/README.md">GUI README</a> — desktop setup and demo auth API.</li>
+  </ul>
+</main>
+</body>
+</html>

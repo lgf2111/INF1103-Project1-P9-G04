@@ -3,7 +3,7 @@
 This handoff is for the frontend teammate implementing the missing product
 screens in the existing Python/PySide6 desktop GUI. It follows the product
 direction discussed for this phase; it is not a claim that the proposed
-assessment or history APIs already exist.
+assessment services or report-history functions already exist.
 
 ## UI/UX goals
 
@@ -36,7 +36,10 @@ the outcome without interpreting a score, and know what to do next.
   of this handoff.
 
 Keep the existing CLI working. The GUI is a separate desktop client; the
-Docker-hosted GUI continues to show that desktop window through noVNC.
+Docker-hosted GUI continues to show that desktop window through noVNC during
+the migration. The target desktop app is one Python process: GUI screens call
+shared application services in-process. The GUI must not start a second
+assessment server or launch the CLI as a subprocess.
 
 ## Existing implementation and gap
 
@@ -59,11 +62,15 @@ Not implemented in the desktop GUI:
 - Assessment results and their recommended actions.
 - A saved-report list or report detail view.
 
-The desktop `AuthApiClient` only implements authentication. The
-[`BACKEND_HANDOFF.md`](./BACKEND_HANDOFF.md) includes proposed assessment and
-history API contracts, but those APIs are not implemented. Do not call the
-interactive CLI entry points from a widget: they prompt on stdin, and
-analysis/network work must not block the Qt event loop.
+The desktop `AuthApiClient` only implements authentication over HTTP. That
+current authentication prototype is separate from assessment and does not
+mean the GUI needs an HTTP backend to analyze messages. The
+[`BACKEND_HANDOFF.md`](./BACKEND_HANDOFF.md) defines the proposed in-process
+service contract; assessment and report-history GUI integration are not
+implemented yet. Do not call the interactive CLI entry points from a widget:
+they prompt on stdin and mix application work with terminal presentation.
+Call reusable services instead, and run slow work in Qt workers so the event
+loop stays responsive.
 
 ## Frontend scope and priority
 
@@ -96,10 +103,10 @@ Build a guided form with:
    they submitted a password or one-time code. Match the current domain
    contract; do not silently substitute “No” when an answer is unknown.
 6. **Submit:** use a clear action such as **Check message**. Before sending,
-   explain where the message is processed and retained using the backend's
-   confirmed data policy. The current CLI sends assessment input to its AI
-   provider and stores reports locally; do not promise privacy or deletion
-   behavior that the chosen GUI backend does not guarantee.
+   explain where the message is processed and retained using the service
+   owners' confirmed data policy. The current CLI sends assessment input to
+   its AI provider and stores reports locally; do not promise privacy or
+   deletion behavior that the chosen service does not guarantee.
 
 Keep form validation specific and near the relevant field. Preserve the form
 when a request fails so the user can correct or retry it.
@@ -166,24 +173,23 @@ is long.
 
 ## Backend integration to agree
 
-These are frontend requirements to discuss with the backend teammate, not
-implemented endpoints. Keep network calls behind a typed service/client
-boundary instead of coupling widgets to CLI internals.
+These are frontend requirements to agree with the backend teammate. For the
+local desktop app, the boundary is a typed Python service interface, not an
+assessment HTTP API. The GUI and service functions run in the same process;
+Qt workers keep slow assessment work off the UI thread.
 
-1. Define how the authenticated desktop client submits an assessment, whether
-   assessment requires sign-in, and how the `.eml` parser is reused.
-2. Agree on a request containing the channel, message, optional sender, and
-   supported exposure context. Decide whether email import is parsed locally
-   or uploaded to the service.
-3. Return a validated result matching the existing domain fields:
+1. Agree on the Python function signature and typed input/output for
+   assessment, including channel, message, optional sender, and supported
+   exposure context. Decide how the shared `.eml` parser is called.
+2. Return a validated result matching the existing domain fields:
    `score` (integer), `priority` (`LOW`/`MEDIUM`/`HIGH`), `reasons` (strings),
    and `checklist` (strings).
-4. Define safe, field-addressable validation errors, service-unavailable
-   behavior, and whether a user can cancel an in-flight assessment.
-5. Decide whether reports are local-only or server-backed. If server-backed,
-   define list/detail, stable IDs, timestamps, pagination, ownership, retention,
-   and deletion before implementing Reports.
-6. Confirm exactly what content is sent to the AI provider, where it is stored,
+3. Define typed validation and provider errors, cancellation/timeout behavior,
+   and how a worker reports progress without touching widgets from its thread.
+4. Decide how local reports are represented and loaded. Only choose
+   server-backed history if there is a separate product requirement for
+   accounts or shared data.
+5. Confirm exactly what content is sent to the AI provider, where it is stored,
    for how long, and how those facts are explained to users. Avoid logging
    message contents, passwords, or one-time codes.
 
@@ -198,14 +204,14 @@ current behavior to preserve unless the backend owners agree on a change.
   email import follows the existing `.eml` restrictions.
 - Relevant exposure questions are collected without assuming an unanswered
   question means “No.”
-- The GUI displays only a valid backend assessment and communicates its
+- The GUI displays only a valid service assessment and communicates its
   priority, evidence, and recommended actions without presenting score as
   certainty.
 - A LOW result is never described as proof of safety.
 - Loading, empty, field-error, service-error, and successful states are
   designed and testable. Failed requests preserve the draft.
-- Qt remains responsive during API calls; tests use a fake client and do not
-  require live AI or authentication services.
+- Qt remains responsive during service calls; tests use a fake service and do
+  not require live AI or authentication services.
 - The Reports experience is not represented as available until the storage
   contract is agreed and implemented.
 
@@ -213,17 +219,18 @@ current behavior to preserve unless the backend owners agree on a change.
 
 1. Add the Overview call-to-action and navigation while preserving auth
    behavior.
-2. Agree on the assessment service contract; implement the async client seam,
-   form, and result screen with fake-client tests.
+2. Agree on the in-process assessment service contract; implement the Qt
+   worker seam, form, and result screen with fake-service tests.
 3. Add `.eml` selection and shared parser integration.
 4. Agree on report persistence and privacy; then implement list and detail
    views.
 
 ## References
 
-- [`BACKEND_HANDOFF.md`](./BACKEND_HANDOFF.md) — current authentication
-  contract, proposed assessment/history API requirements, and security
-  requirements. An [HTML version](./BACKEND_HANDOFF.html) is also available.
-- [`README.md`](./README.md) — desktop setup, Docker GUI, and demo auth API.
-- [`../README.md`](../README.md) — CLI assessment, channels, report storage,
+- [`BACKEND_HANDOFF.md`](./BACKEND_HANDOFF.md) — in-process assessment
+  contract, current authentication prototype, and data-handling requirements.
+  An [HTML version](./BACKEND_HANDOFF.html) is also available.
+- [`../../gui/README.md`](../../gui/README.md) — desktop GUI setup and module
+  guide.
+- [`../../README.md`](../../README.md) — CLI assessment, channels, report storage,
   and `.eml` behavior.

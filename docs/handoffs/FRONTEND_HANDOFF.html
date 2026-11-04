@@ -31,7 +31,7 @@
 <body>
 <main>
   <h1>Frontend handoff: message assessment experience</h1>
-  <p>This handoff is for the frontend teammate implementing the missing product screens in the existing Python/PySide6 desktop GUI. It follows the product direction discussed for this phase; it is not a claim that the proposed assessment or history APIs already exist.</p>
+  <p>This handoff is for the frontend teammate implementing the missing product screens in the existing Python/PySide6 desktop GUI. It follows the product direction discussed for this phase; it is not a claim that the proposed assessment services or report-history functions already exist.</p>
 
   <h2>UI/UX goals</h2>
   <p>Make the experience feel quick, clear, and reassuring. A user should be able to submit a suspicious message without learning security jargon, understand the outcome without interpreting a score, and know what to do next.</p>
@@ -51,7 +51,7 @@
     <li><strong>Experience principles:</strong> plain language, evidence tied to the submitted message, practical next steps, and honest uncertainty. Do not imply that PhishReport can prove a message is safe.</li>
     <li><strong>Initial scope:</strong> a useful single-user assessment flow. Team dashboards, shared queues, incident management, and real account settings are not part of this handoff.</li>
   </ul>
-  <p>Keep the existing CLI working. The GUI is a separate desktop client; the Docker-hosted GUI continues to show that desktop window through noVNC.</p>
+  <p>Keep the existing CLI working during migration. The Docker-hosted GUI continues to show the desktop window through noVNC. The target desktop app is one Python process: GUI screens call shared application services in-process. The GUI must not start a second assessment server or launch the CLI as a subprocess.</p>
 
   <h2>Existing implementation and gap</h2>
   <p><strong>Already implemented:</strong></p>
@@ -63,7 +63,7 @@
     <li>Local JSON report history in the CLI.</li>
   </ul>
   <p><strong>Not implemented in the desktop GUI:</strong> message entry, <code>.eml</code> import, exposure questions, or analysis; assessment results and their recommended actions; and a saved-report list or report detail view.</p>
-  <p>The desktop <code>AuthApiClient</code> only implements authentication. The <a href="BACKEND_HANDOFF.md">BACKEND_HANDOFF.md</a> includes proposed assessment and history API contracts, but those APIs are not implemented. Do not call the interactive CLI entry points from a widget: they prompt on stdin, and analysis/network work must not block the Qt event loop.</p>
+  <p>The desktop <code>AuthApiClient</code> only implements authentication over HTTP. That current authentication prototype is separate from assessment and does not mean the GUI needs an HTTP backend to analyze messages. The <a href="BACKEND_HANDOFF.md">BACKEND_HANDOFF.md</a> defines the proposed in-process service contract; assessment and report-history GUI integration are not implemented yet. Do not call the interactive CLI entry points from a widget: they prompt on stdin and mix application work with terminal presentation. Call reusable services instead, and run slow work in Qt workers so the event loop stays responsive.</p>
 
   <h2>Frontend scope and priority</h2>
   <h3>P0: turn Overview into a useful starting point</h3>
@@ -81,7 +81,7 @@
     <li><strong>Sender (optional):</strong> do not claim that the sender has been authenticated.</li>
     <li><strong>Email import:</strong> allow choosing one <code>.eml</code> file for email. The existing parser supports text/HTML email content, rejects other file types, limits uploads to 2 MiB, and does not analyse attachments or embedded images. Reuse/refactor the established parser rather than creating a second parser.</li>
     <li><strong>Exposure context:</strong> ask whether a link or file was present, then ask whether the user clicked or downloaded only when applicable. Ask whether they submitted a password or one-time code. Match the current domain contract; do not silently substitute “No” when an answer is unknown.</li>
-    <li><strong>Submit:</strong> use a clear action such as <strong>Check message</strong>. Before sending, explain where the message is processed and retained using the backend's confirmed data policy. The current CLI sends assessment input to its AI provider and stores reports locally; do not promise privacy or deletion behavior that the chosen GUI backend does not guarantee.</li>
+    <li><strong>Submit:</strong> use a clear action such as <strong>Check message</strong>. Before sending, explain where the message is processed and retained using the service owners' confirmed data policy. The current CLI sends assessment input to its AI provider and stores reports locally; do not promise privacy or deletion behavior that the chosen service does not guarantee.</li>
   </ol>
   <p>Keep form validation specific and near the relevant field. Preserve the form when a request fails so the user can correct or retry it.</p>
   <p>Support keyboard navigation, visible focus, sensible tab order, readable type, and sufficient contrast. Keep primary actions visible without hiding content or trapping focus.</p>
@@ -115,13 +115,12 @@
   <p>The progress state should say what is happening in plain language. Keep Qt responsive throughout; offer a retry when appropriate. Keep the result's main action and return navigation easy to find, even when the message or checklist is long.</p>
 
   <h2>Backend integration to agree</h2>
-  <p>These are frontend requirements to discuss with the backend teammate, not implemented endpoints. Keep network calls behind a typed service/client boundary instead of coupling widgets to CLI internals.</p>
+  <p>These are frontend requirements to agree with the backend teammate. For the local desktop app, the boundary is a typed Python service interface, not an assessment HTTP API. The GUI and service functions run in the same process; Qt workers keep slow assessment work off the UI thread.</p>
   <ol>
-    <li>Define how the authenticated desktop client submits an assessment, whether assessment requires sign-in, and how the <code>.eml</code> parser is reused.</li>
-    <li>Agree on a request containing the channel, message, optional sender, and supported exposure context. Decide whether email import is parsed locally or uploaded to the service.</li>
+    <li>Agree on the Python function signature and typed input/output for assessment, including channel, message, optional sender, and supported exposure context. Decide how the shared <code>.eml</code> parser is called.</li>
     <li>Return a validated result matching the existing domain fields: <code>score</code> (integer), <code>priority</code> (<code>LOW</code>/<code>MEDIUM</code>/<code>HIGH</code>), <code>reasons</code> (strings), and <code>checklist</code> (strings).</li>
-    <li>Define safe, field-addressable validation errors, service-unavailable behavior, and whether a user can cancel an in-flight assessment.</li>
-    <li>Decide whether reports are local-only or server-backed. If server-backed, define list/detail, stable IDs, timestamps, pagination, ownership, retention, and deletion before implementing Reports.</li>
+    <li>Define typed validation and provider errors, cancellation/timeout behavior, and how a worker reports progress without touching widgets from its thread.</li>
+    <li>Decide how local reports are represented and loaded. Only choose server-backed history if there is a separate product requirement for accounts or shared data.</li>
     <li>Confirm exactly what content is sent to the AI provider, where it is stored, for how long, and how those facts are explained to users. Avoid logging message contents, passwords, or one-time codes.</li>
   </ol>
   <p>The existing CLI's 2 MiB <code>.eml</code> upload limit and supported formats are the current behavior to preserve unless the backend owners agree on a change.</p>
@@ -131,26 +130,26 @@
     <li>The existing sign-in, registration, reset, avatar menu, locked Settings, and sign-out flows continue to work.</li>
     <li>A signed-in user can complete the assessment form for email, SMS, and chat; email import follows the existing <code>.eml</code> restrictions.</li>
     <li>Relevant exposure questions are collected without assuming an unanswered question means “No.”</li>
-    <li>The GUI displays only a valid backend assessment and communicates its priority, evidence, and recommended actions without presenting score as certainty.</li>
+    <li>The GUI displays only a valid service assessment and communicates its priority, evidence, and recommended actions without presenting score as certainty.</li>
     <li>A LOW result is never described as proof of safety.</li>
     <li>Loading, empty, field-error, service-error, and successful states are designed and testable. Failed requests preserve the draft.</li>
-    <li>Qt remains responsive during API calls; tests use a fake client and do not require live AI or authentication services.</li>
+    <li>Qt remains responsive during service calls; tests use a fake service and do not require live AI or authentication services.</li>
     <li>The Reports experience is not represented as available until the storage contract is agreed and implemented.</li>
   </ul>
 
   <h2>Suggested implementation order</h2>
   <ol>
     <li>Add the Overview call-to-action and navigation while preserving auth behavior.</li>
-    <li>Agree on the assessment service contract; implement the async client seam, form, and result screen with fake-client tests.</li>
+    <li>Agree on the in-process assessment service contract; implement the Qt worker seam, form, and result screen with fake-service tests.</li>
     <li>Add <code>.eml</code> selection and shared parser integration.</li>
     <li>Agree on report persistence and privacy; then implement list and detail views.</li>
   </ol>
 
   <h2>References</h2>
   <ul>
-    <li><a href="BACKEND_HANDOFF.md">BACKEND_HANDOFF.md</a> — authentication contract, proposed assessment/history API requirements, and security requirements; also available as <a href="BACKEND_HANDOFF.html">HTML</a>.</li>
-    <li><a href="README.md">README.md</a> — desktop setup, Docker GUI, and demo auth API.</li>
-    <li><a href="../README.md">../README.md</a> — CLI assessment, channels, report storage, and <code>.eml</code> behavior.</li>
+    <li><a href="BACKEND_HANDOFF.md">BACKEND_HANDOFF.md</a> — in-process assessment contract, current authentication prototype, and data-handling requirements; also available as <a href="BACKEND_HANDOFF.html">HTML</a>.</li>
+    <li><a href="../../gui/README.md">GUI README</a> — desktop setup, Docker GUI, and demo auth API.</li>
+    <li><a href="../../README.md">Project README</a> — CLI assessment, channels, report storage, and <code>.eml</code> behavior.</li>
   </ul>
 </main>
 </body>

@@ -1,8 +1,8 @@
 # Local coursework references
 .local/
-# Project spec PDFs (not shared in the repo)
-documents/
 *.pdf
+!docs/*.pdf
+!docs/**/*.pdf
 
 # API keys and other machine-specific settings
 .env
@@ -11,7 +11,6 @@ documents/
 
 # Python environments and generated files
 .venv/
-.venv-gui/
 venv/
 __pycache__/
 *.py[cod]
