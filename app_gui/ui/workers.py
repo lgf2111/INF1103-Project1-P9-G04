@@ -8,7 +8,7 @@ from typing import Any
 
 from PySide6.QtCore import QThread, Signal
 
-from gui.auth_api import AuthApiError
+from app_gui.auth_api import AuthApiError
 
 LOGGER = logging.getLogger(__name__)
 

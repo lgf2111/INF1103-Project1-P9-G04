@@ -117,7 +117,7 @@ elif [ "$command" = "run" ]; then
         -v "$(docker_path "$DATA_DIR"):/data" \
         -v "$(docker_path "$EMAIL_DIR"):/emails:ro" \
         -w /data \
-        "$IMAGE" python /app/cli/main.py
+        "$IMAGE" python /app/app_cli/main.py
 
 elif [ "$command" = "test" ]; then
     ensure_image
@@ -219,7 +219,7 @@ elif [ "$command" = "gui" ] || [ "$command" = "gui-web" ]; then
             --network "$MOCK_AUTH_NETWORK" \
             --network-alias phishreport-auth \
             "$ACTIVE_GUI_IMAGE" \
-            python -m gui.mock_auth_api --host 0.0.0.0 --port 8000
+            python -m app_gui.mock_auth_api --host 0.0.0.0 --port 8000
         API_URL="http://phishreport-auth:8000"
         echo "Demo sign-in: demo@phishreport.test / phishreport-demo"
         if [ "$command" = "gui" ]; then

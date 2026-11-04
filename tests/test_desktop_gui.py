@@ -7,8 +7,8 @@ pytest.importorskip("PySide6")
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QLabel, QPushButton
 
-from gui.auth_api import AuthApiError
-from gui.main import MainWindow
+from app_gui.auth_api import AuthApiError
+from app_gui.main import MainWindow
 
 
 class FakeApi:

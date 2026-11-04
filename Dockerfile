@@ -1,11 +1,13 @@
 # CLI image remains the default build target.
-FROM python:3.12-slim AS base
+FROM python:3.14-slim AS base
 
 WORKDIR /app
 
+COPY --from=ghcr.io/astral-sh/uv:0.12.16 /uv /uvx /bin/
+
 # Install the project dependencies first for better Docker layer caching.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN uv pip install --system --no-cache -r requirements.txt
 
 COPY . .
 
@@ -39,7 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV DISPLAY=host.docker.internal:0
 ENV QT_X11_NO_MITSHM=1
-CMD ["python", "-m", "gui.main"]
+CMD ["python", "-m", "app_gui.main"]
 
 FROM gui-native AS gui
 
@@ -54,10 +56,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ENV DISPLAY=:99
 EXPOSE 6080
-CMD ["python", "-m", "gui.docker_entrypoint"]
+CMD ["python", "-m", "app_gui.docker_entrypoint"]
 
 FROM base AS cli
 
 # The file-upload option serves a one-shot page on port 8000.
 EXPOSE 8000
-CMD ["python", "cli/main.py"]
+CMD ["python", "app_cli/main.py"]

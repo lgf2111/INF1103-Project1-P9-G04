@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 
-from gui.ui.auth_form import PASSWORD_MIN_LENGTH, AuthPage
+from app_gui.ui.auth_form import PASSWORD_MIN_LENGTH, AuthPage
 
 
 class LoginPage(AuthPage):

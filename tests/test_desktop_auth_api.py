@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from gui.auth_api import AuthApiClient, AuthApiError
+from app_gui.auth_api import AuthApiClient, AuthApiError
 
 
 class AuthHandler(http.server.BaseHTTPRequestHandler):

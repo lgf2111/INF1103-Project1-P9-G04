@@ -13,12 +13,12 @@ from PySide6.QtCore import Qt, QTimer, Slot
 from PySide6.QtGui import QCloseEvent
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget
 
-from gui.auth_api import AuthApiClient, AuthApiError
-from gui.ui.auth_pages import PASSWORD_MIN_LENGTH, AuthPage
-from gui.ui.auth_shell import AuthShell
-from gui.ui.dashboard import DashboardShell
-from gui.ui.styles import STYLESHEET
-from gui.ui.workers import ApiWorker
+from app_gui.auth_api import AuthApiClient, AuthApiError
+from app_gui.ui.auth_pages import PASSWORD_MIN_LENGTH, AuthPage
+from app_gui.ui.auth_shell import AuthShell
+from app_gui.ui.dashboard import DashboardShell
+from app_gui.ui.styles import STYLESHEET
+from app_gui.ui.workers import ApiWorker
 
 
 class MainWindow(QMainWindow):

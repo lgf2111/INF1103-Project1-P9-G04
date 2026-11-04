@@ -270,7 +270,7 @@ def test_demo_actual_http_upload_of_real_email(demo_transport, monkeypatch):
 # Manager Contract
 # ============================================================================
 manager_contract_ROOT = Path(__file__).resolve().parents[1]
-manager_contract_APP = manager_contract_ROOT / "cli"
+manager_contract_APP = manager_contract_ROOT / "app_cli"
 manager_contract_REQUIRED = ("io_manager", "ai_manager", "logic_manager", "data_manager")
 
 
@@ -3892,7 +3892,7 @@ def test_env_loading_actual_cli_reaches_menu_after_configuration_failure(
         env_loading_env_folder.mkdir()
     else:
         env_loading_env_folder.write_bytes(b"PHISHREPORT_TEST_NEW=PRIVATE_CONFIG_SENTINEL\n\xff")
-    app = Path(__file__).resolve().parents[1] / "cli"
+    app = Path(__file__).resolve().parents[1] / "app_cli"
     environment = os.environ.copy()
     for key in ("DATABASE_URL", "GROQ_API_KEY", "GROQ_FALLBACK_MODEL"):
         environment.pop(key, None)
@@ -3947,7 +3947,7 @@ def test_runtime_settings_non_object_settings_are_logged_and_recovered(
 @pytest.mark.parametrize("level", ["BASIC_FORMAT", "_STYLES"])
 def test_runtime_settings_logging_attribute_names_do_not_crash_startup(tmp_path, level):
     """An environment value must be a level, not any attribute of logging."""
-    app = Path(__file__).resolve().parents[1] / "cli"
+    app = Path(__file__).resolve().parents[1] / "app_cli"
     environment = dict(os.environ, LOG_LEVEL=level)
     environment.pop("GROQ_API_KEY", None)
     result = subprocess.run(
@@ -4463,9 +4463,9 @@ def test_docker_helper_run_preserves_existing_data_and_mounts_its_directory(dock
     assert str(data) + ":/data" in args
     assert str(folder / "emails") + ":/emails:ro" in args
     assert args[args.index("-w") + 1] == "/data"
-    assert args[-2:] == ["python", "/app/cli/main.py"]
+    assert args[-2:] == ["python", "/app/app_cli/main.py"]
     assert "127.0.0.1:8000:8000" in args
-    assert not any(":/cli/reports.json" in arg for arg in args)
+    assert not any(":/app_cli/reports.json" in arg for arg in args)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
@@ -4539,7 +4539,7 @@ def test_docker_helper_run_builds_image_when_missing(docker_helper_project):
     result, calls = docker_helper_launch(docker_helper_project, DOCKER_IMAGE_MISSING="1")
     assert result.returncode == 0, result.stderr
     assert ["build", "-t", "phishreport", str(docker_helper_project[0])] in calls
-    assert calls[-1][-2:] == ["python", "/app/cli/main.py"]
+    assert calls[-1][-2:] == ["python", "/app/app_cli/main.py"]
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
@@ -4560,7 +4560,7 @@ def test_docker_helper_gui_starts_demo_auth_and_cleans_up(docker_helper_project)
     assert calls[2][-7:] == [
         "python",
         "-m",
-        "gui.mock_auth_api",
+        "app_gui.mock_auth_api",
         "--host",
         "0.0.0.0",
         "--port",

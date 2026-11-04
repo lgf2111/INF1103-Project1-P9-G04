@@ -2,21 +2,21 @@ from pathlib import Path
 
 import pytest
 
-from gui.docker_entrypoint import _validate_display_size
+from app_gui.docker_entrypoint import _validate_display_size
 
 
 def test_dockerfile_defines_native_x11_gui_target():
     dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
     assert "FROM base AS gui-native" in dockerfile
     assert "ENV DISPLAY=host.docker.internal:0" in dockerfile
-    assert 'CMD ["python", "-m", "gui.main"]' in dockerfile
+    assert 'CMD ["python", "-m", "app_gui.main"]' in dockerfile
 
 
 def test_dockerfile_keeps_novnc_gui_target():
     dockerfile = (Path(__file__).resolve().parents[1] / "Dockerfile").read_text()
     assert "FROM gui-native AS gui" in dockerfile
     assert "EXPOSE 6080" in dockerfile
-    assert 'CMD ["python", "-m", "gui.docker_entrypoint"]' in dockerfile
+    assert 'CMD ["python", "-m", "app_gui.docker_entrypoint"]' in dockerfile
 
 
 def test_gui_dependency_uses_the_single_root_requirements_file():
@@ -24,7 +24,7 @@ def test_gui_dependency_uses_the_single_root_requirements_file():
     requirements = (root / "requirements.txt").read_text()
 
     assert "PySide6-Essentials==6.10.2" in requirements
-    assert not (root / "gui" / "requirements.txt").exists()
+    assert not (root / "app_gui" / "requirements.txt").exists()
     assert "COPY requirements.txt ." in (root / "Dockerfile").read_text()
 
 

@@ -1,8 +1,8 @@
-# Make cli/ modules available to offline tests, matching the CLI entry point.
+# Make app_cli/ modules available to offline tests, matching the CLI entry point.
 import os
 import sys
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "cli"))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "app_cli"))
 
 
 def pytest_configure(config):

@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from gui.ui.branding import brand_mark
+from app_gui.ui.branding import brand_mark
 
 
 class DashboardShell:

@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QStackedWidget, QVBoxLayout, QWidget
 
-from gui.ui.auth_pages import (
+from app_gui.ui.auth_pages import (
     AuthPage,
     ForgotPasswordPage,
     LoginPage,
     ResetPasswordPage,
     SignupPage,
 )
-from gui.ui.branding import brand_mark
+from app_gui.ui.branding import brand_mark
 
 
 class AuthShell:
