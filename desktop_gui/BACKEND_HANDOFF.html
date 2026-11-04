@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backend handoff: desktop GUI | PhishReport</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #17212b;
+      background: #f4f6f8;
+      line-height: 1.6;
+    }
+    body { margin: 0; }
+    main { max-width: 960px; margin: 32px auto; padding: 40px; background: #fff; }
+    h1, h2, h3 { line-height: 1.25; color: #122335; }
+    h1 { margin-top: 0; font-size: 2rem; }
+    h2 { margin-top: 2.2rem; padding-bottom: .35rem; border-bottom: 1px solid #dce2e8; }
+    h3 { margin-top: 1.5rem; }
+    a { color: #1659a7; }
+    li { margin: .4rem 0; }
+    code { padding: .12rem .3rem; background: #edf1f5; border-radius: 4px; }
+    pre { overflow-x: auto; padding: 1rem; background: #f1f3f5; border-radius: 6px; }
+    pre code { padding: 0; background: transparent; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: .55rem; border: 1px solid #dce2e8; text-align: left; vertical-align: top; }
+    th { background: #f4f6f8; }
+    @media (max-width: 640px) {
+      main { margin: 0; padding: 24px 18px; }
+      h1 { font-size: 1.65rem; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Backend handoff: desktop GUI</h1>
+  <p>The desktop app is a Python/PySide6 client. It contains no account database, password verification, email delivery, assessment API, or server-side session logic. The CLI remains a separate entry point and is not changed by this GUI.</p>
+  <p>The authentication client is implemented in <a href="auth_api.py"><code>auth_api.py</code></a>. The GUI does not yet have assessment or report APIs. The auth and assessment contracts below are proposals for the backend and frontend teammates to agree on; do not treat proposed assessment endpoints as implemented.</p>
+
+  <h2>Authentication API contract</h2>
+  <p>All requests and successful non-empty responses use JSON. Errors use this shape:</p>
+  <pre><code>{
+  "error": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "Email or password is incorrect.",
+    "fieldErrors": {
+      "email": "Enter a valid email address."
+    }
+  }
+}</code></pre>
+  <p><code>fieldErrors</code> is optional and maps request field names to user-facing text.</p>
+  <table>
+    <thead><tr><th>Method and path</th><th>Request body</th><th>Success response</th></tr></thead>
+    <tbody>
+      <tr><td><code>POST /api/auth/login</code></td><td><code>{"email":"...","password":"..."}</code></td><td><code>200 {"user":{"id":"...","email":"...","name":"..."}}</code></td></tr>
+      <tr><td><code>POST /api/auth/register</code></td><td><code>{"email":"...","password":"..."}</code></td><td><code>201 {"verificationRequired":true}</code>, or <code>201 {"verificationRequired":false,"user":{...}}</code></td></tr>
+      <tr><td><code>POST /api/auth/password/reset-request</code></td><td><code>{"email":"..."}</code></td><td><code>202 {"message":"If an account matches, reset instructions will be sent."}</code></td></tr>
+      <tr><td><code>POST /api/auth/password/reset</code></td><td><code>{"token":"...","password":"..."}</code></td><td><code>200 {"message":"Password updated."}</code></td></tr>
+      <tr><td><code>GET /api/auth/me</code></td><td>None</td><td><code>200 {"user":{"id":"...","email":"...","name":"..."}}</code></td></tr>
+      <tr><td><code>POST /api/auth/logout</code></td><td>None</td><td><code>204 No Content</code> (or <code>200</code> with JSON)</td></tr>
+    </tbody>
+  </table>
+  <p><code>name</code> is optional. When account verification is required, do not create a signed-in session. When registration signs the user in immediately, return <code>verificationRequired: false</code>, the user, and the session cookie.</p>
+
+  <h2>Session and authentication security</h2>
+  <ul>
+    <li>The client uses Python's in-memory <code>CookieJar</code>; it does not persist session cookies, passwords, or reset tokens to disk. Closing the desktop app ends the local session.</li>
+    <li>Prefer a short-lived, opaque, server-side session cookie with <code>HttpOnly</code>, <code>Secure</code> in production, and an appropriate <code>SameSite</code> policy. Invalidate the session on logout and password changes.</li>
+    <li>Require HTTPS except for local development. Validate certificate chains; do not disable TLS checks.</li>
+    <li>Use generic login and reset-request responses; rate-limit login, registration, and reset-request endpoints.</li>
+    <li>Reset tokens must be random, short-lived, single-use, and invalidated after reset. The email link should open the app with its token (register a <code>phishreport://reset</code> URL scheme when packaging); during development, pass it with <code>--reset-token</code>.</li>
+    <li>New passwords must be at least 12 characters to match client-side validation. The backend remains authoritative and should return a field error when its password policy rejects a value.</li>
+    <li>Never return password hashes, session secrets, reset tokens (other than the intended email link), or internal exception details in API responses.</li>
+  </ul>
+  <p>The client currently expects the API origin in <code>PHISHREPORT_API_URL</code>, defaulting to <code>http://127.0.0.1:8000</code>. Endpoint names, cookie policy, reset-link delivery, and registration verification behavior are proposed and should be agreed before backend integration.</p>
+
+  <h2>Frontend boundary</h2>
+  <p><code>desktop_gui/main.py</code> implements screens and presentation state. <code>desktop_gui/auth_api.py</code> is the HTTP boundary. After sign-in, the GUI shows an empty dashboard shell with an initials-based profile avatar. Its menu opens a locked Settings screen or signs out. The current user response has no image field, so the avatar uses the account name's initials.</p>
+
+  <h2>Assessment API needed by the GUI (proposed)</h2>
+  <p>The frontend needs an asynchronous service boundary for assessment. It must not call the CLI's interactive <code>check_message()</code> flow: that flow prompts on stdin, uses CLI presentation, and writes to local JSON. The service should reuse the existing assessment logic and validated result shape without blocking the Qt event loop.</p>
+
+  <h3>Submit an assessment</h3>
+  <pre><code>POST /api/assessments
+Content-Type: application/json
+Cookie: session=...</code></pre>
+  <pre><code>{
+  "channel": "email",
+  "sender": "billing@example.test",
+  "message": "Please review this unusual payment request.",
+  "has_link": true,
+  "link": "https://example.test/pay",
+  "has_file": false,
+  "file_name": null,
+  "clicked": false,
+  "downloaded": false,
+  "submitted_category": null
+}</code></pre>
+  <p><code>channel</code> is <code>email</code>, <code>sms</code>, or <code>chat</code>; <code>sender</code> is optional. <code>link</code> and <code>file_name</code> are optional and only meaningful when the corresponding <code>has_link</code>/<code>has_file</code> value is true. Ask about clicks/downloads only when applicable and transmit the answers explicitly. <code>submitted_category</code> is <code>password</code>, <code>otp</code>, or <code>null</code> after the user answers. Reject contradictory or malformed combinations rather than silently rewriting answers.</p>
+  <p>Proposed success response:</p>
+  <pre><code>{
+  "report": {
+    "id": "report-id",
+    "createdAt": "2026-11-04T14:30:00Z",
+    "channel": "email",
+    "message": "Please review this unusual payment request.",
+    "result": {
+      "score": 45,
+      "priority": "MEDIUM",
+      "reasons": ["Example explanation from the assessment engine."],
+      "checklist": ["Verify the request using a known official contact method."]
+    }
+  }
+}</code></pre>
+  <p>The <code>result</code> fields match the existing domain contract: integer <code>score</code> (0–100), <code>priority</code> (<code>LOW</code>, <code>MEDIUM</code>, or <code>HIGH</code>), and arrays of non-blank strings <code>reasons</code> and <code>checklist</code> (the arrays themselves may be empty). The score is a rule-based response-priority score, not a probability that the message is malicious. Do not make the frontend infer a result from a partial response.</p>
+  <p>Show an in-progress state, prevent duplicate submissions, and remain responsive. Set request limits and timeouts appropriate for AI processing. Define whether a disconnected/cancelled request can still finish server-side and how retries avoid accidental duplicate reports (for example, an idempotency key).</p>
+
+  <h3>Report history (proposed, required only if Reports is enabled)</h3>
+  <p>The frontend history design needs stable IDs, timestamps, channel, priority, and a short message preview. Detail needs the full submitted message, reasons, and checklist. Suggested endpoints:</p>
+  <table>
+    <thead><tr><th>Method and path</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /api/reports?limit=20&amp;cursor=...</code></td><td>Return the signed-in user's paginated report summaries and a next cursor.</td></tr>
+      <tr><td><code>GET /api/reports/{id}</code></td><td>Return one report detail owned by the signed-in user.</td></tr>
+      <tr><td><code>DELETE /api/reports/{id}</code></td><td>Delete one report if deletion is supported by the agreed retention policy.</td></tr>
+    </tbody>
+  </table>
+  <p>Scope every response to the authenticated user. Define ordering, pagination, missing/deleted record behavior, and whether a successful assessment is automatically saved. The existing CLI's local <code>reports.json</code> format has no stable ID or timestamp and is not a server-history contract. Until the operations and data policy are agreed and implemented, keep Reports disabled with an honest explanation.</p>
+
+  <h3>Errors and validation</h3>
+  <p>Use the common JSON error envelope from the authentication contract, including stable <code>code</code>, user-safe <code>message</code>, and optional <code>fieldErrors</code>. The frontend needs to distinguish:</p>
+  <ul>
+    <li><code>400</code>/<code>422</code>: invalid input or field validation.</li>
+    <li><code>401</code>: session missing or expired; return to sign-in without discarding the unsent draft.</li>
+    <li><code>413</code>: message or email upload exceeds a configured limit.</li>
+    <li><code>429</code>: rate limit, with a retry delay when available.</li>
+    <li><code>502</code>/<code>503</code>/<code>504</code>: analysis provider or service unavailable/timed out.</li>
+  </ul>
+  <p>Never return an assessment-shaped response for an error, and never convert an AI or validation failure into a LOW result. Avoid exposing provider details, stack traces, secrets, or submitted content in error messages.</p>
+
+  <h2>Email import and input limits</h2>
+  <p>The existing CLI accepts <code>.eml</code> files up to 2 MiB, supports text/HTML email content, and does not analyse attachments or embedded images. Agree whether the desktop parses locally using the shared parser or uploads the original file. Prefer parsing locally and submitting extracted fields when it preserves current security behavior; if uploading, enforce size/type limits server-side and document how the raw file is handled. The current message-text limit is 50,000 characters; coordinate any shared GUI/API limit with the frontend.</p>
+
+  <h2>Data handling, privacy, and operations</h2>
+  <p>Before enabling assessment, provide product-approved answers for the frontend to show near submission: whether the full message is sent to the AI provider, where it is processed, whether it is persisted, who can access it, the retention period, and how the user can delete it. Do not promise privacy, retention, or deletion behavior that the service does not enforce.</p>
+  <ul>
+    <li>Require authentication for assessment/history unless product owners explicitly decide otherwise. Never expose one user's history to another.</li>
+    <li>Do not log message bodies, links, passwords, one-time codes, session cookies, or reset tokens. Redact request/exception telemetry.</li>
+    <li>Validate channel, lengths, optional sender and link/file metadata, and exposure answers server-side.</li>
+    <li>Apply request and provider timeouts, rate limits, and bounded request sizes.</li>
+    <li>Return only validated assessment output; do not expose raw model prompts, provider payloads, or internal exception details.</li>
+    <li>Persist reports only according to the agreed retention policy; support deletion consistently across primary storage, caches, and exports where applicable.</li>
+  </ul>
+
+  <h2>Frontend integration checklist</h2>
+  <ol>
+    <li>Confirm auth endpoints, cookie behavior, registration verification, reset delivery, and session expiry.</li>
+    <li>Agree on assessment request/result/error schemas and implement a development assessment endpoint or mock for GUI work.</li>
+    <li>Decide server-backed versus local-only report history; do not expose Reports until the choice and data lifecycle are implemented.</li>
+    <li>Confirm email parse/upload behavior, input limits, and user-facing data handling copy.</li>
+    <li>Test success, validation, authentication expiry, rate limiting, timeout, provider outage, and malformed responses without live provider calls.</li>
+  </ol>
+  <p><code>mock_auth_api.py</code> is a local-only, fixed-response authentication server; it does not implement assessment or report history. Extend it only as a separate development feature if frontend work needs those responses. It is not a production backend.</p>
+
+  <h2>Related docs</h2>
+  <ul>
+    <li><a href="FRONTEND_HANDOFF.md">FRONTEND_HANDOFF.md</a> — UI/UX scope and frontend acceptance criteria.</li>
+    <li><a href="README.md">README.md</a> — desktop setup and demo auth API.</li>
+  </ul>
+</main>
+</body>
+</html>
