@@ -271,7 +271,7 @@ def test_demo_actual_http_upload_of_real_email(demo_transport, monkeypatch):
 # Manager Contract
 # ============================================================================
 manager_contract_ROOT = Path(__file__).resolve().parents[1]
-manager_contract_APP = manager_contract_ROOT / "app"
+manager_contract_APP = manager_contract_ROOT / "app_cli"
 manager_contract_REQUIRED = ("io_manager", "ai_manager", "logic_manager", "data_manager")
 
 
@@ -3910,7 +3910,7 @@ def test_env_loading_actual_cli_reaches_menu_after_configuration_failure(
         env_loading_env_folder.mkdir()
     else:
         env_loading_env_folder.write_bytes(b"PHISHREPORT_TEST_NEW=PRIVATE_CONFIG_SENTINEL\n\xff")
-    app = Path(__file__).resolve().parents[1] / "app"
+    app = Path(__file__).resolve().parents[1] / "app_cli"
     environment = os.environ.copy()
     for key in ("DATABASE_URL", "GROQ_API_KEY", "GROQ_FALLBACK_MODEL"):
         environment.pop(key, None)
@@ -3965,7 +3965,7 @@ def test_runtime_settings_non_object_settings_are_logged_and_recovered(
 @pytest.mark.parametrize("level", ["BASIC_FORMAT", "_STYLES"])
 def test_runtime_settings_logging_attribute_names_do_not_crash_startup(tmp_path, level):
     """An environment value must be a level, not any attribute of logging."""
-    app = Path(__file__).resolve().parents[1] / "app"
+    app = Path(__file__).resolve().parents[1] / "app_cli"
     environment = dict(os.environ, LOG_LEVEL=level)
     environment.pop("GROQ_API_KEY", None)
     result = subprocess.run(
@@ -4389,17 +4389,44 @@ def docker_helper_project(tmp_path):
     source = Path(__file__).resolve().parents[1]
     folder = tmp_path / "Project with spaces"
     folder.mkdir()
-    shutil.copyfile(source / "docker.sh", folder / "docker.sh")
+    shutil.copyfile(source / "run.sh", folder / "run.sh")
     (folder / ".env").write_text("GROQ_API_KEY=unused-offline\n", encoding="utf-8")
     emails = folder / "emails"
     emails.mkdir()
     shutil.copyfile(source / "tests" / "fixtures" / "sample-1.eml", emails / "sample-1.eml")
     binaries = tmp_path / "bin"
     binaries.mkdir()
+    uname_stub = binaries / "uname"
+    uname_stub.write_text(
+        f"#!{sys.executable}\n"
+        "import os\n"
+        "print(os.environ.get('TEST_HOST_OS', 'Linux'))\n",
+        encoding="utf-8",
+    )
+    uname_stub.chmod(0o755)
+    xauth_stub = binaries / "xauth"
+    xauth_stub.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys\n"
+        "if sys.argv[1:] == ['nlist', os.environ.get('DISPLAY', ':0')]:\n"
+        "    if os.environ.get('XAUTH_NO_COOKIE') != '1':\n"
+        "        print('0000 0000 0000 0000 0000 0000 '\n"
+        "              '4d49542d4d414749432d434f4f4b49452d31 deadbeef')\n"
+        "elif sys.argv[-2:] == ['nmerge', '-']:\n"
+        "    with open(os.environ['XAUTH_CALLS'], 'a', encoding='utf-8') as stream:\n"
+        "        stream.write(' '.join(sys.argv[1:]) + '\\n' + sys.stdin.read())\n",
+        encoding="utf-8",
+    )
+    xauth_stub.chmod(0o755)
     stub = binaries / "docker"
     stub.write_text(
         f"#!{sys.executable}\n"
         "import json, os, sys\n"
+        "if (\n"
+        "    sys.argv[1:3] == ['image', 'inspect']\n"
+        "    and os.environ.get('DOCKER_IMAGE_MISSING') == '1'\n"
+        "):\n"
+        "    raise SystemExit(1)\n"
         "with open(os.environ['DOCKER_CALLS'], 'a', encoding='utf-8') as stream:\n"
         "    stream.write(json.dumps(sys.argv[1:]) + '\\n')\n",
         encoding="utf-8",
@@ -4412,10 +4439,12 @@ def docker_helper_launch(docker_helper_project, command="run", **settings):
     folder, binaries, calls = docker_helper_project
     environment = {**os.environ, "PATH": str(binaries) + os.pathsep + os.environ["PATH"]}
     environment.pop("PHISHREPORT_EMAIL_DIR", None)
+    environment.setdefault("TEST_HOST_OS", "Linux")
     environment.update(settings)
     environment["DOCKER_CALLS"] = str(calls)
+    environment["XAUTH_CALLS"] = str(calls.with_name("xauth-calls.txt"))
     result = subprocess.run(
-        ["bash", str(folder / "docker.sh"), command],
+        ["bash", str(folder / "run.sh"), command],
         cwd=folder.parent,
         env=environment,
         capture_output=True,
@@ -4452,9 +4481,9 @@ def test_docker_helper_run_preserves_existing_data_and_mounts_its_directory(dock
     assert str(data) + ":/data" in args
     assert str(folder / "emails") + ":/emails:ro" in args
     assert args[args.index("-w") + 1] == "/data"
-    assert args[-2:] == ["python", "/app/app/main.py"]
+    assert args[-2:] == ["python", "/app/app_cli/main.py"]
     assert "127.0.0.1:8000:8000" in args
-    assert not any(":/app/reports.json" in arg for arg in args)
+    assert not any(":/app_cli/reports.json" in arg for arg in args)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
@@ -4524,8 +4553,113 @@ def test_docker_helper_build_from_another_directory_uses_project_context(docker_
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
+def test_docker_helper_run_builds_image_when_missing(docker_helper_project):
+    result, calls = docker_helper_launch(docker_helper_project, DOCKER_IMAGE_MISSING="1")
+    assert result.returncode == 0, result.stderr
+    assert ["build", "-t", "phishreport", str(docker_helper_project[0])] in calls
+    assert calls[-1][-2:] == ["python", "/app/app_cli/main.py"]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
 def test_docker_helper_helper_has_unix_line_endings():
-    assert b"\r\n" not in (Path(__file__).resolve().parents[1] / "docker.sh").read_bytes()
+    assert b"\r\n" not in (Path(__file__).resolve().parents[1] / "run.sh").read_bytes()
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
+def test_docker_helper_gui_starts_demo_auth_and_cleans_up(docker_helper_project):
+    _, _, _ = docker_helper_project
+    result, calls = docker_helper_launch(docker_helper_project, command="gui")
+    assert result.returncode == 0, result.stderr
+    assert calls[0][:4] == ["build", "--target", "gui-native", "-t"]
+    assert calls[1][0:2] == ["network", "create"]
+    assert calls[2][0:2] == ["run", "--rm"]
+    assert "--network-alias" in calls[2]
+    assert "phishreport-auth" in calls[2]
+    assert calls[2][-7:] == [
+        "python",
+        "-m",
+        "app_gui.mock_auth_api",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8000",
+    ]
+    assert calls[3][0:2] == ["run", "--rm"]
+    assert "--network" in calls[3]
+    assert "DISPLAY=host.docker.internal:0" in calls[3]
+    assert "QT_X11_NO_MITSHM=1" in calls[3]
+    assert "PHISHREPORT_API_URL=http://phishreport-auth:8000" in calls[3]
+    assert calls[4][0] == "stop"
+    assert calls[5][0:2] == ["network", "rm"]
+    assert "demo@phishreport.test / phishreport-demo" in result.stdout
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
+def test_docker_helper_gui_uses_custom_auth_api_without_demo_service(docker_helper_project):
+    result, calls = docker_helper_launch(
+        docker_helper_project,
+        command="gui",
+        PHISHREPORT_API_URL="https://auth.example.test",
+    )
+    assert result.returncode == 0, result.stderr
+    assert len(calls) == 2
+    assert calls[0][:4] == ["build", "--target", "gui-native", "-t"]
+    assert calls[1][0:2] == ["run", "--rm"]
+    assert "DISPLAY=host.docker.internal:0" in calls[1]
+    assert "PHISHREPORT_API_URL=https://auth.example.test" in calls[1]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
+def test_docker_helper_macos_gui_mounts_temporary_xauthority(docker_helper_project):
+    folder, _, calls_file = docker_helper_project
+    result, calls = docker_helper_launch(
+        docker_helper_project,
+        command="gui",
+        TEST_HOST_OS="Darwin",
+        DISPLAY="/private/tmp/org.xquartz:0",
+    )
+    assert result.returncode == 0, result.stderr
+    auth_file = calls_file.with_name("xauth-calls.txt").read_text()
+    assert auth_file.startswith("-f ")
+    assert "ffff" in auth_file
+    assert "deadbeef" in auth_file
+    gui_args = calls[3]
+    assert any(
+        arg.startswith(str(folder / ".phishreport-xauth.")) and arg.endswith(":/tmp/.Xauthority:ro")
+        for arg in gui_args
+    )
+    assert "XAUTHORITY=/tmp/.Xauthority" in gui_args
+    assert list(folder.glob(".phishreport-xauth.*")) == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
+def test_docker_helper_macos_gui_reports_missing_xauthority_cookie(docker_helper_project):
+    folder, _, _ = docker_helper_project
+    result, calls = docker_helper_launch(
+        docker_helper_project,
+        command="gui",
+        TEST_HOST_OS="Darwin",
+        DISPLAY=":0",
+        XAUTH_NO_COOKIE="1",
+    )
+    assert result.returncode != 0
+    assert len(calls) == 1
+    assert "No X11 authorization cookie was found" in result.stdout
+    assert list(folder.glob(".phishreport-xauth.*")) == []
+
+
+@pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
+def test_docker_helper_gui_web_preserves_novnc_mode(docker_helper_project):
+    result, calls = docker_helper_launch(docker_helper_project, command="gui-web")
+    assert result.returncode == 0, result.stderr
+    assert calls[0][:4] == ["build", "--target", "gui", "-t"]
+    assert calls[1][0:2] == ["network", "create"]
+    assert calls[2][0:2] == ["run", "--rm"]
+    assert calls[3][0:2] == ["run", "--rm"]
+    assert "127.0.0.1:6080:6080" in calls[3]
+    assert "PHISHREPORT_API_URL=http://phishreport-auth:8000" in calls[3]
+    assert calls[4][0] == "stop"
+    assert calls[5][0:2] == ["network", "rm"]
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
