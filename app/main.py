@@ -5,9 +5,9 @@
 import os
 
 import ai_manager
-import data_manager
 import io_manager
 import logging_setup
+from data_core import DataManager
 from logic_core import LogicManager
 
 # web_upload is imported lazily inside upload_file() so the web server code only
@@ -15,6 +15,7 @@ from logic_core import LogicManager
 
 logger = logging_setup.get_logger(__name__)
 logic_manager = LogicManager()
+data_manager = DataManager()
 
 
 def _friendly_ai_error(error):
