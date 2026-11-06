@@ -2,16 +2,17 @@
 
 [![CI](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml/badge.svg)](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml)
 
-PhishReport is a Python application currently delivered through a procedural CLI, with a PySide desktop GUI under development as the target interface. The app assesses suspicious emails, SMS and chat messages using the Groq API and rule-based scoring, then provides a priority level and recommended response steps. Assessments are saved locally as JSON.
+PhishReport is a Python application with a CLI and a PySide desktop GUI under development. The app assesses suspicious emails, SMS and chat messages using the Groq API and rule-based scoring, then provides a priority level and recommended response steps. Assessments are saved locally as JSON.
 
-This repository contains the Phase 1 coursework application. **A LOW-priority result does not guarantee that a message is safe.**
+**A LOW-priority result does not guarantee that a message is safe.**
 
 ## Project layout
 
 | Path | Purpose |
 | --- | --- |
 | `app_cli/io_manager.py` | Collect input and display results. |
-| `app_cli/ai_manager.py` | Request and validate AI findings. |
+| `app_cli/ai_manager.py` | Compatibility functions for AI prompting, requests and validation. |
+| `app_cli/ai_core/` | AI assessment coordinator, prompt builder, completion client and response validator. |
 | `app_cli/logic_manager.py` | Apply assessment rules, scoring and routing. |
 | `app_cli/data_manager.py` | Save, load and query JSON reports. |
 | `app_cli/main.py` | Connect the managers and run the menu. |
@@ -24,9 +25,18 @@ This repository contains the Phase 1 coursework application. **A LOW-priority re
 | `docs/` | Organized guides, teammate handoffs, and project references. |
 | `requirements.txt` | Shared dependencies for the CLI, GUI, and tests. |
 | `tests/test_logic_manager.py` | Offline logic tests. |
+| `tests/test_ai_core.py` | Offline assessment coordinator tests. |
 | `tests/test_application.py` | Application tests and feature showcase. |
 | `tests/fixtures/` | Public sample emails for testing. |
 | `conftest.py` | Shared pytest configuration. |
+
+### AI assessment
+
+The CLI calls `AIManager.assess(record)` to build a prompt and obtain findings.
+The manager uses `GroqClient` by default and accepts an `AIClient` implementation
+for offline tests. It parses the completion, validates the findings schema and
+checks that extracted details match the original message. Only validated
+findings reach the scoring rules.
 
 ## Set up
 
@@ -101,7 +111,9 @@ uv run --python 3.14 --no-project --with-requirements requirements.txt pytest te
 uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_application.py -m demo -v
 ```
 
-The logic and application suites contain **643 test cases** (including parameter variations): 72 logic tests and 571 application tests, of which 12 are showcase cases. The tests mock external AI requests; they do not measure live-model detection accuracy.
+The application suite uses fake completion clients and mocked Groq HTTP calls
+to check prompt handling, retries, response validation and CLI behavior offline.
+It runs without a Groq key after test dependencies are installed.
 
 ### Assessment policy
 

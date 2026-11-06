@@ -33,7 +33,7 @@ import logic_manager
 import main
 import pytest
 import web_upload
-from ai_core import AIClient, GroqClient, groq_client
+from ai_core import AIClient, AIManager, GroqClient, groq_client
 from data_core import DataManager, JsonReportStorage, json_storage
 from email_html import html_to_text
 
@@ -1209,13 +1209,13 @@ def test_io_display_check_new_message_displays_full_record(monkeypatch, capsys):
     saved = []
     api_calls = []
 
-    def mock_call_api(prompt):
+    def complete(prompt):
         """Return combined findings and extraction from one request."""
         api_calls.append(prompt)
         return json.dumps(findings)
 
     monkeypatch.setattr(main.io_manager, "collect_input", lambda: record)
-    monkeypatch.setattr(main.ai_manager, "call_api", mock_call_api)
+    monkeypatch.setattr(main, "ai_manager", AIManager(client=SimpleNamespace(complete=complete)))
     monkeypatch.setattr(main.data_manager, "save", saved.append)
 
     main.check_message()
@@ -3618,7 +3618,8 @@ def test_data_manager_history_recovery(
                 k: v for k, v in record.items() if k not in ("schema_version", "ai", "result")
             },
         )
-        monkeypatch.setattr(main.ai_manager, "call_api", lambda prompt: json.dumps(record["ai"]))
+        client = SimpleNamespace(complete=lambda prompt: json.dumps(record["ai"]))
+        monkeypatch.setattr(main, "ai_manager", AIManager(client=client))
         main.check_message()
     elif operation == "startup":
         main.main()
@@ -3668,8 +3669,8 @@ def test_data_manager_saved_reports_are_visible(data_manager_storage, monkeypatc
     local_only = deepcopy(shared)
     local_only["message"] = "A separate fictional message"
     data_manager_storage.write_text(json.dumps([shared, local_only]))
-    api = Mock()
-    monkeypatch.setattr(main.ai_manager, "call_api", api)
+    client = SimpleNamespace(complete=Mock())
+    monkeypatch.setattr(main, "ai_manager", AIManager(client=client))
     before = data_manager_storage.read_bytes()
     assert main.load_reports() == [shared, local_only]
     display = Mock()
@@ -3677,7 +3678,7 @@ def test_data_manager_saved_reports_are_visible(data_manager_storage, monkeypatc
     main.view_reports()
     display.assert_called_once_with([shared, local_only])
     assert data_manager_storage.read_bytes() == before
-    api.assert_not_called()
+    client.complete.assert_not_called()
 
 
 def test_data_manager_default_load_handles_read_error_without_exposing_exception(
