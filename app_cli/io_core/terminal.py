@@ -13,3 +13,13 @@ class Terminal(Protocol):
     def write(self, *parts: object) -> None:
         """Write parts separated by spaces and end with a newline."""
         ...
+
+
+class ConsoleTerminal:
+    """Connect the terminal contract to the standard console."""
+
+    def read(self, prompt: str) -> str:
+        return input(prompt)
+
+    def write(self, *parts: object) -> None:
+        print(*parts)

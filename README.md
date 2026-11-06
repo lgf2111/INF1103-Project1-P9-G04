@@ -10,13 +10,13 @@ PhishReport is a Python application with a CLI and a PySide desktop GUI under de
 
 | Path | Purpose |
 | --- | --- |
-| `app_cli/io_manager.py` | Console adapter and compatibility functions. |
-| `app_cli/io_core/` | Input coordinator, email parsing, folder selection and report presentation. |
+| `app_cli/io_manager.py` | Compatibility functions for the I/O manager. |
+| `app_cli/io_core/` | Console adapter, input coordinator, email parsing, folder selection and report presentation. |
 | `app_cli/ai_manager.py` | Compatibility functions for AI prompting, requests and validation. |
 | `app_cli/ai_core/` | AI assessment coordinator, prompt builder, completion client and response validator. |
 | `app_cli/logic_manager.py` | Apply assessment rules, scoring and routing. |
 | `app_cli/data_manager.py` | Save, load and query JSON reports. |
-| `app_cli/main.py` | Connect the managers and run the menu. |
+| `app_cli/main.py` | Compose the four managers and run the CLI through `PhishReportApp`. |
 | `app_cli/ai_prompts.py` | Define the AI assessment instructions. |
 | `app_cli/email_html.py` | Convert HTML email content to safe text. |
 | `app_cli/local_settings.py` | Manage local preferences. |
