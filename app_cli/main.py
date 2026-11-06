@@ -4,10 +4,10 @@
 
 import os
 
-import io_manager
 import logging_setup
 from ai_core import AIManager
 from data_core import DataManager
+from io_manager import default_io_manager as io_manager
 from logic_core import LogicManager
 
 # web_upload is imported lazily inside upload_file() so the web server code only

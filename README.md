@@ -10,7 +10,8 @@ PhishReport is a Python application with a CLI and a PySide desktop GUI under de
 
 | Path | Purpose |
 | --- | --- |
-| `app_cli/io_manager.py` | Collect input and display results. |
+| `app_cli/io_manager.py` | Console adapter and compatibility functions. |
+| `app_cli/io_core/` | Input coordinator, email parsing, folder selection and report presentation. |
 | `app_cli/ai_manager.py` | Compatibility functions for AI prompting, requests and validation. |
 | `app_cli/ai_core/` | AI assessment coordinator, prompt builder, completion client and response validator. |
 | `app_cli/logic_manager.py` | Apply assessment rules, scoring and routing. |
@@ -26,9 +27,19 @@ PhishReport is a Python application with a CLI and a PySide desktop GUI under de
 | `requirements.txt` | Shared dependencies for the CLI, GUI, and tests. |
 | `tests/test_logic_manager.py` | Offline logic tests. |
 | `tests/test_ai_core.py` | Offline assessment coordinator tests. |
+| `tests/test_io_core.py` | Offline tests for input routes, email parsing, folder selection and presentation. |
 | `tests/test_application.py` | Application tests and feature showcase. |
 | `tests/fixtures/` | Public sample emails for testing. |
 | `conftest.py` | Shared pytest configuration. |
+
+### Input and output
+
+The CLI uses an `IOManager` instance to collect manual input and coordinate folder
+imports and browser uploads. All three paths use the same record builder.
+`EmlReader` parses email from disk or uploaded bytes. `EmlFolderPicker` handles
+folder selection, and `ReportPresenter` formats assessments and saved reports.
+The manager, picker, and presenter use the `Terminal` interface, which tests can
+exercise with scripted input and captured output.
 
 ### AI assessment
 
@@ -107,6 +118,7 @@ Run a specific test suite or the feature showcase:
 
 ```bash
 uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_logic_manager.py -q
+uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_io_core.py -q
 uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_application.py -q
 uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_application.py -m demo -v
 ```
