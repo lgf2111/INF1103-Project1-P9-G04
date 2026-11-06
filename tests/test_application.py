@@ -35,6 +35,7 @@ import logic_manager
 import main
 import pytest
 import web_upload
+from data_core import DataManager, JsonReportStorage, json_storage
 from email_html import html_to_text
 
 REAL_EMAILS = Path(__file__).resolve().parent / "fixtures"
@@ -195,7 +196,7 @@ def test_demo_failed_ai_differs_from_failed_save(demo_transport, monkeypatch, ca
     elif failure == "invalid-ai":
         demo_transport.return_value.__enter__.return_value.read.return_value = b'{"choices":[]}'
     else:
-        monkeypatch.setattr(data_manager.os, "replace", Mock(side_effect=PermissionError()))
+        monkeypatch.setattr(json_storage.os, "replace", Mock(side_effect=PermissionError()))
     answers = iter(["no", "no", "no"])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     main.check_message(
@@ -3317,6 +3318,16 @@ def data_manager_report():
     }
 
 
+def test_main_data_manager_instance_shares_adapter_reports(data_manager_storage):
+    assert isinstance(main.data_manager, DataManager)
+    first = data_manager_report()
+    second = {**first, "message": "  Second original message\n"}
+    data_manager.save(first)
+    assert main.load_reports() == [first]
+    main.data_manager.save(second)
+    assert data_manager.load(strict=True) == [first, second]
+
+
 @pytest.mark.parametrize("state", ["missing", "empty", "populated"])
 def test_data_manager_startup(data_manager_storage, monkeypatch, state):
     """Load all JSON records before the menu and identify empty history."""
@@ -3327,7 +3338,7 @@ def test_data_manager_startup(data_manager_storage, monkeypatch, state):
     )
     if state != "missing":
         data_manager_storage.write_text(json.dumps(records), encoding="utf-8")
-    original_load = data_manager.load
+    original_load = main.data_manager.load
     events = []
 
     def loader(*, strict=False):
@@ -3342,7 +3353,7 @@ def test_data_manager_startup(data_manager_storage, monkeypatch, state):
         events.append("menu")
         return "5"
 
-    monkeypatch.setattr(data_manager, "load", loader)
+    monkeypatch.setattr(main.data_manager, "load", loader)
     monkeypatch.setattr(main.io_manager, "main_menu", menu)
     notices = Mock()
     monkeypatch.setattr(main.io_manager, "show_message", notices)
@@ -3419,7 +3430,7 @@ def test_data_manager_missing_field(data_manager_storage, field):
 
 def test_data_manager_history_error_notice(data_manager_storage, monkeypatch, capsys):
     """Report unreadable history instead of sending an empty list to display."""
-    monkeypatch.setattr(data_manager, "load", Mock(side_effect=PermissionError("Read denied")))
+    monkeypatch.setattr(main.data_manager, "load", Mock(side_effect=PermissionError("Read denied")))
     display = Mock()
     monkeypatch.setattr(main.io_manager, "display_list", display)
     main.view_reports()
@@ -3538,7 +3549,7 @@ def test_data_manager_failed_atomic_replace_preserves_old_history(
 ):
     data_manager_storage.write_text('[{"message":"Older report"}]')
     before = data_manager_storage.read_bytes()
-    monkeypatch.setattr(data_manager.os, "replace", Mock(side_effect=OSError("write failed")))
+    monkeypatch.setattr(json_storage.os, "replace", Mock(side_effect=OSError("write failed")))
     with pytest.raises(OSError):
         data_manager.save(data_manager_report())
     assert data_manager_storage.read_bytes() == before
@@ -3586,14 +3597,19 @@ def test_data_manager_history_recovery(
 def test_data_manager_io_failures_preserve_history(data_manager_storage, monkeypatch, failure):
     data_manager_storage.write_text('[{"message":"Existing"}]')
     before = data_manager_storage.read_bytes()
+    subject = data_manager
     if failure == "serialization":
-        monkeypatch.setattr(data_manager.json, "dump", Mock(side_effect=ValueError("Invalid JSON")))
+        monkeypatch.setattr(json_storage.json, "dump", Mock(side_effect=ValueError("Invalid JSON")))
     elif failure == "flush":
-        monkeypatch.setattr(data_manager.os, "fsync", Mock(side_effect=OSError("Disk unavailable")))
+        monkeypatch.setattr(json_storage.os, "fsync", Mock(side_effect=OSError("Disk unavailable")))
     else:
-        monkeypatch.setattr(data_manager, "load", Mock(side_effect=PermissionError("Read denied")))
+        storage = JsonReportStorage(data_manager_storage)
+        monkeypatch.setattr(
+            storage, "read_records", Mock(side_effect=PermissionError("Read denied"))
+        )
+        subject = DataManager(storage=storage)
     with pytest.raises((ValueError, OSError)):
-        data_manager.save(data_manager_report())
+        subject.save(data_manager_report())
     assert data_manager_storage.read_bytes() == before
     assert list(data_manager_storage.parent.glob("*.tmp")) == []
 
@@ -3627,11 +3643,13 @@ def test_data_manager_saved_reports_are_visible(data_manager_storage, monkeypatc
 
 
 def test_data_manager_default_load_handles_read_error_without_exposing_exception(
-    monkeypatch, caplog
+    monkeypatch, caplog, tmp_path
 ):
-    monkeypatch.setattr("builtins.open", Mock(side_effect=PermissionError("PRIVATE_PATH")))
+    storage = JsonReportStorage(tmp_path / "reports.json")
+    monkeypatch.setattr(storage, "read_records", Mock(side_effect=PermissionError("PRIVATE_PATH")))
+    subject = DataManager(storage=storage)
     with caplog.at_level(logging.WARNING, logger="data_manager"):
-        assert data_manager.load() == []
+        assert subject.load() == []
     assert "PRIVATE_PATH" not in caplog.text
 
 
@@ -4018,7 +4036,7 @@ def test_submission_boundaries_deep_provider_envelope_fails_without_an_assessmen
     response.read.return_value = submission_boundaries_deep_json().encode()
     monkeypatch.setattr(ai_manager.urllib.request, "urlopen", Mock(return_value=response))
     save, display = Mock(), Mock()
-    monkeypatch.setattr(data_manager, "save", save)
+    monkeypatch.setattr(main.data_manager, "save", save)
     monkeypatch.setattr(io_manager, "display_result", display)
     main.check_message({"message": "Malformed response boundary"})
     save.assert_not_called()
