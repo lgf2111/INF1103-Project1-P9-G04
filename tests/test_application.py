@@ -97,7 +97,7 @@ def test_demo_real_email_pipeline_and_reload(
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         main.check_message()
     elif entry == "folder":
-        io_manager.local_settings.save_setting("eml_folder", str(REAL_EMAILS))
+        local_settings.save_setting("eml_folder", str(REAL_EMAILS))
         files = io_manager.list_eml_files(REAL_EMAILS)
         answers = iter([str(files.index(path) + 1), "no", "no", "no"])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
@@ -581,8 +581,8 @@ def test_io_manager_collect_input_from_folder_with_follow_up_questions(monkeypat
 
     monkeypatch.setattr("builtins.input", fake_input)
 
-    monkeypatch.setattr(io_manager, "get_eml_folder", lambda: str(tmp_path))
-    monkeypatch.setattr(io_manager, "choose_eml_file", lambda folder: email_file)
+    monkeypatch.setattr(io_manager._folder_picker, "get_eml_folder", lambda: str(tmp_path))
+    monkeypatch.setattr(io_manager._folder_picker, "choose_eml_file", lambda folder: email_file)
     record = io_manager.collect_input_from_folder()
 
     assert record == {
@@ -1052,8 +1052,8 @@ def test_io_manager_collect_input_from_folder_without_link_or_file(monkeypatch, 
         lambda _: next(answers),
     )
 
-    monkeypatch.setattr(io_manager, "get_eml_folder", lambda: str(tmp_path))
-    monkeypatch.setattr(io_manager, "choose_eml_file", lambda folder: email_file)
+    monkeypatch.setattr(io_manager._folder_picker, "get_eml_folder", lambda: str(tmp_path))
+    monkeypatch.setattr(io_manager._folder_picker, "choose_eml_file", lambda folder: email_file)
     result = io_manager.collect_input_from_folder()
 
     assert result == {
@@ -4036,12 +4036,12 @@ def test_runtime_settings_email_picker_rejects_unusable_numeric_choices(
 
 def test_runtime_settings_unreadable_email_folder_returns_safely_to_menu(monkeypatch, capsys):
     folder = Path(__file__).resolve().parents[1] / "emails"
-    monkeypatch.setattr(io_manager, "get_eml_folder", lambda: folder)
+    monkeypatch.setattr(io_manager._folder_picker, "get_eml_folder", lambda: folder)
 
     def cannot_list(_folder):
         raise PermissionError("PRIVATE_PATH")
 
-    monkeypatch.setattr(io_manager, "list_eml_files", cannot_list)
+    monkeypatch.setattr(io_manager._folder_picker, "list_eml_files", cannot_list)
     assert io_manager.get_eml_from_folder() is None
     output = capsys.readouterr().out
     assert "Unable to list" in output
