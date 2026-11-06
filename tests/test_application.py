@@ -685,6 +685,9 @@ def test_io_manager_read_eml_details_rejects_too_many_mime_parts(tmp_path):
 
 
 def test_io_manager_read_eml_details_rejects_excessive_mime_depth(tmp_path):
+    from email import policy
+    from email.parser import BytesParser
+
     email_file = tmp_path / "too_deep.eml"
     depth = 33
 
@@ -723,9 +726,7 @@ def test_io_manager_read_eml_details_rejects_excessive_mime_depth(tmp_path):
 
     email_file.write_bytes(("\r\n".join(lines) + "\r\n").encode("utf-8"))
 
-    parsed_email = io_manager.BytesParser(policy=io_manager.policy.default).parsebytes(
-        email_file.read_bytes()
-    )
+    parsed_email = BytesParser(policy=policy.default).parsebytes(email_file.read_bytes())
 
     with pytest.raises(ValueError, match="nesting is too deep"):
         io_manager.validate_mime_limits(parsed_email)
