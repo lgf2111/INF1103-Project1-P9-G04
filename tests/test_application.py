@@ -581,8 +581,9 @@ def test_io_manager_collect_input_from_folder_with_follow_up_questions(monkeypat
 
     monkeypatch.setattr("builtins.input", fake_input)
 
-    monkeypatch.setattr(io_manager._folder_picker, "get_eml_folder", lambda: str(tmp_path))
-    monkeypatch.setattr(io_manager._folder_picker, "choose_eml_file", lambda folder: email_file)
+    picker = io_manager.default_io_manager.folder_picker
+    monkeypatch.setattr(picker, "get_eml_folder", lambda: str(tmp_path))
+    monkeypatch.setattr(picker, "choose_eml_file", lambda folder: email_file)
     record = io_manager.collect_input_from_folder()
 
     assert record == {
@@ -1052,8 +1053,9 @@ def test_io_manager_collect_input_from_folder_without_link_or_file(monkeypatch, 
         lambda _: next(answers),
     )
 
-    monkeypatch.setattr(io_manager._folder_picker, "get_eml_folder", lambda: str(tmp_path))
-    monkeypatch.setattr(io_manager._folder_picker, "choose_eml_file", lambda folder: email_file)
+    picker = io_manager.default_io_manager.folder_picker
+    monkeypatch.setattr(picker, "get_eml_folder", lambda: str(tmp_path))
+    monkeypatch.setattr(picker, "choose_eml_file", lambda folder: email_file)
     result = io_manager.collect_input_from_folder()
 
     assert result == {
@@ -1071,7 +1073,8 @@ def test_io_manager_collect_input_from_folder_without_link_or_file(monkeypatch, 
 
 
 def test_io_manager_collect_input_from_folder_cancel_skips_follow_up_questions(monkeypatch):
-    monkeypatch.setattr(io_manager, "get_eml_from_folder", lambda: None)
+    picker = io_manager.default_io_manager.folder_picker
+    monkeypatch.setattr(picker, "get_eml_from_folder", lambda: None)
 
     def unexpected_input(prompt):
         pytest.fail("Cancelled email selection must not ask follow-up questions")
@@ -1344,7 +1347,9 @@ def test_html_email_browser_and_folder_email_imports_produce_identical_records(
     path = tmp_path / "fictional.eml"
     path.write_bytes(raw)
     monkeypatch.setattr(
-        io_manager, "get_eml_from_folder", lambda: io_manager.read_eml_details(path)
+        io_manager.default_io_manager.folder_picker,
+        "get_eml_from_folder",
+        lambda: io_manager.read_eml_details(path),
     )
     answers = iter(
         ["yes", "https://credential.example.test", "yes", "invoice.pdf", "yes", "yes", "otp"] * 2
@@ -4036,12 +4041,13 @@ def test_runtime_settings_email_picker_rejects_unusable_numeric_choices(
 
 def test_runtime_settings_unreadable_email_folder_returns_safely_to_menu(monkeypatch, capsys):
     folder = Path(__file__).resolve().parents[1] / "emails"
-    monkeypatch.setattr(io_manager._folder_picker, "get_eml_folder", lambda: folder)
+    picker = io_manager.default_io_manager.folder_picker
+    monkeypatch.setattr(picker, "get_eml_folder", lambda: folder)
 
     def cannot_list(_folder):
         raise PermissionError("PRIVATE_PATH")
 
-    monkeypatch.setattr(io_manager._folder_picker, "list_eml_files", cannot_list)
+    monkeypatch.setattr(picker, "list_eml_files", cannot_list)
     assert io_manager.get_eml_from_folder() is None
     output = capsys.readouterr().out
     assert "Unable to list" in output
@@ -4077,7 +4083,7 @@ def test_submission_boundaries_deep_provider_envelope_fails_without_an_assessmen
     monkeypatch.setattr(groq_client.urllib.request, "urlopen", Mock(return_value=response))
     save, display = Mock(), Mock()
     monkeypatch.setattr(main.data_manager, "save", save)
-    monkeypatch.setattr(io_manager, "display_result", display)
+    monkeypatch.setattr(main.io_manager, "display_result", display)
     main.check_message({"message": "Malformed response boundary"})
     save.assert_not_called()
     display.assert_not_called()
@@ -4122,7 +4128,7 @@ def test_submission_boundaries_deep_history_keeps_startup_and_history_menu_usabl
     before = path.read_bytes()
     monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
     choices = iter(["4", "5"])
-    monkeypatch.setattr(io_manager, "main_menu", lambda: next(choices))
+    monkeypatch.setattr(main.io_manager, "main_menu", lambda: next(choices))
     main.main()
     assert "Bye!" in capsys.readouterr().out
     assert path.read_bytes() == before
@@ -4370,7 +4376,9 @@ def test_web_upload_valid_web_eml_matches_folder_input(tmp_path, monkeypatch):
     answers = iter(["no", "no", "no"] * 2)
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
-        io_manager, "get_eml_from_folder", lambda: io_manager.read_eml_details(path)
+        io_manager.default_io_manager.folder_picker,
+        "get_eml_from_folder",
+        lambda: io_manager.read_eml_details(path),
     )
     folder = io_manager.collect_input_from_folder()
     browser = io_manager.collect_input_from_upload(web_upload._result["upload"])

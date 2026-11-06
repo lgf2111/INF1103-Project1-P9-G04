@@ -93,3 +93,89 @@ def test_report_presenter_shortens_only_the_history_preview():
         "   0123456789 0123456789 0123456789 0123456789 012...",
     ]
     assert record == {"channel": "chat", "message": message, "priority": "review", "score": 0}
+
+
+def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, monkeypatch):
+    from io_core import IOManager
+
+    monkeypatch.chdir(tmp_path)
+    raw = b"From: fictional@example.test\r\n\r\nVerify your account."
+    Path("message.eml").write_bytes(raw)
+    Path(".phishreport_config.json").write_text('{"eml_folder": "."}', encoding="utf-8")
+    exposure_answers = [" YES ", " ", " https://example.test/verify ", "No", " Y ", " OTP "]
+    terminal = ScriptedTerminal(
+        [
+            " EMAIL ",
+            " fictional@example.test ",
+            " Verify your account. ",
+            *exposure_answers,
+            "1",
+            *exposure_answers,
+            *exposure_answers,
+        ]
+    )
+    manager = IOManager(terminal)
+
+    expected = {
+        "channel": "email",
+        "sender": "fictional@example.test",
+        "message": "Verify your account.",
+        "has_link": True,
+        "link": "https://example.test/verify",
+        "has_file": False,
+        "file_name": None,
+        "clicked": True,
+        "downloaded": False,
+        "submitted_category": "otp",
+    }
+    assert manager.collect_input() == expected
+    assert manager.collect_input_from_folder() == expected
+    upload = {"filename": "message.EML", "content": raw}
+    assert manager.collect_input_from_upload(upload) == expected
+
+    exposure_prompts = [
+        "Was a link included? (yes/no): ",
+        "Enter the link: ",
+        "Link cannot be blank. Please enter the link: ",
+        "Was a file included? (yes/no): ",
+        "Did you click the link? (yes/no): ",
+        "Did you give a password or code? (password/otp/no): ",
+    ]
+    assert terminal.prompts == [
+        "Enter channel (Email/SMS/Chat): ",
+        "Enter sender information (press Enter if unknown): ",
+        "Enter the suspicious message: ",
+        *exposure_prompts,
+        "Enter a number to pick a file, or 'c' to cancel: ",
+        *exposure_prompts,
+        *exposure_prompts,
+    ]
+    assert terminal.lines == ["1. message.eml", "Email loaded successfully."]
+
+
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [("wrong.pdf", b"From: fictional@example.test\r\n\r\nHello"), ("empty.eml", b"")],
+)
+def test_io_manager_rejects_an_invalid_upload_before_exposure_questions(filename, content):
+    from io_core import IOManager
+
+    terminal = ScriptedTerminal()
+
+    with pytest.raises(ValueError):
+        IOManager(terminal).collect_input_from_upload({"filename": filename, "content": content})
+
+    assert terminal.prompts == []
+
+
+@pytest.mark.parametrize("interruption", [EOFError, KeyboardInterrupt])
+def test_io_manager_propagates_menu_interruption(interruption):
+    from io_core import IOManager
+
+    terminal = ScriptedTerminal(["wrong", interruption()])
+
+    with pytest.raises(interruption):
+        IOManager(terminal).main_menu()
+
+    assert terminal.prompts == ["Choose 1-5: ", "Invalid choice. Please choose 1-5: "]
+    assert terminal.lines[0] == "\n=== PhishReport ==="
