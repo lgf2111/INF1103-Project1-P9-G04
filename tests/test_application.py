@@ -221,10 +221,10 @@ def test_demo_actual_http_upload_of_real_email(demo_transport, monkeypatch):
     demo_reply(demo_transport)
     ready = threading.Event()
     servers, errors = [], []
-    original = web_upload.http.server.HTTPServer
+    original = web_upload._UploadServer
 
-    def make_server(address, handler):
-        server = original(address, handler)
+    def make_server(address):
+        server = original(address)
         servers.append(server)
         ready.set()
         return server
@@ -237,7 +237,7 @@ def test_demo_actual_http_upload_of_real_email(demo_transport, monkeypatch):
 
     monkeypatch.setattr(web_upload, "BIND_HOST", "127.0.0.1")
     monkeypatch.setattr(web_upload, "PORT", 0)
-    monkeypatch.setattr(web_upload.http.server, "HTTPServer", make_server)
+    monkeypatch.setattr(web_upload, "_UploadServer", make_server)
     answers = iter(["no", "no", "no"])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     worker = threading.Thread(target=run, daemon=True)
@@ -4264,27 +4264,21 @@ def test_web_upload_oversize_http_upload_is_rejected():
 
 @pytest.mark.parametrize("length", ["invalid", "-1", str(web_upload.MAX_REQUEST_BYTES + 1)])
 def test_web_upload_invalid_length_is_rejected_without_reading_or_completing(length):
-    handler = SimpleNamespace(
-        command="POST", headers={"Content-Length": length}, rfile=Mock(), send_error=Mock()
-    )
-    web_upload._result.update(upload=None, done=False)
-    web_upload._handle(handler)
+    handler = web_upload_request_handler(b"")
+    handler.headers["Content-Length"] = length
+    handler.rfile = Mock()
+    handler.do_POST()
     handler.rfile.read.assert_not_called()
     handler.send_error.assert_called_once()
-    assert not web_upload._result["done"]
+    handler.server.accept_upload.assert_not_called()
 
 
 def test_web_upload_incomplete_request_is_rejected_without_completing():
-    handler = SimpleNamespace(
-        command="POST",
-        headers={"Content-Length": "100"},
-        rfile=io.BytesIO(b"short"),
-        send_error=Mock(),
-    )
-    web_upload._result.update(upload=None, done=False)
-    web_upload._handle(handler)
+    handler = web_upload_request_handler(b"short")
+    handler.headers["Content-Length"] = "100"
+    handler.do_POST()
     handler.send_error.assert_called_once()
-    assert not web_upload._result["done"]
+    handler.server.accept_upload.assert_not_called()
 
 
 def test_web_upload_real_http_server_recovers_from_bad_request_then_preserves_email_bytes(
@@ -4292,17 +4286,17 @@ def test_web_upload_real_http_server_recovers_from_bad_request_then_preserves_em
 ):
     ready = threading.Event()
     servers = []
-    original = web_upload.http.server.HTTPServer
+    original = web_upload._UploadServer
 
-    def make_server(address, handler):
-        server = original(address, handler)
+    def make_server(address):
+        server = original(address)
         servers.append(server)
         ready.set()
         return server
 
     monkeypatch.setattr(web_upload, "BIND_HOST", "127.0.0.1")
     monkeypatch.setattr(web_upload, "PORT", 0)
-    monkeypatch.setattr(web_upload.http.server, "HTTPServer", make_server)
+    monkeypatch.setattr(web_upload, "_UploadServer", make_server)
     results = []
     worker = threading.Thread(
         target=lambda: results.append(web_upload.start_and_wait_for_upload()), daemon=True
@@ -4335,20 +4329,70 @@ def test_web_upload_real_http_server_recovers_from_bad_request_then_preserves_em
     assert servers[0].socket.fileno() == -1
 
 
+def test_web_upload_overlapping_sessions_return_their_own_files(monkeypatch):
+    original_handle_request = web_upload.http.server.HTTPServer.handle_request
+    first_server = None
+    second_upload = None
+    first_content = b"First email\r\n"
+    second_content = b"Second email\r\n"
+    submitted = set()
+
+    def serve_request(server, method, body=None):
+        connection = http.client.HTTPConnection(*server.server_address, timeout=5)
+        try:
+            connection.request(
+                method,
+                "/",
+                body=body,
+                headers={"Content-Type": "multipart/form-data; boundary=boundary"},
+            )
+            original_handle_request(server)
+            response = connection.getresponse()
+            assert response.status == 200
+            response.read()
+        finally:
+            connection.close()
+
+    def handle_request(server):
+        nonlocal first_server, second_upload
+        if first_server is None:
+            first_server = server
+            # Finish the second session while the first is still serving its page.
+            second_upload = web_upload.start_and_wait_for_upload()
+            serve_request(server, "GET")
+            return
+
+        assert server not in submitted, "Session did not finish after a valid upload"
+        submitted.add(server)
+        if server is first_server:
+            serve_request(server, "POST", web_upload_form(first_content, "first.eml"))
+        else:
+            serve_request(server, "POST", web_upload_form(second_content, "second.eml"))
+
+    monkeypatch.setattr(web_upload, "BIND_HOST", "127.0.0.1")
+    monkeypatch.setattr(web_upload, "PORT", 0)
+    monkeypatch.setattr(web_upload.http.server.HTTPServer, "handle_request", handle_request)
+
+    first_upload = web_upload.start_and_wait_for_upload()
+    assert second_upload == {"filename": "second.eml", "content": second_content}
+    assert first_upload == {"filename": "first.eml", "content": first_content}
+
+
 def web_upload_request_handler(body):
-    return SimpleNamespace(
-        command="POST",
-        headers={
-            "Content-Type": "multipart/form-data; boundary=boundary",
-            "Content-Length": str(len(body)),
-        },
-        rfile=io.BytesIO(body),
-        wfile=io.BytesIO(),
-        send_response=Mock(),
-        send_header=Mock(),
-        end_headers=Mock(),
-        send_error=Mock(),
-    )
+    # The real handler normally processes a socket in its constructor.
+    handler = object.__new__(web_upload._UploadRequestHandler)
+    handler.headers = {
+        "Content-Type": "multipart/form-data; boundary=boundary",
+        "Content-Length": str(len(body)),
+    }
+    handler.rfile = io.BytesIO(body)
+    handler.wfile = io.BytesIO()
+    handler.server = Mock()
+    handler.send_response = Mock()
+    handler.send_header = Mock()
+    handler.end_headers = Mock()
+    handler.send_error = Mock()
+    return handler
 
 
 def test_web_upload_valid_web_eml_matches_folder_input(tmp_path, monkeypatch):
@@ -4369,10 +4413,10 @@ def test_web_upload_valid_web_eml_matches_folder_input(tmp_path, monkeypatch):
     path = tmp_path / "valid.EML"
     path.write_bytes(raw)
     handler = web_upload_request_handler(web_upload_form(raw, filename="valid.EML"))
-    monkeypatch.setattr(web_upload, "_result", {"upload": None, "done": False})
-    web_upload._handle(handler)
+    handler.do_POST()
     handler.send_response.assert_called_once_with(200)
     handler.send_error.assert_not_called()
+    handler.server.accept_upload.assert_called_once()
     answers = iter(["no", "no", "no"] * 2)
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
@@ -4381,7 +4425,7 @@ def test_web_upload_valid_web_eml_matches_folder_input(tmp_path, monkeypatch):
         lambda: io_manager.read_eml_details(path),
     )
     folder = io_manager.collect_input_from_folder()
-    browser = io_manager.collect_input_from_upload(web_upload._result["upload"])
+    browser = io_manager.collect_input_from_upload(handler.server.accept_upload.call_args.args[0])
     assert browser == folder
     assert browser["sender"] == "fictional@example.test"
     assert browser["message"].startswith("Subject: Fictional verification\n\n")
@@ -4405,26 +4449,24 @@ def test_web_upload_web_upload_is_eml_only_with_clear_rejection(monkeypatch, fil
 
     message = "Only .eml email files are supported. Images and attachments are not analysed."
     handler = web_upload_request_handler(web_upload_form(b"Not an email.", filename=filename))
-    monkeypatch.setattr(web_upload, "_result", {"upload": None, "done": False})
-    web_upload._handle(handler)
+    handler.do_POST()
     handler.send_error.assert_called_once_with(400, message)
-    assert web_upload._result == {"upload": None, "done": False}
+    handler.server.accept_upload.assert_not_called()
     monkeypatch.setattr("builtins.input", lambda _: pytest.fail("Invalid upload asked for input"))
     with pytest.raises(ValueError, match=r"Only \.eml email files"):
         io_manager.collect_input_from_upload({"filename": filename, "content": b"Not an email."})
 
 
 @pytest.mark.parametrize("large_request", [False, True])
-def test_web_upload_web_upload_limit_rejects_oversize_before_completion(monkeypatch, large_request):
+def test_web_upload_web_upload_limit_rejects_oversize_before_completion(large_request):
     handler = web_upload_request_handler(web_upload_form(b"x" * (web_upload.MAX_UPLOAD_BYTES + 1)))
     if large_request:
         handler.headers["Content-Length"] = str(web_upload.MAX_REQUEST_BYTES + 1)
         handler.rfile = Mock()
         handler.rfile.read.side_effect = AssertionError("Oversized request must not be read")
-    monkeypatch.setattr(web_upload, "_result", {"upload": None, "done": False})
-    web_upload._handle(handler)
+    handler.do_POST()
     handler.send_error.assert_called_once_with(413, "Email file exceeds the 2 MiB size limit.")
-    assert web_upload._result == {"upload": None, "done": False}
+    handler.server.accept_upload.assert_not_called()
     if large_request:
         handler.rfile.read.assert_not_called()
 

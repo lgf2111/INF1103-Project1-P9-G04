@@ -1,9 +1,4 @@
-# web_upload.py
-# EXPERIMENTAL: minimal, lazy, one-shot file upload using only the standard
-# library (http.server) - no extra dependencies, no classes defined (C1 safe).
-#
-# start_and_wait_for_upload() serves a tiny upload page, waits for one file,
-# then shuts the server down and returns the file's name and original bytes.
+"""Serve a browser form and accept one email per upload session."""
 
 import http.server
 import os
@@ -83,10 +78,6 @@ _DONE_PAGE = (
     "</div></body></html>"
 ).encode()
 
-# Shared state between the request handler and the waiting CLI.
-_result = {"upload": None, "done": False}
-
-
 def parse_upload(content_type, body):
     """Return filename and original content bytes from one bounded multipart upload.
 
@@ -140,79 +131,70 @@ def parse_upload(content_type, body):
     return {"filename": filename, "content": content}
 
 
-def _handle(handler):
-    """Serve the upload form or process a POST through the supplied HTTP handler.
+class _UploadRequestHandler(http.server.BaseHTTPRequestHandler):
+    """Serve the upload form and pass accepted files to the session server."""
 
-    Store a valid upload in shared _result and mark it done. Rejected uploads
-    receive an HTTP error and leave the server available for another attempt.
-    """
-    if handler.command == "GET":
-        handler.send_response(200)
-        handler.send_header("Content-Type", "text/html")
-        handler.end_headers()
-        handler.wfile.write(_PAGE)
-        return
+    timeout = 15
 
-    try:
-        length = int(handler.headers.get("Content-Length", "0"))
-        if length <= 0:
-            raise ValueError("Invalid upload length.")
-        if length > MAX_REQUEST_BYTES:
-            handler.send_error(413, SIZE_ERROR)
+    def do_GET(self):
+        self._send_page(_PAGE)
+
+    def do_POST(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if length <= 0:
+                raise ValueError("Invalid upload length.")
+            if length > MAX_REQUEST_BYTES:
+                self.send_error(413, SIZE_ERROR)
+                return
+            body = self.rfile.read(length)
+            if len(body) != length:
+                raise ValueError("Incomplete upload.")
+            upload = parse_upload(self.headers.get("Content-Type"), body)
+        except ValueError as error:
+            self.send_error(413 if str(error) == SIZE_ERROR else 400, str(error))
             return
-        body = handler.rfile.read(length)
-        if len(body) != length:
-            raise ValueError("Incomplete upload.")
-        upload = parse_upload(handler.headers.get("Content-Type"), body)
-    except ValueError as error:
-        handler.send_error(413 if str(error) == SIZE_ERROR else 400, str(error))
-        return
-    except (OSError, RecursionError):
-        handler.send_error(400, "Upload failed. Please try again with an .eml email.")
-        return
-    _result["upload"] = upload
-    _result["done"] = True
+        except (OSError, RecursionError):
+            self.send_error(400, "Upload failed. Please try again with an .eml email.")
+            return
 
-    handler.send_response(200)
-    handler.send_header("Content-Type", "text/html")
-    handler.end_headers()
-    handler.wfile.write(_DONE_PAGE)
+        self.server.accept_upload(upload)
+        self._send_page(_DONE_PAGE)
+
+    def log_message(self, format, *args):
+        """Keep HTTP access logs out of the interactive terminal."""
+
+    def _send_page(self, page):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html")
+        self.end_headers()
+        self.wfile.write(page)
+
+
+class _UploadServer(http.server.HTTPServer):
+    """Own the accepted file for a single upload session."""
+
+    def __init__(self, address):
+        self._upload = None
+        super().__init__(address, _UploadRequestHandler)
+
+    def accept_upload(self, upload):
+        self._upload = upload
+
+    def wait_for_upload(self):
+        """Serve requests serially until a valid file arrives."""
+        while self._upload is None:
+            self.handle_request()
+        return self._upload
 
 
 def start_and_wait_for_upload():
     """Block until one valid upload arrives, then return its filename/content dict.
 
-    Reset shared upload state for each session and serve requests serially.
     Release the socket on exit, including cancellation. Configuration and
     server errors propagate to the application upload flow.
     """
     if type(PORT) is not int or not 0 <= PORT <= 65535:
         raise ValueError("UPLOAD_PORT must be an integer from 0 to 65535.")
-    _result["upload"] = None
-    _result["done"] = False
-
-    server = http.server.HTTPServer((BIND_HOST, PORT), _make_handler)
-
-    try:
-        while not _result["done"]:
-            server.handle_request()  # handles one request at a time
-    finally:
-        # Always release the port, even if the user pressed Ctrl+C to cancel.
-        server.server_close()
-    return _result["upload"]
-
-
-def _make_handler(request, address, server):
-    """Configure and return a standard-library HTTP handler without subclassing.
-
-    Install request callbacks before initialization, which processes the
-    request. Bound socket operations with a timeout and suppress access logs.
-    """
-    handler = http.server.BaseHTTPRequestHandler.__new__(http.server.BaseHTTPRequestHandler)
-    handler.do_GET = lambda: _handle(handler)
-    handler.do_POST = lambda: _handle(handler)
-    handler.log_message = lambda *args: None
-    request.settimeout(15)
-    # Initialization dispatches the request, so callbacks must already be attached.
-    http.server.BaseHTTPRequestHandler.__init__(handler, request, address, server)
-    return handler
+    with _UploadServer((BIND_HOST, PORT)) as server:
+        return server.wait_for_upload()
