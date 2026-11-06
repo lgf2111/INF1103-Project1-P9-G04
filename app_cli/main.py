@@ -4,9 +4,9 @@
 
 import os
 
-import ai_manager
 import io_manager
 import logging_setup
+from ai_core import AIManager
 from data_core import DataManager
 from logic_core import LogicManager
 
@@ -14,6 +14,7 @@ from logic_core import LogicManager
 # loads when the user actually chooses to upload a file.
 
 logger = logging_setup.get_logger(__name__)
+ai_manager = AIManager()
 logic_manager = LogicManager()
 data_manager = DataManager()
 
@@ -75,11 +76,7 @@ def check_message(record=None):
         record = io_manager.collect_input()
 
     try:
-        prompt = ai_manager.build_prompt(record)
-        raw = ai_manager.call_api(prompt)
-        reply = ai_manager.parse_response(raw)
-        findings = ai_manager.validate_response(reply)
-        ai_manager.validate_details(findings["details"], record["message"])
+        findings = ai_manager.assess(record)
 
         # Enrich a new dictionary only after every AI check passes.
         assessed_record = {**record, "ai": findings}

@@ -17,7 +17,6 @@ import shutil
 import subprocess
 import sys
 import threading
-import time
 import urllib.error
 from copy import deepcopy
 from email.utils import formatdate
@@ -27,7 +26,6 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock
 
 import ai_manager
-import ai_manager as ai_client
 import data_manager
 import io_manager
 import local_settings
@@ -35,6 +33,7 @@ import logic_manager
 import main
 import pytest
 import web_upload
+from ai_core import AIClient, AIManager, GroqClient, groq_client
 from data_core import DataManager, JsonReportStorage, json_storage
 from email_html import html_to_text
 
@@ -53,7 +52,7 @@ def demo_transport(tmp_path, monkeypatch):
     monkeypatch.setenv("GROQ_MAX_ATTEMPTS", "1")
     monkeypatch.delenv("GROQ_FALLBACK_MODEL", raising=False)
     transport = MagicMock()
-    monkeypatch.setattr(ai_manager.urllib.request, "urlopen", transport)
+    monkeypatch.setattr(groq_client.urllib.request, "urlopen", transport)
     return transport
 
 
@@ -1210,13 +1209,13 @@ def test_io_display_check_new_message_displays_full_record(monkeypatch, capsys):
     saved = []
     api_calls = []
 
-    def mock_call_api(prompt):
+    def complete(prompt):
         """Return combined findings and extraction from one request."""
         api_calls.append(prompt)
         return json.dumps(findings)
 
     monkeypatch.setattr(main.io_manager, "collect_input", lambda: record)
-    monkeypatch.setattr(main.ai_manager, "call_api", mock_call_api)
+    monkeypatch.setattr(main, "ai_manager", AIManager(client=SimpleNamespace(complete=complete)))
     monkeypatch.setattr(main.data_manager, "save", saved.append)
 
     main.check_message()
@@ -1723,9 +1722,9 @@ def ai_manager_provider_transport(monkeypatch):
     """Replace only HTTP transport; keep real API request and response handling."""
     monkeypatch.setenv("GROQ_API_KEY", "fictional-test-key")
     monkeypatch.delenv("GROQ_FALLBACK_MODEL", raising=False)
-    monkeypatch.setattr(time, "sleep", Mock())
+    monkeypatch.setattr(groq_client.time, "sleep", Mock())
     transport = MagicMock()
-    monkeypatch.setattr(ai_manager.urllib.request, "urlopen", transport)
+    monkeypatch.setattr(groq_client.urllib.request, "urlopen", transport)
     return transport
 
 
@@ -1741,7 +1740,7 @@ def test_ai_manager_call_api_returns_completed_content(ai_manager_provider_trans
 
     assert ai_manager.call_api("Fictional phishing assessment") == content
     ai_manager_provider_transport.assert_called_once()
-    time.sleep.assert_not_called()
+    groq_client.time.sleep.assert_not_called()
     request = ai_manager_provider_transport.call_args.args[0]
     body = json.loads(request.data)
     assert request.full_url == "https://api.groq.com/openai/v1/chat/completions"
@@ -1895,7 +1894,7 @@ def test_ai_manager_call_api_handles_failed_response_reads(ai_manager_provider_t
 def test_ai_manager_call_api_requires_key_before_http(monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     transport = Mock()
-    monkeypatch.setattr(ai_manager.urllib.request, "urlopen", transport)
+    monkeypatch.setattr(groq_client.urllib.request, "urlopen", transport)
     with pytest.raises(RuntimeError):
         ai_manager.call_api("Fictional phishing assessment")
     transport.assert_not_called()
@@ -2513,8 +2512,8 @@ def test_ai_manager_transient_failure_retries_identical_request_once(
     assert ai_manager_provider_transport.call_count == 2
     first, second = ai_manager_provider_transport.call_args_list
     assert first == second  # Full payload, model, headers and timeout are preserved.
-    time.sleep.assert_called_once()
-    assert 0.5 <= time.sleep.call_args.args[0] <= 1.5
+    groq_client.time.sleep.assert_called_once()
+    assert 0.5 <= groq_client.time.sleep.call_args.args[0] <= 1.5
 
 
 @pytest.mark.parametrize(
@@ -2532,7 +2531,7 @@ def test_ai_manager_transient_failures_stop_after_two_attempts(
         with pytest.raises(RuntimeError):
             ai_manager.call_api("PRIVATE_PROMPT")
     assert ai_manager_provider_transport.call_count == 2
-    time.sleep.assert_called_once()
+    groq_client.time.sleep.assert_called_once()
     assert "PRIVATE_" not in caplog.text
     assert "attempt=1" in caplog.text
 
@@ -2606,6 +2605,45 @@ def test_ai_manager_timeout_uses_configured_fallback_with_identical_prompt(
     assert first["messages"][0]["content"] == "PRIVATE_PROMPT"
     assert "retry=fallback_model" in caplog.text
     assert "PRIVATE_PROMPT" not in caplog.text
+
+
+def test_groq_client_retries_fallback_and_starts_next_completion_on_current_primary(
+    ai_manager_provider_transport, monkeypatch
+):
+    client: AIClient = GroqClient()
+    monkeypatch.setenv("GROQ_MODEL", "fictional/primary")
+    monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
+    monkeypatch.setenv("GROQ_MAX_ATTEMPTS", "3")
+    content = " {}\n"
+    response = ai_manager_provider_transport.return_value
+    response.__enter__.return_value.read.return_value = json.dumps(
+        {"choices": [{"finish_reason": "stop", "message": {"content": content}}]}
+    ).encode()
+    ai_manager_provider_transport.side_effect = [
+        TimeoutError("PRIVATE_EXCEPTION"),
+        urllib.error.HTTPError("https://example.test", 503, "PRIVATE_BODY", {}, None),
+        response,
+        response,
+    ]
+
+    assert client.complete("  Fictional first prompt\n") == content
+    assert ai_manager_provider_transport.call_count == 3
+    primary, fallback, fallback_retry = ai_manager_provider_transport.call_args_list
+    assert fallback_retry == fallback
+    primary_body = json.loads(primary.args[0].data)
+    fallback_body = json.loads(fallback.args[0].data)
+    assert primary_body.pop("model") == "fictional/primary"
+    assert fallback_body.pop("model") == "fictional/faster"
+    assert fallback_body == primary_body
+    assert primary_body["messages"] == [{"role": "user", "content": "  Fictional first prompt\n"}]
+
+    monkeypatch.setenv("GROQ_MODEL", "fictional/new-primary")
+    monkeypatch.setenv("GROQ_API_KEY", "fictional-new-key")
+    assert client.complete("Fictional next prompt") == content
+    assert ai_manager_provider_transport.call_count == 4
+    next_request = ai_manager_provider_transport.call_args.args[0]
+    assert json.loads(next_request.data)["model"] == "fictional/new-primary"
+    assert next_request.get_header("Authorization") == "Bearer fictional-new-key"
 
 
 @pytest.mark.parametrize("fallback", ["", "  ", "fictional/primary"])
@@ -2695,7 +2733,7 @@ def test_ai_manager_short_rate_limit_wait_retries_same_model(
     header,
     expected_wait,
 ):
-    monkeypatch.setattr(time, "time", Mock(return_value=1000))
+    monkeypatch.setattr(groq_client.time, "time", Mock(return_value=1000))
     monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
     response = ai_manager_provider_transport.return_value
     response.__enter__.return_value.read.return_value = json.dumps(
@@ -2720,7 +2758,7 @@ def test_ai_manager_short_rate_limit_wait_retries_same_model(
         ai_manager_provider_transport.call_args_list[0]
         == ai_manager_provider_transport.call_args_list[1]
     )
-    time.sleep.assert_called_once_with(expected_wait)
+    groq_client.time.sleep.assert_called_once_with(expected_wait)
 
 
 @pytest.mark.parametrize(
@@ -2732,7 +2770,7 @@ def test_ai_manager_unusable_rate_limit_wait_fails_without_sleep(
     caplog,
     header,
 ):
-    monkeypatch.setattr(time, "time", Mock(return_value=1000))
+    monkeypatch.setattr(groq_client.time, "time", Mock(return_value=1000))
     headers = {} if header is None else {"Retry-After": header}
     ai_manager_provider_transport.side_effect = urllib.error.HTTPError(
         "https://example.test",
@@ -2744,7 +2782,7 @@ def test_ai_manager_unusable_rate_limit_wait_fails_without_sleep(
     with pytest.raises(RuntimeError, match="429"):
         ai_manager.call_api("PRIVATE_PROMPT")
     ai_manager_provider_transport.assert_called_once()
-    time.sleep.assert_not_called()
+    groq_client.time.sleep.assert_not_called()
     assert "PRIVATE_" not in caplog.text
 
 
@@ -2759,7 +2797,7 @@ def test_ai_manager_repeated_rate_limit_stops_after_two_requests(ai_manager_prov
     with pytest.raises(RuntimeError, match="429"):
         ai_manager.call_api("Fictional prompt")
     assert ai_manager_provider_transport.call_count == 2
-    time.sleep.assert_called_once_with(1)
+    groq_client.time.sleep.assert_called_once_with(1)
 
 
 # ============================================================================
@@ -2780,9 +2818,9 @@ def main_app_boundary(tmp_path, monkeypatch):
         monkeypatch.setattr(logger, "handlers", [logging.NullHandler()])
         monkeypatch.setattr(logger, "level", logger.level)
         monkeypatch.setattr(logger, "propagate", logger.propagate)
-    monkeypatch.setattr(ai_client.time, "sleep", Mock())
+    monkeypatch.setattr(groq_client.time, "sleep", Mock())
     transport = MagicMock()
-    monkeypatch.setattr(ai_manager.urllib.request, "urlopen", transport)
+    monkeypatch.setattr(groq_client.urllib.request, "urlopen", transport)
     monkeypatch.setattr(main.io_manager, "show_message", Mock())
     monkeypatch.setattr(main.io_manager, "display_result", Mock())
     # Reset the central logging so each test configures a fresh file logger in
@@ -3580,7 +3618,8 @@ def test_data_manager_history_recovery(
                 k: v for k, v in record.items() if k not in ("schema_version", "ai", "result")
             },
         )
-        monkeypatch.setattr(main.ai_manager, "call_api", lambda prompt: json.dumps(record["ai"]))
+        client = SimpleNamespace(complete=lambda prompt: json.dumps(record["ai"]))
+        monkeypatch.setattr(main, "ai_manager", AIManager(client=client))
         main.check_message()
     elif operation == "startup":
         main.main()
@@ -3630,8 +3669,8 @@ def test_data_manager_saved_reports_are_visible(data_manager_storage, monkeypatc
     local_only = deepcopy(shared)
     local_only["message"] = "A separate fictional message"
     data_manager_storage.write_text(json.dumps([shared, local_only]))
-    api = Mock()
-    monkeypatch.setattr(main.ai_manager, "call_api", api)
+    client = SimpleNamespace(complete=Mock())
+    monkeypatch.setattr(main, "ai_manager", AIManager(client=client))
     before = data_manager_storage.read_bytes()
     assert main.load_reports() == [shared, local_only]
     display = Mock()
@@ -3639,7 +3678,7 @@ def test_data_manager_saved_reports_are_visible(data_manager_storage, monkeypatc
     main.view_reports()
     display.assert_called_once_with([shared, local_only])
     assert data_manager_storage.read_bytes() == before
-    api.assert_not_called()
+    client.complete.assert_not_called()
 
 
 def test_data_manager_default_load_handles_read_error_without_exposing_exception(
@@ -4034,7 +4073,7 @@ def test_submission_boundaries_deep_provider_envelope_fails_without_an_assessmen
     response.__enter__ = Mock(return_value=response)
     response.__exit__ = Mock(return_value=False)
     response.read.return_value = submission_boundaries_deep_json().encode()
-    monkeypatch.setattr(ai_manager.urllib.request, "urlopen", Mock(return_value=response))
+    monkeypatch.setattr(groq_client.urllib.request, "urlopen", Mock(return_value=response))
     save, display = Mock(), Mock()
     monkeypatch.setattr(main.data_manager, "save", save)
     monkeypatch.setattr(io_manager, "display_result", display)
