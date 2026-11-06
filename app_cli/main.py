@@ -7,16 +7,11 @@ import os
 import logging_setup
 from ai_core import AIManager
 from data_core import DataManager
-from io_manager import default_io_manager as io_manager
+from io_core import IOManager
+from io_core.terminal import ConsoleTerminal
 from logic_core import LogicManager
 
-# web_upload is imported lazily inside upload_file() so the web server code only
-# loads when the user actually chooses to upload a file.
-
 logger = logging_setup.get_logger(__name__)
-ai_manager = AIManager()
-logic_manager = LogicManager()
-data_manager = DataManager()
 
 
 def _friendly_ai_error(error):
@@ -65,136 +60,157 @@ def load_env() -> bool:
     return True
 
 
-def check_message(record=None):
-    """Validate one combined AI response before assessment, saving or display.
+class PhishReportApp:
+    """Run the CLI workflows with the supplied managers."""
 
-    Collect input interactively when record is None; otherwise use the supplied
-    record. Stop assessment on handled AI/validation failures. Save the
-    version-2 outcome locally, then display it even if persistence fails.
-    """
-    if record is None:
-        record = io_manager.collect_input()
+    def __init__(self, io_manager, ai_manager, logic_manager, data_manager):
+        self._io_manager = io_manager
+        self._ai_manager = ai_manager
+        self._logic_manager = logic_manager
+        self._data_manager = data_manager
 
-    try:
-        findings = ai_manager.assess(record)
+    def check_message(self, record=None):
+        """Validate one combined AI response before assessment, saving or display.
 
-        # Enrich a new dictionary only after every AI check passes.
-        assessed_record = {**record, "ai": findings}
-        result = logic_manager.evaluate(assessed_record)
+        Collect input interactively when record is None; otherwise use the supplied
+        record. Stop assessment on handled AI/validation failures. Save the
+        version-2 outcome locally, then display it even if persistence fails.
+        """
+        if record is None:
+            record = self._io_manager.collect_input()
 
-    # RuntimeError: the AI could not complete after its retries (service down,
-    # offline, rate limited). Show an actionable message; the AI is never bypassed.
-    except RuntimeError as error:
-        logging_setup.log_failure(logger, "Assessment failed after AI retries")
-        io_manager.show_message(_friendly_ai_error(error))
-        return
-    # ValueError: bad input or an invalid AI reply - not retryable. KeyError and
-    # TypeError would be programming bugs, so let them surface.
-    except ValueError as error:
-        logging_setup.log_failure(logger, "Assessment failed")
-        io_manager.show_message("Sorry, the check failed: " + str(error))
-        return
+        try:
+            findings = self._ai_manager.assess(record)
 
-    # Retain the original message and assessment in the agreed version-2 format.
-    report = {
-        "schema_version": 2,
-        "channel": record["channel"],
-        "message": record["message"],
-        "result": result,
-    }
-    try:
-        data_manager.save(report)
-    except (OSError, ValueError):
-        logging_setup.log_failure(logger, "Local report save failed")
-        io_manager.show_message("Could not save the local report; existing history preserved.")
+            # Enrich a new dictionary only after every AI check passes.
+            assessed_record = {**record, "ai": findings}
+            result = self._logic_manager.evaluate(assessed_record)
 
-    # A storage failure does not discard an assessment already completed successfully.
-    io_manager.display_result(result)
+        # RuntimeError: the AI could not complete after its retries (service down,
+        # offline, rate limited). Show an actionable message; the AI is never bypassed.
+        except RuntimeError as error:
+            logging_setup.log_failure(logger, "Assessment failed after AI retries")
+            self._io_manager.show_message(_friendly_ai_error(error))
+            return
+        # ValueError: bad input or an invalid AI reply - not retryable. KeyError and
+        # TypeError would be programming bugs, so let them surface.
+        except ValueError as error:
+            logging_setup.log_failure(logger, "Assessment failed")
+            self._io_manager.show_message("Sorry, the check failed: " + str(error))
+            return
 
+        # Retain the original message and assessment in the agreed version-2 format.
+        report = {
+            "schema_version": 2,
+            "channel": record["channel"],
+            "message": record["message"],
+            "result": result,
+        }
+        try:
+            self._data_manager.save(report)
+        except (OSError, ValueError):
+            logging_setup.log_failure(logger, "Local report save failed")
+            self._io_manager.show_message(
+                "Could not save the local report; existing history preserved."
+            )
 
-def upload_file():
-    """Parse uploaded email through the same I/O contract as folder imports."""
-    try:
-        import web_upload
+        # A storage failure does not discard an assessment already completed successfully.
+        self._io_manager.display_result(result)
 
-        io_manager.show_upload_instructions(web_upload.DISPLAY_HOST, web_upload.PORT)
-        upload = web_upload.start_and_wait_for_upload()
-        record = io_manager.collect_input_from_upload(upload)
-    except (OSError, RuntimeError, ValueError) as error:
-        logging_setup.log_failure(logger, "File upload failed")
-        io_manager.show_message("Upload failed: " + str(error))
-        return
+    def upload_file(self):
+        """Parse uploaded email through the same I/O contract as folder imports."""
+        try:
+            # Load the server only when the user chooses to upload a file.
+            import web_upload
 
-    check_message(record)
+            self._io_manager.show_upload_instructions(web_upload.DISPLAY_HOST, web_upload.PORT)
+            upload = web_upload.start_and_wait_for_upload()
+            record = self._io_manager.collect_input_from_upload(upload)
+        except (OSError, RuntimeError, ValueError) as error:
+            logging_setup.log_failure(logger, "File upload failed")
+            self._io_manager.show_message("Upload failed: " + str(error))
+            return
 
+        self.check_message(record)
 
-def load_reports() -> list[dict] | None:
-    """Return validated JSON history, or None after reporting a read failure.
+    def load_reports(self) -> list[dict] | None:
+        """Return validated JSON history, or None after reporting a read failure.
 
-    An empty list means missing/empty history; None means history could not
-    be read safely. Keep this distinction when deciding what to display.
-    """
-    try:
-        return data_manager.load(strict=True)
-    except (OSError, ValueError):
-        logging_setup.log_failure(logger, "Reading local report history failed")
-        io_manager.show_message("Could not load local report history; existing file preserved.")
-        return None
+        An empty list means missing/empty history; None means history could not
+        be read safely. Keep this distinction when deciding what to display.
+        """
+        try:
+            return self._data_manager.load(strict=True)
+        except (OSError, ValueError):
+            logging_setup.log_failure(logger, "Reading local report history failed")
+            self._io_manager.show_message(
+                "Could not load local report history; existing file preserved."
+            )
+            return None
 
+    def view_reports(self):
+        """Load local JSON history and send it to I/O for display."""
+        records = self.load_reports()
+        if records is not None:
+            self._io_manager.display_list(records)
 
-def view_reports():
-    """Load local JSON history and send it to I/O for display."""
-    records = load_reports()
-    if records is not None:
-        io_manager.display_list(records)
+    def run(self):
+        """Initialize configuration and logging, then run the interactive menu loop.
+
+        Check stored history on startup and delegate each choice to its manager
+        flow. Handle EOF and keyboard interruption as an application exit.
+        """
+        env_loaded = load_env()
+        # Load environment settings before logging so LOG_LEVEL is respected.
+        # Set LOG_LEVEL=DEBUG to include tracebacks in subsequent failure diagnostics.
+        if not logging_setup.setup_logging():
+            self._io_manager.show_message("Warning: diagnostic logging is unavailable.")
+        if not env_loaded:
+            # No raw file/exception details: even DEBUG must not expose credentials.
+            logger.warning("Optional .env could not be loaded; existing environment retained.")
+            self._io_manager.show_message(
+                "Warning: .env could not be loaded. Using existing environment settings."
+            )
+        logger.info("Application started")
+        try:
+            if self.load_reports() == []:
+                self._io_manager.show_message("No saved reports found.")
+            while True:
+                choice = self._io_manager.main_menu()
+                if choice == "1":
+                    # Manual Email, SMS or Chat input.
+                    self.check_message()
+                elif choice == "2":
+                    # Import a .eml file chosen from the user's saved email folder.
+                    record = self._io_manager.collect_input_from_folder()
+                    if record is not None:
+                        self.check_message(record)
+                elif choice == "3":
+                    # Existing browser-based file upload.
+                    self.upload_file()
+                elif choice == "4":
+                    # View previous assessments.
+                    self.view_reports()
+                elif choice == "5":
+                    self._io_manager.show_message("Bye!")
+                    break
+                else:
+                    self._io_manager.show_message("Please choose 1, 2, 3, 4 or 5.")
+        except (KeyboardInterrupt, EOFError):
+            # Ctrl+C (interrupt) or Ctrl+D (end of input): exit cleanly, no traceback.
+            self._io_manager.show_message("\nInterrupted. Goodbye!")
+        logger.info("Application exited")
 
 
 def main():
-    """Initialize configuration and logging, then run the interactive menu loop.
-
-    Check stored history on startup and delegate each choice to its manager
-    flow. Handle EOF and keyboard interruption as an application exit.
-    """
-    env_loaded = load_env()
-    # Load environment settings before logging so LOG_LEVEL is respected.
-    # Set LOG_LEVEL=DEBUG to include tracebacks in subsequent failure diagnostics.
-    if not logging_setup.setup_logging():
-        io_manager.show_message("Warning: diagnostic logging is unavailable.")
-    if not env_loaded:
-        # No raw file/exception details: even DEBUG must not expose credentials.
-        logger.warning("Optional .env could not be loaded; existing environment retained.")
-        io_manager.show_message(
-            "Warning: .env could not be loaded. Using existing environment settings."
-        )
-    logger.info("Application started")
-    try:
-        if load_reports() == []:
-            io_manager.show_message("No saved reports found.")
-        while True:
-            choice = io_manager.main_menu()
-            if choice == "1":
-                # Manual Email, SMS or Chat input.
-                check_message()
-            elif choice == "2":
-                # Import a .eml file chosen from the user's saved email folder.
-                record = io_manager.collect_input_from_folder()
-                if record is not None:
-                    check_message(record)
-            elif choice == "3":
-                # Existing browser-based file upload.
-                upload_file()
-            elif choice == "4":
-                # View previous assessments.
-                view_reports()
-            elif choice == "5":
-                io_manager.show_message("Bye!")
-                break
-            else:
-                io_manager.show_message("Please choose 1, 2, 3, 4 or 5.")
-    except (KeyboardInterrupt, EOFError):
-        # Ctrl+C (interrupt) or Ctrl+D (end of input): exit cleanly, no traceback.
-        io_manager.show_message("\nInterrupted. Goodbye!")
-    logger.info("Application exited")
+    """Compose and run the CLI with its production managers."""
+    app = PhishReportApp(
+        io_manager=IOManager(ConsoleTerminal()),
+        ai_manager=AIManager(),
+        logic_manager=LogicManager(),
+        data_manager=DataManager(),
+    )
+    app.run()
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ from email.utils import formatdate
 from http.client import IncompleteRead
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, call
 
 import ai_manager
 import data_manager
@@ -36,8 +36,23 @@ import web_upload
 from ai_core import AIClient, AIManager, GroqClient, groq_client
 from data_core import DataManager, JsonReportStorage, json_storage
 from email_html import html_to_text
+from io_core import IOManager
+from io_core.terminal import ConsoleTerminal
+from logic_core import LogicManager
 
 REAL_EMAILS = Path(__file__).resolve().parent / "fixtures"
+
+
+@pytest.fixture
+def cli():
+    """Create a CLI with fresh managers and expose its collaborators to tests."""
+    console = IOManager(ConsoleTerminal())
+    logic = LogicManager()
+    storage = DataManager()
+    app = main.PhishReportApp(
+        io_manager=console, ai_manager=AIManager(), logic_manager=logic, data_manager=storage
+    )
+    return SimpleNamespace(app=app, io_manager=console, logic_manager=logic, data_manager=storage)
 
 
 # ============================================================================
@@ -87,7 +102,7 @@ def demo_reply(transport, **changes):
     ],
 )
 def test_demo_real_email_pipeline_and_reload(
-    demo_transport, monkeypatch, tmp_path, capsys, name, entry
+    cli, demo_transport, monkeypatch, tmp_path, capsys, name, entry
 ):
     path = REAL_EMAILS / name
     sender, message = io_manager.read_eml_details(path)
@@ -95,13 +110,13 @@ def test_demo_real_email_pipeline_and_reload(
     if entry == "manual":
         answers = iter(["Email", sender, message, "no", "no", "no"])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
-        main.check_message()
+        cli.app.check_message()
     elif entry == "folder":
         local_settings.save_setting("eml_folder", str(REAL_EMAILS))
         files = io_manager.list_eml_files(REAL_EMAILS)
         answers = iter([str(files.index(path) + 1), "no", "no", "no"])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
-        main.check_message(io_manager.collect_input_from_folder())
+        cli.app.check_message(io_manager.collect_input_from_folder())
     else:
         monkeypatch.setattr(
             web_upload,
@@ -113,7 +128,7 @@ def test_demo_real_email_pipeline_and_reload(
         )
         answers = iter(["no", "no", "no"])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
-        main.upload_file()
+        cli.app.upload_file()
 
     records = data_manager.load(strict=True)
     assert len(records) == 1
@@ -164,11 +179,11 @@ def test_demo_real_email_pipeline_and_reload(
         "otp-disclosure",
     ],
 )
-def test_demo_exposure_and_uncertainty(demo_transport, monkeypatch, changes, actions, score):
+def test_demo_exposure_and_uncertainty(cli, demo_transport, monkeypatch, changes, actions, score):
     demo_reply(demo_transport, **changes)
     answers = iter(actions)
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
-    main.check_message(
+    cli.app.check_message(
         io_manager.collect_input_from_upload(
             {
                 "filename": "sample-1.eml",
@@ -188,7 +203,7 @@ def test_demo_exposure_and_uncertainty(demo_transport, monkeypatch, changes, act
     ["timeout", "invalid-ai", "save"],
     ids=["AI-timeout-no-assessment", "invalid-AI-no-assessment", "valid-assessment-save-failure"],
 )
-def test_demo_failed_ai_differs_from_failed_save(demo_transport, monkeypatch, capsys, failure):
+def test_demo_failed_ai_differs_from_failed_save(cli, demo_transport, monkeypatch, capsys, failure):
     demo_reply(demo_transport)
     if failure == "timeout":
         demo_transport.side_effect = TimeoutError("Private transport detail")
@@ -198,7 +213,7 @@ def test_demo_failed_ai_differs_from_failed_save(demo_transport, monkeypatch, ca
         monkeypatch.setattr(json_storage.os, "replace", Mock(side_effect=PermissionError()))
     answers = iter(["no", "no", "no"])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
-    main.check_message(
+    cli.app.check_message(
         io_manager.collect_input_from_upload(
             {
                 "filename": "sample-2.eml",
@@ -216,7 +231,7 @@ def test_demo_failed_ai_differs_from_failed_save(demo_transport, monkeypatch, ca
 
 
 @pytest.mark.demo
-def test_demo_actual_http_upload_of_real_email(demo_transport, monkeypatch):
+def test_demo_actual_http_upload_of_real_email(cli, demo_transport, monkeypatch):
     """Real local HTTP server and upload, mocked external provider only."""
     demo_reply(demo_transport)
     ready = threading.Event()
@@ -231,7 +246,7 @@ def test_demo_actual_http_upload_of_real_email(demo_transport, monkeypatch):
 
     def run():
         try:
-            main.upload_file()
+            cli.app.upload_file()
         except Exception as error:
             errors.append(error)
 
@@ -284,8 +299,9 @@ def test_manager_contract_required_manager_modules_are_importable(name):
     assert Path(module.__file__).resolve() == path.resolve()
 
 
-def test_manager_contract_terminal_io_stays_in_io_manager():
-    """Keep terminal interaction in the I/O manager, including inside class methods."""
+def test_manager_contract_raw_terminal_io_stays_in_console_adapter():
+    """Keep direct terminal interaction inside the I/O layer's console adapter."""
+    console_adapter = manager_contract_APP / "io_core" / "terminal.py"
     paths = list(manager_contract_APP.rglob("*.py")) + list(
         (manager_contract_ROOT / "tests").rglob("*.py")
     )
@@ -297,7 +313,7 @@ def test_manager_contract_terminal_io_stays_in_io_manager():
             function = node.func
             if isinstance(function, ast.Name):
                 if function.id in {"input", "print"}:
-                    assert path == manager_contract_APP / "io_manager.py", str(path)
+                    assert path == console_adapter, str(path)
 
 
 # ============================================================================
@@ -1189,7 +1205,7 @@ def test_io_display_display_result_keeps_safety_wording(capsys):
     assert "Remain cautious." in capsys.readouterr().out
 
 
-def test_io_display_check_new_message_displays_full_record(monkeypatch, capsys):
+def test_io_display_check_new_message_displays_full_record(cli, monkeypatch, capsys):
     message = "Fictional SMS message for the offline display integration test."
     record = {
         "channel": "sms",
@@ -1218,11 +1234,12 @@ def test_io_display_check_new_message_displays_full_record(monkeypatch, capsys):
         api_calls.append(prompt)
         return json.dumps(findings)
 
-    monkeypatch.setattr(main.io_manager, "collect_input", lambda: record)
-    monkeypatch.setattr(main, "ai_manager", AIManager(client=SimpleNamespace(complete=complete)))
-    monkeypatch.setattr(main.data_manager, "save", saved.append)
+    monkeypatch.setattr(cli.io_manager, "collect_input", lambda: record)
+    client = SimpleNamespace(complete=complete)
+    monkeypatch.setattr(cli.app, "_ai_manager", AIManager(client=client))
+    monkeypatch.setattr(cli.data_manager, "save", saved.append)
 
-    main.check_message()
+    cli.app.check_message()
     output = capsys.readouterr().out
 
     # The new implementation displays the assessment result
@@ -2812,8 +2829,42 @@ def test_ai_manager_repeated_rate_limit_stops_after_two_requests(ai_manager_prov
 # Offline integration tests: real AI/logic/JSON; fictional input and mocked HTTP.
 
 
+def test_cli_app_uses_its_own_managers_for_each_assessment():
+    """Two applications keep their own input, assessment, storage and display calls."""
+
+    def build_app(message):
+        record = {"channel": "email", "message": message}
+        findings = {"suspicious": True}
+        result = {"score": 45, "priority": "MEDIUM"}
+        collaborators = Mock()
+        collaborators.io.collect_input.return_value = record
+        collaborators.ai.assess.return_value = findings
+        collaborators.logic.evaluate.return_value = result
+        app = main.PhishReportApp(
+            io_manager=collaborators.io,
+            ai_manager=collaborators.ai,
+            logic_manager=collaborators.logic,
+            data_manager=collaborators.data,
+        )
+        expected = [
+            call.io.collect_input(),
+            call.ai.assess(record),
+            call.logic.evaluate({**record, "ai": findings}),
+            call.data.save({"schema_version": 2, **record, "result": result}),
+            call.io.display_result(result),
+        ]
+        return app, collaborators, expected
+
+    first, first_managers, first_calls = build_app("First fictional message")
+    second, second_managers, second_calls = build_app("Second fictional message")
+    first.check_message()
+    second.check_message()
+    assert first_managers.mock_calls == first_calls
+    assert second_managers.mock_calls == second_calls
+
+
 @pytest.fixture
-def main_app_boundary(tmp_path, monkeypatch):
+def main_app_boundary(cli, tmp_path, monkeypatch):
     """Keep reports/logs temporary and restore shared logger state after each test."""
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GROQ_API_KEY", "fictional-integration-key")
@@ -2827,8 +2878,8 @@ def main_app_boundary(tmp_path, monkeypatch):
     monkeypatch.setattr(groq_client.time, "sleep", Mock())
     transport = MagicMock()
     monkeypatch.setattr(groq_client.urllib.request, "urlopen", transport)
-    monkeypatch.setattr(main.io_manager, "show_message", Mock())
-    monkeypatch.setattr(main.io_manager, "display_result", Mock())
+    monkeypatch.setattr(cli.io_manager, "show_message", Mock())
+    monkeypatch.setattr(cli.io_manager, "display_result", Mock())
     # Reset the central logging so each test configures a fresh file logger in
     # its own tmp_path, and restore the root logger afterwards.
     main.logging_setup._configured = False
@@ -2896,7 +2947,7 @@ def main_record():
 @pytest.mark.parametrize("invented_contact", [False, True])
 @pytest.mark.parametrize("disclosure, expected_score", [("no", 60), ("otp", 90)])
 def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
-    main_app_boundary,
+    cli, main_app_boundary,
     monkeypatch,
     invented_contact,
     disclosure,
@@ -2927,12 +2978,12 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
     main_completed_reply(main_app_boundary, findings)
     answers = iter(["no", "no", disclosure])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
-    main.upload_file()
+    cli.app.upload_file()
     assert main_app_boundary.call_count == 1
     records = data_manager.load()
     if invented_contact:
         assert records == []
-        main.io_manager.display_result.assert_not_called()
+        cli.io_manager.display_result.assert_not_called()
     else:
         assert len(records) == 1
         message = records[0]["message"]
@@ -2940,7 +2991,7 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
         assert "https://credential.example.test/login" in message
         assert "<p>" not in message and "Content-Type:" not in message
         assert records[0]["result"]["score"] == expected_score
-        main.io_manager.display_result.assert_called_once_with(records[0]["result"])
+        cli.io_manager.display_result.assert_called_once_with(records[0]["result"])
 
 
 @pytest.mark.parametrize(
@@ -2951,7 +3002,7 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
     ],
 )
 def test_main_invalid_browser_email_stops_before_ai_or_save(
-    main_app_boundary, monkeypatch, content
+    cli, main_app_boundary, monkeypatch, content
 ):
     import web_upload
 
@@ -2965,15 +3016,15 @@ def test_main_invalid_browser_email_stops_before_ai_or_save(
             }
         ),
     )
-    main.upload_file()
+    cli.app.upload_file()
     main_app_boundary.assert_not_called()
-    main.io_manager.display_result.assert_not_called()
+    cli.io_manager.display_result.assert_not_called()
     assert data_manager.load() == []
 
 
 @pytest.mark.parametrize("invented_contact", [False, True])
 def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
-    main_app_boundary,
+    cli, main_app_boundary,
     monkeypatch,
     tmp_path,
     invented_contact,
@@ -3005,7 +3056,7 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
         return next(answers)
 
     monkeypatch.setattr("builtins.input", answer)
-    main.main()
+    cli.app.run()
     assert prompts[0] == "Choose 1-5: "
     assert any("email folder" in prompt.lower() for prompt in prompts)
     assert not any(
@@ -3017,17 +3068,17 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
     records = data_manager.load()
     if invented_contact:
         assert records == []
-        main.io_manager.display_result.assert_not_called()
+        cli.io_manager.display_result.assert_not_called()
     else:
         assert len(records) == 1
         assert records[0]["message"] == "Subject: Fictional request\n\n" + body
         assert records[0]["result"]["score"] == 60
-        main.io_manager.display_result.assert_called_once_with(records[0]["result"])
+        cli.io_manager.display_result.assert_called_once_with(records[0]["result"])
 
 
 @pytest.mark.parametrize("failure", ["input", "timeout", "http", "incomplete", "json", "schema"])
 def test_main_failed_assessment_never_reaches_logic_storage_or_success_display(
-    main_app_boundary,
+    cli, main_app_boundary,
     monkeypatch,
     failure,
 ):
@@ -3055,31 +3106,33 @@ def test_main_failed_assessment_never_reaches_logic_storage_or_success_display(
     else:
         main_completed_reply(main_app_boundary, {"suspicious": "PRIVATE_BODY"})
     original = record.copy()
-    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=record))
+    monkeypatch.setattr(cli.io_manager, "collect_input", Mock(return_value=record))
     evaluate, save = Mock(), Mock()
-    monkeypatch.setattr(main.logic_manager, "evaluate", evaluate)
-    monkeypatch.setattr(main.data_manager, "save", save)
+    monkeypatch.setattr(cli.logic_manager, "evaluate", evaluate)
+    monkeypatch.setattr(cli.data_manager, "save", save)
 
-    main.check_message()
+    cli.app.check_message()
 
     evaluate.assert_not_called()
     save.assert_not_called()
-    main.io_manager.display_result.assert_not_called()
-    main.io_manager.show_message.assert_called_once()
-    assert "failed" in main.io_manager.show_message.call_args.args[0]
-    assert "PRIVATE_" not in main.io_manager.show_message.call_args.args[0]
+    cli.io_manager.display_result.assert_not_called()
+    cli.io_manager.show_message.assert_called_once()
+    assert "failed" in cli.io_manager.show_message.call_args.args[0]
+    assert "PRIVATE_" not in cli.io_manager.show_message.call_args.args[0]
     assert record == original
     expected_calls = 0 if failure == "input" else 2 if failure in ("timeout", "http") else 1
     assert main_app_boundary.call_count == expected_calls
 
 
-def test_main_successful_assessment_reaches_real_logic_and_storage(main_app_boundary, monkeypatch):
+def test_main_successful_assessment_reaches_real_logic_and_storage(
+    cli, main_app_boundary, monkeypatch
+):
     record = main_record()
     original = record.copy()
     main_successful_reply(main_app_boundary)
-    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=record))
+    monkeypatch.setattr(cli.io_manager, "collect_input", Mock(return_value=record))
 
-    main.check_message()
+    cli.app.check_message()
 
     saved = data_manager.load()
     assert saved == [
@@ -3087,27 +3140,27 @@ def test_main_successful_assessment_reaches_real_logic_and_storage(main_app_boun
             "schema_version": 2,
             "channel": record["channel"],
             "message": record["message"],
-            "result": main.io_manager.display_result.call_args.args[0],
+            "result": cli.io_manager.display_result.call_args.args[0],
         }
     ]
     assert record == original
-    result = main.io_manager.display_result.call_args.args[0]
+    result = cli.io_manager.display_result.call_args.args[0]
     assert result["score"] == 90 and result["priority"] == "HIGH"
     assert result["checklist"]
-    main.io_manager.display_result.assert_called_once()
-    main.io_manager.show_message.assert_not_called()
+    cli.io_manager.display_result.assert_called_once()
+    cli.io_manager.show_message.assert_not_called()
     assert main_app_boundary.call_count == 1
 
 
 def test_main_menu_continues_after_bad_record_then_saves_next_assessment(
-    main_app_boundary,
+    cli, main_app_boundary,
     monkeypatch,
     tmp_path,
 ):
     main_successful_reply(main_app_boundary)
-    monkeypatch.setattr(main.io_manager, "main_menu", Mock(side_effect=["1", "1", "5"]))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=["1", "1", "5"]))
     monkeypatch.setattr(
-        main.io_manager,
+        cli.io_manager,
         "collect_input",
         Mock(
             side_effect=[
@@ -3117,11 +3170,11 @@ def test_main_menu_continues_after_bad_record_then_saves_next_assessment(
         ),
     )
 
-    main.main()
+    cli.app.run()
 
-    assert main.io_manager.main_menu.call_count == 3
+    assert cli.io_manager.main_menu.call_count == 3
     assert len(data_manager.load()) == 1
-    main.io_manager.display_result.assert_called_once()
+    cli.io_manager.display_result.assert_called_once()
     assert main_app_boundary.call_count == 1
     log = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
     assert log.count("stage=build_prompt") == 1
@@ -3144,17 +3197,17 @@ def test_main_configured_logging_writes_sanitised_diagnostics(main_app_boundary,
 
 
 def test_main_unwritable_log_destination_keeps_menu_available(
-    main_app_boundary, tmp_path, monkeypatch
+    cli, main_app_boundary, tmp_path, monkeypatch
 ):
     # A file named "logs" makes os.makedirs("logs") fail, so the file log can't
     # open - the app must still run and warn about logging being unavailable.
     (tmp_path / "logs").write_text("not a directory")
-    monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="5"))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="5"))
 
-    main.main()
+    cli.app.run()
 
-    main.io_manager.main_menu.assert_called_once()
-    messages = [call.args[0] for call in main.io_manager.show_message.call_args_list]
+    cli.io_manager.main_menu.assert_called_once()
+    messages = [call.args[0] for call in cli.io_manager.show_message.call_args_list]
     assert any("logging" in message.lower() for message in messages)
     assert messages[-1] == "Bye!"
     main_app_boundary.assert_not_called()
@@ -3182,7 +3235,7 @@ def test_main_failed_log_write_does_not_crash_or_leak(main_app_boundary, monkeyp
 
 @pytest.mark.parametrize("failure", ["missing-findings", "detail-type", "invented-contact"])
 def test_main_combined_validation_failure_stops_before_logic_and_storage(
-    main_app_boundary,
+    cli, main_app_boundary,
     monkeypatch,
     failure,
 ):
@@ -3196,24 +3249,24 @@ def test_main_combined_validation_failure_stops_before_logic_and_storage(
     main_completed_reply(main_app_boundary, data)
     record = main_record()
     original = record.copy()
-    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=record))
+    monkeypatch.setattr(cli.io_manager, "collect_input", Mock(return_value=record))
     evaluate, save = Mock(), Mock()
-    monkeypatch.setattr(main.logic_manager, "evaluate", evaluate)
-    monkeypatch.setattr(main.data_manager, "save", save)
+    monkeypatch.setattr(cli.logic_manager, "evaluate", evaluate)
+    monkeypatch.setattr(cli.data_manager, "save", save)
 
-    main.check_message()
+    cli.app.check_message()
 
     evaluate.assert_not_called()
     save.assert_not_called()
-    main.io_manager.display_result.assert_not_called()
-    main.io_manager.show_message.assert_called_once()
-    assert "PRIVATE_" not in main.io_manager.show_message.call_args.args[0]
+    cli.io_manager.display_result.assert_not_called()
+    cli.io_manager.show_message.assert_called_once()
+    assert "PRIVATE_" not in cli.io_manager.show_message.call_args.args[0]
     assert main_app_boundary.call_count == 1
     assert record == original
 
 
 def test_main_combined_caller_passes_validated_findings_to_logic_once(
-    main_app_boundary, monkeypatch
+    cli, main_app_boundary, monkeypatch
 ):
     record = main_record()
     data = main_findings()
@@ -3225,14 +3278,14 @@ def test_main_combined_caller_passes_validated_findings_to_logic_once(
         main_app_boundary.return_value.__enter__.return_value.read.return_value,
         AssertionError("Unexpected second API response"),
     ]
-    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=record))
+    monkeypatch.setattr(cli.io_manager, "collect_input", Mock(return_value=record))
     result = {"score": 90, "priority": "HIGH", "reasons": [], "checklist": []}
     evaluate = Mock(return_value=result)
     save = Mock()
-    monkeypatch.setattr(main.logic_manager, "evaluate", evaluate)
-    monkeypatch.setattr(main.data_manager, "save", save)
+    monkeypatch.setattr(cli.logic_manager, "evaluate", evaluate)
+    monkeypatch.setattr(cli.data_manager, "save", save)
 
-    main.check_message()
+    cli.app.check_message()
 
     evaluate.assert_called_once_with({**record, "ai": data})
     assert "ai" not in record
@@ -3243,32 +3296,32 @@ def test_main_combined_caller_passes_validated_findings_to_logic_once(
         "message": record["message"],
         "result": result,
     }
-    main.io_manager.display_result.assert_called_once_with(result)
+    cli.io_manager.display_result.assert_called_once_with(result)
     main_app_boundary.assert_called_once()
 
 
 def test_main_combined_caller_uses_ai_findings_for_the_same_unexposed_input(
-    main_app_boundary, monkeypatch
+    cli, main_app_boundary, monkeypatch
 ):
     record = main_record()
     record["submitted_category"] = None
-    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=record))
+    monkeypatch.setattr(cli.io_manager, "collect_input", Mock(return_value=record))
     for suspicious, credential, expected in ((False, False, 10), (True, True, 60)):
         data = main_findings()
         data.update(suspicious=suspicious, credential_request=credential)
         main_completed_reply(main_app_boundary, data)
-        main.check_message()
-        assert main.io_manager.display_result.call_args.args[0]["score"] == expected
+        cli.app.check_message()
+        assert cli.io_manager.display_result.call_args.args[0]["score"] == expected
     assert main_app_boundary.call_count == 2  # two records, one request each
     assert len(data_manager.load()) == 2
 
 
 def test_main_configured_storage_logging_uses_application_file(
-    main_app_boundary, tmp_path, monkeypatch
+    cli, main_app_boundary, tmp_path, monkeypatch
 ):
     (tmp_path / "reports.json").write_text("{PRIVATE_BROKEN")
-    monkeypatch.setattr(main.io_manager, "main_menu", Mock(return_value="5"))
-    main.main()
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="5"))
+    cli.app.run()
     text = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
     assert "data_manager" in text and "Could not read local report history" in text
     # Default (non-debug) logging must not leak the broken file contents.
@@ -3278,14 +3331,14 @@ def test_main_configured_storage_logging_uses_application_file(
 
 
 def test_main_recovered_timeout_saves_and_displays_only_one_assessment(
-    main_app_boundary, monkeypatch
+    cli, main_app_boundary, monkeypatch
 ):
     record = main_record()
     main_successful_reply(main_app_boundary)
     main_app_boundary.side_effect = [TimeoutError("PRIVATE_ERROR"), main_app_boundary.return_value]
-    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=record))
+    monkeypatch.setattr(cli.io_manager, "collect_input", Mock(return_value=record))
 
-    main.check_message()
+    cli.app.check_message()
 
     assert main_app_boundary.call_count == 2
     saved = data_manager.load()
@@ -3294,19 +3347,21 @@ def test_main_recovered_timeout_saves_and_displays_only_one_assessment(
         "schema_version": 2,
         "channel": record["channel"],
         "message": record["message"],
-        "result": main.io_manager.display_result.call_args.args[0],
+        "result": cli.io_manager.display_result.call_args.args[0],
     }
-    main.io_manager.display_result.assert_called_once()
-    main.io_manager.show_message.assert_not_called()
+    cli.io_manager.display_result.assert_called_once()
+    cli.io_manager.show_message.assert_not_called()
 
 
-def test_main_timeout_fallback_reaches_real_logic_and_saves_once(main_app_boundary, monkeypatch):
+def test_main_timeout_fallback_reaches_real_logic_and_saves_once(
+    cli, main_app_boundary, monkeypatch
+):
     monkeypatch.setenv("GROQ_FALLBACK_MODEL", "fictional/faster")
     main_successful_reply(main_app_boundary)
     main_app_boundary.side_effect = [TimeoutError(), main_app_boundary.return_value]
-    monkeypatch.setattr(main.io_manager, "collect_input", Mock(return_value=main_record()))
+    monkeypatch.setattr(cli.io_manager, "collect_input", Mock(return_value=main_record()))
 
-    main.check_message()
+    cli.app.check_message()
 
     assert main_app_boundary.call_count == 2
     assert json.loads(main_app_boundary.call_args.args[0].data)["model"] == "fictional/faster"
@@ -3316,22 +3371,22 @@ def test_main_timeout_fallback_reaches_real_logic_and_saves_once(main_app_bounda
             "schema_version": 2,
             "channel": main_record()["channel"],
             "message": main_record()["message"],
-            "result": main.io_manager.display_result.call_args.args[0],
+            "result": cli.io_manager.display_result.call_args.args[0],
         }
     ]
-    main.io_manager.display_result.assert_called_once()
-    main.io_manager.show_message.assert_not_called()
+    cli.io_manager.display_result.assert_called_once()
+    cli.io_manager.show_message.assert_not_called()
 
 
 @pytest.mark.parametrize("choice, handler_name", [("3", "upload_file"), ("4", "view_reports")])
 def test_main_menu_routes_upload_and_saved_reports(
-    main_app_boundary, monkeypatch, choice, handler_name
+    cli, main_app_boundary, monkeypatch, choice, handler_name
 ):
     handler = Mock()
-    monkeypatch.setattr(main, handler_name, handler)
-    monkeypatch.setattr(main.io_manager, "main_menu", Mock(side_effect=[choice, "5"]))
+    monkeypatch.setattr(cli.app, handler_name, handler)
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=[choice, "5"]))
 
-    main.main()
+    cli.app.run()
 
     handler.assert_called_once_with()
     main_app_boundary.assert_not_called()
@@ -3362,18 +3417,18 @@ def data_manager_report():
     }
 
 
-def test_main_data_manager_instance_shares_adapter_reports(data_manager_storage):
-    assert isinstance(main.data_manager, DataManager)
+def test_main_data_manager_instance_shares_adapter_reports(cli, data_manager_storage):
+    assert isinstance(cli.data_manager, DataManager)
     first = data_manager_report()
     second = {**first, "message": "  Second original message\n"}
     data_manager.save(first)
-    assert main.load_reports() == [first]
-    main.data_manager.save(second)
+    assert cli.app.load_reports() == [first]
+    cli.data_manager.save(second)
     assert data_manager.load(strict=True) == [first, second]
 
 
 @pytest.mark.parametrize("state", ["missing", "empty", "populated"])
-def test_data_manager_startup(data_manager_storage, monkeypatch, state):
+def test_data_manager_startup(cli, data_manager_storage, monkeypatch, state):
     """Load all JSON records before the menu and identify empty history."""
     records = (
         [data_manager_report(), {**data_manager_report(), "channel": "sms"}]
@@ -3382,7 +3437,7 @@ def test_data_manager_startup(data_manager_storage, monkeypatch, state):
     )
     if state != "missing":
         data_manager_storage.write_text(json.dumps(records), encoding="utf-8")
-    original_load = main.data_manager.load
+    original_load = cli.data_manager.load
     events = []
 
     def loader(*, strict=False):
@@ -3397,11 +3452,11 @@ def test_data_manager_startup(data_manager_storage, monkeypatch, state):
         events.append("menu")
         return "5"
 
-    monkeypatch.setattr(main.data_manager, "load", loader)
-    monkeypatch.setattr(main.io_manager, "main_menu", menu)
+    monkeypatch.setattr(cli.data_manager, "load", loader)
+    monkeypatch.setattr(cli.io_manager, "main_menu", menu)
     notices = Mock()
-    monkeypatch.setattr(main.io_manager, "show_message", notices)
-    main.main()
+    monkeypatch.setattr(cli.io_manager, "show_message", notices)
+    cli.app.run()
     assert events == ["load", "menu"]
     messages = [call.args[0] for call in notices.call_args_list]
     assert ("No saved reports found." in messages) == (not records)
@@ -3472,12 +3527,12 @@ def test_data_manager_missing_field(data_manager_storage, field):
     assert not data_manager_storage.exists()
 
 
-def test_data_manager_history_error_notice(data_manager_storage, monkeypatch, capsys):
+def test_data_manager_history_error_notice(cli, data_manager_storage, monkeypatch, capsys):
     """Report unreadable history instead of sending an empty list to display."""
-    monkeypatch.setattr(main.data_manager, "load", Mock(side_effect=PermissionError("Read denied")))
+    monkeypatch.setattr(cli.data_manager, "load", Mock(side_effect=PermissionError("Read denied")))
     display = Mock()
-    monkeypatch.setattr(main.io_manager, "display_list", display)
-    main.view_reports()
+    monkeypatch.setattr(cli.io_manager, "display_list", display)
+    cli.app.view_reports()
     display.assert_not_called()
     assert "Could not load local report history" in capsys.readouterr().out
 
@@ -3609,28 +3664,28 @@ def test_data_manager_failed_atomic_replace_preserves_old_history(
     ],
 )
 def test_data_manager_history_recovery(
-    data_manager_storage, monkeypatch, capsys, operation, content
+    cli, data_manager_storage, monkeypatch, capsys, operation, content
 ):
     """Keep malformed JSON and invalid v2 records safe across coordinator paths."""
     data_manager_storage.write_text(content)
     monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
-    monkeypatch.setattr(main.io_manager, "main_menu", lambda: "5")
+    monkeypatch.setattr(cli.io_manager, "main_menu", lambda: "5")
     if operation == "save":
         record = data_manager_complete_report()
         monkeypatch.setattr(
-            main.io_manager,
+            cli.io_manager,
             "collect_input",
             lambda: {
                 k: v for k, v in record.items() if k not in ("schema_version", "ai", "result")
             },
         )
         client = SimpleNamespace(complete=lambda prompt: json.dumps(record["ai"]))
-        monkeypatch.setattr(main, "ai_manager", AIManager(client=client))
-        main.check_message()
+        monkeypatch.setattr(cli.app, "_ai_manager", AIManager(client=client))
+        cli.app.check_message()
     elif operation == "startup":
-        main.main()
+        cli.app.run()
     else:
-        main.view_reports()
+        cli.app.view_reports()
     assert data_manager_storage.read_text() == content
     output = capsys.readouterr().out
     assert "Could not" in output
@@ -3659,29 +3714,29 @@ def test_data_manager_io_failures_preserve_history(data_manager_storage, monkeyp
     assert list(data_manager_storage.parent.glob("*.tmp")) == []
 
 
-def test_data_manager_saved_result_display(data_manager_storage, capsys):
+def test_data_manager_saved_result_display(cli, data_manager_storage, capsys):
     """Display persisted v2 reasons and guidance without the old input fields."""
     record = data_manager_report()
     data_manager.save(record)
-    main.io_manager.display_record(data_manager.load()[0])
+    cli.io_manager.display_record(data_manager.load()[0])
     output = capsys.readouterr().out
     assert "Rule-based score: 90" in output
     assert "Password disclosed." in output
     assert "Change the affected password." in output
 
 
-def test_data_manager_saved_reports_are_visible(data_manager_storage, monkeypatch):
+def test_data_manager_saved_reports_are_visible(cli, data_manager_storage, monkeypatch):
     shared = data_manager_report()
     local_only = deepcopy(shared)
     local_only["message"] = "A separate fictional message"
     data_manager_storage.write_text(json.dumps([shared, local_only]))
     client = SimpleNamespace(complete=Mock())
-    monkeypatch.setattr(main, "ai_manager", AIManager(client=client))
+    monkeypatch.setattr(cli.app, "_ai_manager", AIManager(client=client))
     before = data_manager_storage.read_bytes()
-    assert main.load_reports() == [shared, local_only]
+    assert cli.app.load_reports() == [shared, local_only]
     display = Mock()
-    monkeypatch.setattr(main.io_manager, "display_list", display)
-    main.view_reports()
+    monkeypatch.setattr(cli.io_manager, "display_list", display)
+    cli.app.view_reports()
     display.assert_called_once_with([shared, local_only])
     assert data_manager_storage.read_bytes() == before
     client.complete.assert_not_called()
@@ -3723,7 +3778,7 @@ def test_data_manager_default_load_handles_read_error_without_exposing_exception
     ],
 )
 def test_data_manager_legacy_field_corruption_recovers_without_replacing_file(
-    data_manager_storage, monkeypatch, capsys, caplog, changes
+    cli, data_manager_storage, monkeypatch, capsys, caplog, changes
 ):
     """Keep malformed historical fields away from display and strict writes."""
     source = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "sample-1.eml"
@@ -3742,8 +3797,8 @@ def test_data_manager_legacy_field_corruption_recovers_without_replacing_file(
     # Startup, explicit history viewing and normal exit must all remain usable.
     monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
     choices = iter(["4", "5"])
-    monkeypatch.setattr(main.io_manager, "main_menu", lambda: next(choices))
-    main.main()
+    monkeypatch.setattr(cli.io_manager, "main_menu", lambda: next(choices))
+    cli.app.run()
     output = capsys.readouterr().out
     assert "Could not load local report history" in output
     assert "Bye!" in output
@@ -3765,14 +3820,14 @@ def test_data_manager_legacy_field_corruption_recovers_without_replacing_file(
     ],
 )
 def test_data_manager_supported_partial_legacy_fields_remain_readable(
-    data_manager_storage, capsys, legacy
+    cli, data_manager_storage, capsys, legacy
 ):
     """Preserve accepted older shapes without inventing absent findings or actions."""
     data_manager_storage.write_text(json.dumps([legacy]), encoding="utf-8")
     before = data_manager_storage.read_bytes()
     records = data_manager.load(strict=True)
-    main.io_manager.display_list(records)
-    main.io_manager.display_record(records[0])
+    cli.io_manager.display_list(records)
+    cli.io_manager.display_record(records[0])
     assert records == [legacy]
     assert "Saved reports" in capsys.readouterr().out
     assert data_manager_storage.read_bytes() == before
@@ -3871,21 +3926,21 @@ def test_env_loading_interrupted_read_does_not_apply_earlier_lines(
 
 
 @pytest.fixture
-def env_loading_startup(monkeypatch):
+def env_loading_startup(cli, monkeypatch):
     setup = Mock(return_value=True)
     menu = Mock(return_value="5")
     notice = Mock()
     monkeypatch.setattr(main.logging_setup, "setup_logging", setup)
-    monkeypatch.setattr(main, "load_reports", Mock(return_value=[]))
-    monkeypatch.setattr(main.io_manager, "main_menu", menu)
-    monkeypatch.setattr(main.io_manager, "show_message", notice)
+    monkeypatch.setattr(cli.app, "load_reports", Mock(return_value=[]))
+    monkeypatch.setattr(cli.io_manager, "main_menu", menu)
+    monkeypatch.setattr(cli.io_manager, "show_message", notice)
     return setup, menu, notice
 
 
 @pytest.mark.parametrize("level", [logging.INFO, logging.DEBUG], ids=["info", "debug"])
 @pytest.mark.parametrize("failure", ["directory", "invalid-utf8", "invalid-assignment"])
 def test_env_loading_bad_env_warns_safely_and_reaches_menu(
-    env_loading_env_folder, env_loading_startup, monkeypatch, caplog, level, failure
+    cli, env_loading_env_folder, env_loading_startup, monkeypatch, caplog, level, failure
 ):
     monkeypatch.setenv("PHISHREPORT_TEST_EXISTING", "supplied-by-shell")
     if failure == "directory":
@@ -3896,7 +3951,7 @@ def test_env_loading_bad_env_warns_safely_and_reaches_menu(
         env_loading_env_folder.write_text("PHISHREPORT_TEST_NEW=PRIVATE_CONFIG_SENTINEL\n=value")
     caplog.set_level(level, logger=main.__name__)
 
-    main.main()
+    cli.app.run()
 
     setup, menu, notice = env_loading_startup
     setup.assert_called_once_with()
@@ -3912,33 +3967,33 @@ def test_env_loading_bad_env_warns_safely_and_reaches_menu(
 
 
 def test_env_loading_valid_env_is_loaded_before_logging_without_warning(
-    env_loading_env_folder, env_loading_startup, monkeypatch
+    cli, env_loading_env_folder, env_loading_startup, monkeypatch
 ):
     env_loading_env_folder.write_text("PHISHREPORT_TEST_NEW=from-file", encoding="utf-8")
     setup, menu, notice = env_loading_startup
     setup.side_effect = lambda: os.environ["PHISHREPORT_TEST_NEW"] == "from-file"
 
-    main.main()
+    cli.app.run()
 
     menu.assert_called_once_with()
     assert not any("Warning:" in call.args[0] for call in notice.call_args_list)
 
 
 def test_env_loading_missing_env_reaches_menu_without_configuration_warning(
-    env_loading_env_folder, env_loading_startup
+    cli, env_loading_env_folder, env_loading_startup
 ):
-    main.main()
+    cli.app.run()
     env_loading_startup[1].assert_called_once_with()
     assert not any(".env" in call.args[0] for call in env_loading_startup[2].call_args_list)
 
 
 def test_env_loading_bad_env_warning_survives_unavailable_logging(
-    env_loading_env_folder, env_loading_startup
+    cli, env_loading_env_folder, env_loading_startup
 ):
     env_loading_env_folder.mkdir()
     env_loading_startup[0].return_value = False
 
-    main.main()
+    cli.app.run()
 
     messages = [call.args[0] for call in env_loading_startup[2].call_args_list]
     assert "Warning: diagnostic logging is unavailable." in messages
@@ -4070,7 +4125,7 @@ def test_submission_boundaries_deep_ai_content_is_a_validation_failure():
 
 
 def test_submission_boundaries_deep_provider_envelope_fails_without_an_assessment(
-    monkeypatch, tmp_path
+    cli, monkeypatch, tmp_path
 ):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("GROQ_API_KEY", "unused-offline")
@@ -4082,9 +4137,9 @@ def test_submission_boundaries_deep_provider_envelope_fails_without_an_assessmen
     response.read.return_value = submission_boundaries_deep_json().encode()
     monkeypatch.setattr(groq_client.urllib.request, "urlopen", Mock(return_value=response))
     save, display = Mock(), Mock()
-    monkeypatch.setattr(main.data_manager, "save", save)
-    monkeypatch.setattr(main.io_manager, "display_result", display)
-    main.check_message({"message": "Malformed response boundary"})
+    monkeypatch.setattr(cli.data_manager, "save", save)
+    monkeypatch.setattr(cli.io_manager, "display_result", display)
+    cli.app.check_message({"message": "Malformed response boundary"})
     save.assert_not_called()
     display.assert_not_called()
 
@@ -4120,7 +4175,7 @@ def test_submission_boundaries_invalid_history_is_preserved_and_cannot_be_append
 
 
 def test_submission_boundaries_deep_history_keeps_startup_and_history_menu_usable(
-    tmp_path, monkeypatch, capsys
+    cli, tmp_path, monkeypatch, capsys
 ):
     monkeypatch.chdir(tmp_path)
     path = tmp_path / "reports.json"
@@ -4128,16 +4183,16 @@ def test_submission_boundaries_deep_history_keeps_startup_and_history_menu_usabl
     before = path.read_bytes()
     monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
     choices = iter(["4", "5"])
-    monkeypatch.setattr(main.io_manager, "main_menu", lambda: next(choices))
-    main.main()
+    monkeypatch.setattr(cli.io_manager, "main_menu", lambda: next(choices))
+    cli.app.run()
     assert "Bye!" in capsys.readouterr().out
     assert path.read_bytes() == before
 
 
 @pytest.mark.parametrize("port", [-1, 65536])
-def test_submission_boundaries_upload_invalid_port_returns_to_menu(monkeypatch, port, capsys):
+def test_submission_boundaries_upload_invalid_port_returns_to_menu(cli, monkeypatch, port, capsys):
     monkeypatch.setattr(web_upload, "PORT", port)
-    main.upload_file()
+    cli.app.upload_file()
     assert "Upload failed" in capsys.readouterr().out
 
 

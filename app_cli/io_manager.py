@@ -1,8 +1,9 @@
 # io_manager.py
-# All input() and print() live here. OWNER: Jeremy Goh & Bryan Lee.
+# Console adapter and compatibility functions. OWNER: Jeremy Goh & Bryan Lee.
 
 from io_core import IOManager, eml, folder
 from io_core.manager import UPLOAD_TYPE_MESSAGE as UPLOAD_TYPE_MESSAGE
+from io_core.terminal import ConsoleTerminal as ConsoleTerminal
 
 MAX_EML_BYTES = eml.MAX_EML_BYTES
 MAX_MIME_PARTS = eml.MAX_MIME_PARTS
@@ -10,16 +11,6 @@ MAX_MIME_DEPTH = eml.MAX_MIME_DEPTH
 MAX_MESSAGE_CHARS = eml.MAX_MESSAGE_CHARS
 EML_FOLDER_KEY = folder.EML_FOLDER_KEY
 EML_PAGE_SIZE = folder.EML_PAGE_SIZE
-
-
-class ConsoleTerminal:
-    """Connect the terminal contract to the standard console."""
-
-    def read(self, prompt: str) -> str:
-        return input(prompt)
-
-    def write(self, *parts: object) -> None:
-        print(*parts)
 
 
 default_io_manager = IOManager(ConsoleTerminal())
