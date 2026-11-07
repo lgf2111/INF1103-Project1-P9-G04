@@ -5,8 +5,7 @@
 #   bash run.sh build     # build the CLI Docker image
 #   bash run.sh run       # run the CLI (loads your key from .env)
 #   bash run.sh test      # run the tests inside the container
-#   bash run.sh gui       # run the GUI in a host X11 window
-#   bash run.sh gui-web   # run the GUI in a browser using noVNC
+#   bash run.sh telegram # run the Telegram bot (loads .env.telegram)
 #   bash run.sh shell     # open a shell inside the container
 #   bash run.sh clean     # remove the Docker images
 #
@@ -14,8 +13,7 @@
 # must be installed and running. The CLI additionally needs a .env API key.
 
 IMAGE="phishreport"
-GUI_IMAGE="${IMAGE}-gui"
-NATIVE_GUI_IMAGE="${IMAGE}-gui-native"
+TELEGRAM_IMAGE="${IMAGE}-telegram"
 
 # stop and show the error if any command fails
 set -e
@@ -124,135 +122,21 @@ elif [ "$command" = "test" ]; then
     echo "Running the tests inside the container..."
     docker run --rm --network none "$IMAGE" pytest
 
-elif [ "$command" = "gui" ] || [ "$command" = "gui-web" ]; then
-    if [ "$command" = "gui" ]; then
-        TARGET="gui-native"
-        ACTIVE_GUI_IMAGE="$NATIVE_GUI_IMAGE"
-        DISPLAY_ADDRESS="${PHISHREPORT_DISPLAY:-host.docker.internal:0}"
-        echo "Building the native-window desktop GUI image..."
-    else
-        TARGET="gui"
-        ACTIVE_GUI_IMAGE="$GUI_IMAGE"
-        echo "Building the browser desktop GUI image..."
-    fi
-    docker build --target "$TARGET" -t "$ACTIVE_GUI_IMAGE" "$(docker_path "$PROJECT_DIR")"
-
-    MOCK_AUTH_NAME=""
-    MOCK_AUTH_NETWORK=""
-    AUTH_FILE=""
-    cleanup_gui_resources() {
-        if [ -n "$MOCK_AUTH_NAME" ]; then
-            docker stop "$MOCK_AUTH_NAME" >/dev/null 2>&1 || true
-        fi
-        if [ -n "$MOCK_AUTH_NETWORK" ]; then
-            docker network rm "$MOCK_AUTH_NETWORK" >/dev/null 2>&1 || true
-        fi
-        if [ -n "$AUTH_FILE" ]; then
-            rm -f "$AUTH_FILE"
-        fi
-    }
-    trap cleanup_gui_resources EXIT
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
-
-    if [ "$command" = "gui" ] && [ "$(uname -s)" = "Darwin" ]; then
-        XAUTH_BIN="$(command -v xauth || true)"
-        if [ -z "$XAUTH_BIN" ] && [ -x /opt/X11/bin/xauth ]; then
-            XAUTH_BIN="/opt/X11/bin/xauth"
-        fi
-        if [ -z "$XAUTH_BIN" ]; then
-            echo "XQuartz xauth was not found. Install and start XQuartz, then retry."
-            exit 1
-        fi
-
-        HOST_DISPLAY="${DISPLAY:-:0}"
-        XAUTH_RECORDS="$("$XAUTH_BIN" nlist "$HOST_DISPLAY" 2>/dev/null || true)"
-        if [ -z "$XAUTH_RECORDS" ]; then
-            echo "No X11 authorization cookie was found for $HOST_DISPLAY."
-            echo "Start XQuartz and enable 'Authenticate connections' and"
-            echo "'Allow connections from network clients' in its Security settings."
-            exit 1
-        fi
-
-        AUTH_FILE="$(mktemp "$PROJECT_DIR/.phishreport-xauth.XXXXXX")"
-        chmod 600 "$AUTH_FILE"
-        if ! printf '%s\n' "$XAUTH_RECORDS" \
-            | sed 's/^..../ffff/' \
-            | "$XAUTH_BIN" -f "$AUTH_FILE" nmerge -; then
-            echo "Could not prepare a temporary X11 authorization file."
-            exit 1
-        fi
-        unset XAUTH_RECORDS
+elif [ "$command" = "telegram" ]; then
+    TELEGRAM_ENV="$PROJECT_DIR/.env.telegram"
+    if [ ! -f "$TELEGRAM_ENV" ]; then
+        echo "Create .env.telegram with TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_ID."
+        exit 1
     fi
 
-    if [ -n "${PHISHREPORT_API_URL:-}" ]; then
-        API_URL="$PHISHREPORT_API_URL"
-        if [ "$command" = "gui" ]; then
-            if [ -n "$AUTH_FILE" ]; then
-                docker run --rm -it \
-                    -v "$(docker_path "$AUTH_FILE"):/tmp/.Xauthority:ro" \
-                    -e "XAUTHORITY=/tmp/.Xauthority" \
-                    -e "DISPLAY=$DISPLAY_ADDRESS" \
-                    -e QT_X11_NO_MITSHM=1 \
-                    -e "PHISHREPORT_API_URL=$API_URL" \
-                    "$ACTIVE_GUI_IMAGE"
-            else
-                docker run --rm -it \
-                    -e "DISPLAY=$DISPLAY_ADDRESS" \
-                    -e QT_X11_NO_MITSHM=1 \
-                    -e "PHISHREPORT_API_URL=$API_URL" \
-                    "$ACTIVE_GUI_IMAGE"
-            fi
-        else
-            docker run --rm -it \
-                -p 127.0.0.1:6080:6080 \
-                -e "PHISHREPORT_API_URL=$API_URL" \
-                "$ACTIVE_GUI_IMAGE"
-        fi
-    else
-        MOCK_AUTH_NAME="${ACTIVE_GUI_IMAGE}-auth-$$"
-        MOCK_AUTH_NETWORK="${ACTIVE_GUI_IMAGE}-net-$$"
-        docker network create "$MOCK_AUTH_NETWORK" >/dev/null
-        echo "Starting the local demo authentication API..."
-        docker run --rm -d \
-            --name "$MOCK_AUTH_NAME" \
-            --network "$MOCK_AUTH_NETWORK" \
-            --network-alias phishreport-auth \
-            "$ACTIVE_GUI_IMAGE" \
-            python -m app_gui.mock_auth_api --host 0.0.0.0 --port 8000
-        API_URL="http://phishreport-auth:8000"
-        echo "Demo sign-in: demo@phishreport.test / phishreport-demo"
-        if [ "$command" = "gui" ]; then
-            echo "Displaying the app through X11 at $DISPLAY_ADDRESS"
-            if [ -n "$AUTH_FILE" ]; then
-                docker run --rm -it \
-                    --network "$MOCK_AUTH_NETWORK" \
-                    -v "$(docker_path "$AUTH_FILE"):/tmp/.Xauthority:ro" \
-                    -e "XAUTHORITY=/tmp/.Xauthority" \
-                    -e "DISPLAY=$DISPLAY_ADDRESS" \
-                    -e QT_X11_NO_MITSHM=1 \
-                    -e "PHISHREPORT_API_URL=$API_URL" \
-                    "$ACTIVE_GUI_IMAGE"
-            else
-                docker run --rm -it \
-                    --network "$MOCK_AUTH_NETWORK" \
-                    -e "DISPLAY=$DISPLAY_ADDRESS" \
-                    -e QT_X11_NO_MITSHM=1 \
-                    -e "PHISHREPORT_API_URL=$API_URL" \
-                    "$ACTIVE_GUI_IMAGE"
-            fi
-        else
-            echo "Open http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
-            docker run --rm -it \
-                --network "$MOCK_AUTH_NETWORK" \
-                -p 127.0.0.1:6080:6080 \
-                -e "PHISHREPORT_API_URL=$API_URL" \
-                "$ACTIVE_GUI_IMAGE"
-        fi
+    if ! docker image inspect "$TELEGRAM_IMAGE" >/dev/null 2>&1; then
+        docker build --target telegram -t "$TELEGRAM_IMAGE" "$(docker_path "$PROJECT_DIR")"
     fi
-    if [ "$command" = "gui-web" ] && [ -n "${PHISHREPORT_API_URL:-}" ]; then
-        echo "Open http://localhost:6080/vnc.html?autoconnect=true&resize=scale"
-    fi
+    mkdir -p "$DATA_DIR"
+    docker run --rm \
+        --env-file "$(docker_path "$TELEGRAM_ENV")" \
+        -v "$(docker_path "$DATA_DIR"):/data:ro" \
+        "$TELEGRAM_IMAGE"
 
 elif [ "$command" = "shell" ]; then
     # Open an interactive shell INSIDE the container so you can look around
@@ -267,7 +151,7 @@ elif [ "$command" = "shell" ]; then
     fi
 
 elif [ "$command" = "clean" ]; then
-    for image in "$IMAGE" "$GUI_IMAGE" "$NATIVE_GUI_IMAGE"; do
+    for image in "$IMAGE" "$TELEGRAM_IMAGE"; do
         if docker image inspect "$image" >/dev/null 2>&1; then
             echo "Removing the $image image..."
             docker rmi "$image"
@@ -281,9 +165,8 @@ else
     echo ""
     echo "  build   build the CLI Docker image"
     echo "  run     build if needed and run the CLI (needs .env with GROQ_API_KEY)"
-    echo "  gui     run the GUI in a native X11 window (requires XQuartz/VcXsrv)"
-    echo "  gui-web build and open the GUI in a browser with noVNC"
+    echo "  telegram build if needed and run the bot (needs .env.telegram)"
     echo "  test    run the tests in the container"
     echo "  shell   build if needed and open a shell inside the container"
-    echo "  clean   delete the CLI and GUI images"
+    echo "  clean   delete the CLI and Telegram images"
 fi

@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml/badge.svg)](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml)
 
-PhishReport is a Python application with a CLI and a PySide desktop GUI under development. The app assesses suspicious emails, SMS and chat messages using the Groq API and rule-based scoring, then provides a priority level and recommended response steps. Assessments are saved locally as JSON.
+PhishReport assesses suspicious emails, SMS and chat messages using the Groq API and rule-based scoring. The CLI provides a response priority and recommended actions, and saves assessments locally as JSON. Telegram is the Phase 2 interface. Its first milestone provides a welcome screen and a read-only connection check.
 
 **A LOW-priority result does not guarantee that a message is safe.**
 
@@ -22,13 +22,14 @@ PhishReport is a Python application with a CLI and a PySide desktop GUI under de
 | `app_cli/local_settings.py` | Manage local preferences. |
 | `app_cli/logging_setup.py` | Configure diagnostic logs. |
 | `app_cli/web_upload.py` | Handle browser-based `.eml` uploads. |
-| `app_gui/` | PySide desktop interface, authentication prototype and UI modules. |
+| `app_gui/` | Telegram launcher and I/O manager. |
 | `docs/` | Organized guides, teammate handoffs, and project references. |
-| `requirements.txt` | Shared dependencies for the CLI, GUI, and tests. |
+| `requirements.txt` | Dependencies for Telegram and the offline tests. |
 | `tests/test_logic_manager.py` | Offline logic tests. |
 | `tests/test_ai_core.py` | Offline assessment coordinator tests. |
 | `tests/test_io_core.py` | Offline tests for input routes, email parsing, folder selection and presentation. |
 | `tests/test_application.py` | Application tests and feature showcase. |
+| `tests/test_telegram_gui.py` | Offline Telegram handler and launcher checks. |
 | `tests/fixtures/` | Public sample emails for testing. |
 | `conftest.py` | Shared pytest configuration. |
 
@@ -87,26 +88,20 @@ uv run --python 3.14 --no-project --with-requirements requirements.txt python ap
 
 You can manually check a suspicious message, import or upload an `.eml` email, and view saved reports. New assessments require a valid response from the Groq API.
 
-### Desktop authentication GUI
+### Telegram connection MVP
 
-The Python desktop GUI is being migrated to the primary interface while the CLI remains available during the transition. The target is one desktop process: GUI screens call shared Python services in `app_cli/` directly, with Qt workers for slow operations—not a second assessment server. See the [frontend handoff](docs/handoffs/FRONTEND_HANDOFF.md) and [backend handoff](docs/handoffs/BACKEND_HANDOFF.md) for team ownership and the proposed service contract.
+The bot opens **PhishReport** on `/start` and shows one **Check connection**
+button. The button acknowledges the tap and checks whether the existing
+DataManager can read local history. Missing or empty history passes. If the
+read fails, the bot asks the user to retry. It sends only the check status and
+leaves history untouched.
 
-The [frontend handoff](docs/handoffs/FRONTEND_HANDOFF.md) ([HTML](docs/handoffs/FRONTEND_HANDOFF.html)) describes the planned assessment and saved-report screens. The [backend handoff](docs/handoffs/BACKEND_HANDOFF.md) ([HTML](docs/handoffs/BACKEND_HANDOFF.html)) describes the in-process assessment service contract. The current HTTP authentication demo is separate and does not provide assessment; the GUI service integration is not implemented yet.
+Use the [Telegram run guide](app_gui/README.md) for runtime configuration,
+Docker and local launch commands, and the live test. The guide also shows
+where to register the next handler. Assessment and report browsing still run
+through the CLI.
 
-```bash
-uv run --python 3.14 --no-project --with-requirements requirements.txt python -m app_gui.main
-```
-
-`uv run` creates and reuses an isolated environment in uv's cache from the
-shared root `requirements.txt`; it does not create a `.venv` in the repository.
-
-To display the desktop GUI from Docker in a native host window, install an X
-server (XQuartz on macOS or VcXsrv on Windows) and run `bash run.sh gui` as
-described in the [GUI run guide](docs/guides/GUI_RUN_GUIDE.html). On Windows,
-run the Bash commands from Git Bash or WSL. The command starts a local demo
-authentication API automatically. The browser-based noVNC option remains
-available as `bash run.sh gui-web`. The standard Docker image continues to run
-the CLI.
+### Offline tests
 
 Run the automated tests:
 
@@ -124,8 +119,9 @@ uv run --python 3.14 --no-project --with-requirements requirements.txt pytest te
 ```
 
 The application suite uses fake completion clients and mocked Groq HTTP calls
-to check prompt handling, retries, response validation and CLI behavior offline.
-It runs without a Groq key after test dependencies are installed.
+to check prompt handling, retries, response validation and CLI behavior.
+The Telegram tests use fake updates and temporary data. Neither suite needs
+credentials once dependencies are installed.
 
 ### Assessment policy
 
@@ -189,52 +185,12 @@ remain available between runs. The runner mounts the project's `emails/`
 directory for local `.eml` imports and makes the browser uploader available at
 `http://localhost:8000`.
 
-To try the desktop GUI in a native X11 window with its fixed demo account (no
-Groq key required), install and start the host display server first:
-
-- **macOS:** Install and start [XQuartz](https://www.xquartz.org/), enable
-  **Authenticate connections** and **Allow connections from network clients**
-  in XQuartz Settings → Security, then quit and restart XQuartz. The runner
-  passes a temporary Xauthority cookie to the GUI container. Keep XQuartz
-  access restricted to trusted local clients; do not use a blanket `xhost +`
-  rule.
-- **Windows:** Install and start [VcXsrv](https://sourceforge.net/projects/vcxsrv/)
-  on display `0`. Allow it through Windows Firewall only on private networks.
-  VcXsrv may require disabling access control for the Docker container to
-  connect; use it only on a trusted network and close it after testing.
-
-Then run from Bash (Git Bash/WSL on Windows):
+To build the Telegram target and run the full suite inside it without
+credentials or external network access:
 
 ```bash
-bash run.sh gui
-```
-
-The application opens in an X11 window on the host. Sign in with
-`demo@phishreport.test` / `phishreport-demo`. The runner starts and cleans up
-the development-only demo auth API on a private Docker network. To use another
-auth API, set `PHISHREPORT_API_URL` before starting the command. The default
-display is `host.docker.internal:0`; override it with `PHISHREPORT_DISPLAY` if
-your X server uses a different address.
-If macOS reports that the display cannot be opened, verify XQuartz is
-listening on TCP port 6000 (`nc -vz 127.0.0.1 6000`) and reachable from the
-container as described in [`app_gui/README.md`](app_gui/README.md) and the [documentation index](docs/README.md).
-
-If installing a host X server is not desirable, the browser-streamed mode is
-still available:
-
-```bash
-bash run.sh gui-web
-```
-
-Open the printed local URL in a browser. The noVNC port is bound to
-`127.0.0.1`; do not expose it publicly.
-
-To check the required suites directly in Docker without external network access:
-
-```bash
-docker build -t phishreport .
-docker run --rm --network none phishreport python -m pytest tests/test_logic_manager.py -q
-docker run --rm --network none phishreport python -m pytest tests/test_application.py -q
+docker build --target telegram -t phishreport-telegram .
+docker run --rm --network none phishreport-telegram python -m pytest
 ```
 
 ## Team contributions

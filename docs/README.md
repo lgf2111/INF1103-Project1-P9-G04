@@ -1,23 +1,11 @@
 # Documentation
 
-This folder keeps teammate handoffs, user guides, and project reference
-materials separate.
+- [Telegram run guide](../app_gui/README.md) covers configuration, Docker,
+  and the live connection test.
+- [Frontend handoff](handoffs/FRONTEND_HANDOFF.md) covers Telegram interactions
+  and the assessment flow planned for the next milestone.
+- [Backend handoff](handoffs/BACKEND_HANDOFF.md) covers the proposed
+  in-process assessment service.
+- [Coursework documents](coursework/) contain the assignment and grading PDFs.
 
-## Guides
-
-- [GUI run guide](guides/GUI_RUN_GUIDE.html) — setup, launch modes, demo login,
-  and display troubleshooting.
-
-## Team handoffs
-
-- [Frontend handoff](handoffs/FRONTEND_HANDOFF.md) ([HTML](handoffs/FRONTEND_HANDOFF.html))
-  — authentication scope, GUI behavior, and future screen acceptance criteria.
-- [Backend handoff](handoffs/BACKEND_HANDOFF.md) ([HTML](handoffs/BACKEND_HANDOFF.html))
-  — proposed in-process service boundary and current authentication prototype.
-
-## References
-
-- [Coursework documents](coursework/) — assignment and grading PDFs.
-
-For general project setup and CLI usage, see the [root README](../README.md).
-For GUI-specific setup and module layout, see the [GUI README](../app_gui/README.md).
+For general setup and CLI usage, see the [root README](../README.md).

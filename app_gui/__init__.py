@@ -1,1 +1,1 @@
-"""Desktop authentication GUI for PhishReport."""
+"""Telegram interface for PhishReport."""
