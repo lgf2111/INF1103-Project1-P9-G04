@@ -2,11 +2,15 @@
 
 from collections.abc import Callable
 
-import logging_setup
-
 from .json_storage import JsonReportStorage
 from .storage import ReportStorage
 from .validator import ReportValidator
+
+# The CLI script imports data_core directly. The Telegram launcher uses app_cli.data_core.
+if __package__ == "data_core":
+    import logging_setup
+else:
+    from .. import logging_setup
 
 logger = logging_setup.get_logger("data_manager")
 

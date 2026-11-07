@@ -32,16 +32,11 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install Qt runtime library
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libegl1
-
       - name: Install requirements
         run: uv pip install --system -r requirements.txt
 
-      - name: Run tests
-        run: pytest
+      - name: Run offline tests
+        run: python -m pytest
 
   # Job 2: build the Docker image and run the tests inside it.
   # This proves the container works, which is part of the grade.
@@ -53,8 +48,8 @@ jobs:
       - name: Build the Docker image
         run: docker build -t phishreport .
 
-      - name: Build the GUI-enabled test image
-        run: docker build --target gui-native -t phishreport-tests .
+      - name: Build the Telegram image
+        run: docker build --target telegram -t phishreport-telegram .
 
-      - name: Run the tests inside the container
-        run: docker run --rm --network none phishreport-tests pytest
+      - name: Run offline tests inside the Telegram image
+        run: docker run --rm --network none phishreport-telegram python -m pytest

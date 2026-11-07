@@ -1,1 +1,0 @@
-"""Desktop GUI presentation components."""
