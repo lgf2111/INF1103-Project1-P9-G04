@@ -6,8 +6,8 @@ for its connection check. Keep the CLI usable while extracting the shared
 assessment workflow from its terminal prompts and presentation.
 
 The assessment and report contracts below are proposals for the next
-milestones. See the [Telegram run guide](../../app_gui/README.md) for the
-implemented connection check.
+milestones. See the [Telegram run guide](../../README.md#telegram-connection-mvp)
+for the implemented connection check.
 
 ## In-process assessment service needed by the GUI (proposed)
 

@@ -1,6 +1,6 @@
 # Documentation
 
-- [Telegram run guide](../app_gui/README.md) covers configuration, Docker,
+- [Telegram run guide](../README.md#telegram-connection-mvp) covers configuration, Docker,
   and the live connection test.
 - [Frontend handoff](handoffs/FRONTEND_HANDOFF.md) covers Telegram interactions
   and the assessment flow planned for the next milestone.

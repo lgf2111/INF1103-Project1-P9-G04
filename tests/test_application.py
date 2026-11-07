@@ -4689,8 +4689,9 @@ def test_docker_helper_helper_has_unix_line_endings():
 @pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
 def test_docker_helper_telegram_mounts_history_read_only(docker_helper_project):
     folder, _, _ = docker_helper_project
-    config = folder / ".env.telegram"
-    config.write_text("TELEGRAM_BOT_TOKEN=unused-offline\n", encoding="utf-8")
+    config = folder / ".env"
+    with config.open("a", encoding="utf-8") as stream:
+        stream.write("TELEGRAM_BOT_TOKEN=unused-offline\nTELEGRAM_ALLOWED_CHAT_ID=12345\n")
 
     result, calls = docker_helper_launch(
         docker_helper_project, command="telegram", DOCKER_IMAGE_MISSING="1"

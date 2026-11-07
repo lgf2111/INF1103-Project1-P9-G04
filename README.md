@@ -58,6 +58,9 @@ Docker environment. Install uv once using its
 then run commands from the repository root. No project virtual environment
 needs to be created or activated.
 
+If you already have a `.env` file, add the settings you need to it. Otherwise,
+copy the example file.
+
 **Windows PowerShell**
 
 ```powershell
@@ -96,10 +99,68 @@ DataManager can read local history. Missing or empty history passes. If the
 read fails, the bot asks the user to retry. It sends only the check status and
 leaves history untouched.
 
-Use the [Telegram run guide](app_gui/README.md) for runtime configuration,
-Docker and local launch commands, and the live test. The guide also shows
-where to register the next handler. Assessment and report browsing still run
-through the CLI.
+#### Configure and run the bot
+
+Create a bot with [BotFather](https://t.me/BotFather). Use its username to open
+the private chat you want to authorize and send `/start`. Before starting the
+container, use the [Telegram Bot API](https://core.telegram.org/bots/api#getupdates)
+to get `message.chat.id` from that update and confirm `message.chat.type` is
+`private`.
+
+Add these settings to the repo root's `.env` file. Git ignores `.env`. If you
+previously used `.env.telegram`, move the two Telegram settings into `.env`.
+
+```dotenv
+TELEGRAM_BOT_TOKEN=<token from BotFather>
+TELEGRAM_ALLOWED_CHAT_ID=<positive private chat ID>
+```
+
+Start Docker and run this from Bash or Git Bash:
+
+```bash
+bash run.sh telegram
+```
+
+The helper builds the `telegram` target if needed and mounts
+`.phishreport-data/` read-only at `/data`. The bot checks `/data/reports.json`.
+It uses outbound polling with one running instance per token.
+
+For a first run with empty history, the direct commands also work in PowerShell:
+
+```text
+docker build --target telegram -t phishreport-telegram .
+docker run --rm --env-file .env phishreport-telegram
+```
+
+To check an existing `.phishreport-data/` directory with the direct command,
+add `--mount "type=bind,source=${PWD}/.phishreport-data,target=/data,readonly"`
+before the image name. Rebuild the image after changing the code.
+
+Outside Docker, set both Telegram settings in the current shell environment
+and launch from the repository root:
+
+```bash
+uv run --python 3.14 --no-project --with-requirements requirements.txt python -m app_gui.main
+```
+
+The local launcher reads `reports.json` from the working directory. Set
+`PHISHREPORT_REPORTS_PATH` to select a different file.
+
+#### Verify the live connection
+
+1. In the configured private chat, send `/start` and look for the welcome
+   with one **Check connection** button.
+2. Tap the button. Telegram should clear the tap indicator and the bot should
+   reply **Connection check passed.** Missing or empty history should pass.
+3. If a second Telegram account is available, send `/start` from its private
+   chat with the same bot and confirm it receives no menu.
+
+#### Add the next handler
+
+Add an async method to `TelegramIOManager` in `app_gui/telegram_io_manager.py`.
+Use the same private-chat check before accessing app data. Register the method
+in `app_gui/main.py` and test it with fake updates in `tests/test_telegram_gui.py`.
+Assessment and report browsing still run through the CLI.
 
 ### Offline tests
 

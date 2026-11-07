@@ -5,7 +5,7 @@
 #   bash run.sh build     # build the CLI Docker image
 #   bash run.sh run       # run the CLI (loads your key from .env)
 #   bash run.sh test      # run the tests inside the container
-#   bash run.sh telegram # run the Telegram bot (loads .env.telegram)
+#   bash run.sh telegram # run the Telegram bot (loads .env)
 #   bash run.sh shell     # open a shell inside the container
 #   bash run.sh clean     # remove the Docker images
 #
@@ -123,9 +123,9 @@ elif [ "$command" = "test" ]; then
     docker run --rm --network none "$IMAGE" pytest
 
 elif [ "$command" = "telegram" ]; then
-    TELEGRAM_ENV="$PROJECT_DIR/.env.telegram"
+    TELEGRAM_ENV="$PROJECT_DIR/.env"
     if [ ! -f "$TELEGRAM_ENV" ]; then
-        echo "Create .env.telegram with TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_ID."
+        echo "Copy .env.example to .env and set TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_ID."
         exit 1
     fi
 
@@ -165,7 +165,7 @@ else
     echo ""
     echo "  build   build the CLI Docker image"
     echo "  run     build if needed and run the CLI (needs .env with GROQ_API_KEY)"
-    echo "  telegram build if needed and run the bot (needs .env.telegram)"
+    echo "  telegram build if needed and run the bot (needs Telegram settings in .env)"
     echo "  test    run the tests in the container"
     echo "  shell   build if needed and open a shell inside the container"
     echo "  clean   delete the CLI and Telegram images"

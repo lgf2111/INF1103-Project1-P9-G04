@@ -3,7 +3,7 @@
 The connection milestone opens a PhishReport welcome on `/start` and
 provides one **Check connection** button. The authorized private chat gets
 a read-only history check and a short status message. Use the
-[Telegram run guide](../../app_gui/README.md) to run it or add a handler.
+[Telegram run guide](../../README.md#telegram-connection-mvp) to run it or add a handler.
 
 ## Next milestone
 
