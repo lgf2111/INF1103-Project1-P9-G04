@@ -9,7 +9,6 @@ from unittest.mock import Mock
 
 import pytest
 
-from phishreport import data_manager
 from phishreport.ai import AIManager
 from phishreport.cli import main
 from phishreport.data import DataManager, JsonReportStorage, json_storage
@@ -25,6 +24,11 @@ def data_manager_storage(monkeypatch, tmp_path):
     """Keep all report files in a temporary directory."""
     monkeypatch.chdir(tmp_path)
     return tmp_path / "reports.json"
+
+
+def data_manager_for(path):
+    """Return a DataManager backed by the given JSON file."""
+    return DataManager(storage=JsonReportStorage(path))
 
 
 def data_manager_report():
@@ -46,10 +50,10 @@ def test_main_data_manager_instance_shares_adapter_reports(cli, data_manager_sto
     assert isinstance(cli.data_manager, DataManager)
     first = data_manager_report()
     second = {**first, "message": "  Second original message\n"}
-    data_manager.save(first)
+    data_manager_for(data_manager_storage).save(first)
     assert cli.app.load_reports() == [first]
     cli.data_manager.save(second)
-    assert data_manager.load(strict=True) == [first, second]
+    assert data_manager_for(data_manager_storage).load(strict=True) == [first, second]
 
 
 @pytest.mark.parametrize("state", ["missing", "empty", "populated"])
@@ -101,8 +105,8 @@ def test_data_manager_mixed_history(data_manager_storage):
     data_manager_storage.write_text(json.dumps(previous), encoding="utf-8")
     original = deepcopy(previous)
     record = data_manager_report()
-    data_manager.save(record)
-    assert data_manager.load(strict=True) == original + [record]
+    data_manager_for(data_manager_storage).save(record)
+    assert data_manager_for(data_manager_storage).load(strict=True) == original + [record]
     assert json.loads(data_manager_storage.read_text(encoding="utf-8")) == original + [record]
 
 
@@ -128,17 +132,17 @@ def test_data_manager_invalid_result(data_manager_storage, field, value):
     record["result"][field] = value
     data_manager_storage.write_text("[]", encoding="utf-8")
     with pytest.raises(ValueError):
-        data_manager.save(record)
+        data_manager_for(data_manager_storage).save(record)
     assert data_manager_storage.read_text() == "[]"
 
     # The same invalid value must be rejected when it already exists on disk.
     data_manager_storage.write_text(json.dumps([record]), encoding="utf-8")
     before = data_manager_storage.read_bytes()
-    assert data_manager.load() == []
+    assert data_manager_for(data_manager_storage).load() == []
     with pytest.raises(ValueError):
-        data_manager.load(strict=True)
+        data_manager_for(data_manager_storage).load(strict=True)
     with pytest.raises(ValueError):
-        data_manager.save(data_manager_report())
+        data_manager_for(data_manager_storage).save(data_manager_report())
     assert data_manager_storage.read_bytes() == before
 
 
@@ -148,7 +152,7 @@ def test_data_manager_missing_field(data_manager_storage, field):
     record = data_manager_report()
     del record[field]
     with pytest.raises(ValueError):
-        data_manager.save(record)
+        data_manager_for(data_manager_storage).save(record)
     assert not data_manager_storage.exists()
 
 
@@ -173,7 +177,9 @@ def test_data_manager_query(data_manager_storage):
     before = data_manager_storage.read_bytes()
 
     # Select a noncontiguous subset so returning all records cannot pass.
-    found = data_manager.query(lambda record: record["channel"] == "email")
+    found = data_manager_for(data_manager_storage).query(
+        lambda record: record["channel"] == "email"
+    )
     assert found == [records[0], records[2]]
     assert data_manager_storage.read_bytes() == before
 
@@ -213,10 +219,10 @@ def test_data_manager_roundtrip(data_manager_storage):
     data_manager_storage.write_text(json.dumps([legacy]))
     record = data_manager_report()
     before = deepcopy(record)
-    data_manager.save(record)
-    assert data_manager.load() == [legacy, record]
+    data_manager_for(data_manager_storage).save(record)
+    assert data_manager_for(data_manager_storage).load() == [legacy, record]
     assert record == before
-    assert "clicked" not in data_manager.load()[0]
+    assert "clicked" not in data_manager_for(data_manager_storage).load()[0]
 
 
 @pytest.mark.parametrize(
@@ -226,14 +232,14 @@ def test_data_manager_corrupt_history_is_preserved(data_manager_storage, caplog,
     """Cover default recovery, strict refusal, privacy and unchanged bytes together."""
     data_manager_storage.write_text(content)
     with caplog.at_level(logging.WARNING, logger="data_manager"):
-        assert data_manager.load() == []
+        assert data_manager_for(data_manager_storage).load() == []
     messages = [r.getMessage() for r in caplog.records if r.name == "data_manager"]
     assert len(messages) == 1 and "Could not read local report history" in messages[0]
     assert "PRIVATE" not in messages[0]
     with pytest.raises(ValueError):
-        data_manager.load(strict=True)
+        data_manager_for(data_manager_storage).load(strict=True)
     with pytest.raises(ValueError):
-        data_manager.save(data_manager_report())
+        data_manager_for(data_manager_storage).save(data_manager_report())
     assert data_manager_storage.read_text() == content
     assert capsys.readouterr().out == ""
 
@@ -264,7 +270,7 @@ def test_data_manager_invalid_report(data_manager_storage, key, value):
     record = data_manager_report()
     record[key] = value
     with pytest.raises(ValueError):
-        data_manager.save(record)
+        data_manager_for(data_manager_storage).save(record)
     assert data_manager_storage.read_text() == "[]"
 
 
@@ -275,7 +281,7 @@ def test_data_manager_failed_atomic_replace_preserves_old_history(
     before = data_manager_storage.read_bytes()
     monkeypatch.setattr(json_storage.os, "replace", Mock(side_effect=OSError("write failed")))
     with pytest.raises(OSError):
-        data_manager.save(data_manager_report())
+        data_manager_for(data_manager_storage).save(data_manager_report())
     assert data_manager_storage.read_bytes() == before
     assert list(data_manager_storage.parent.glob("*.tmp")) == []
 
@@ -322,7 +328,7 @@ def test_data_manager_history_recovery(
 def test_data_manager_io_failures_preserve_history(data_manager_storage, monkeypatch, failure):
     data_manager_storage.write_text('[{"message":"Existing"}]')
     before = data_manager_storage.read_bytes()
-    subject = data_manager
+    subject = data_manager_for(data_manager_storage)
     if failure == "serialization":
         monkeypatch.setattr(json_storage.json, "dump", Mock(side_effect=ValueError("Invalid JSON")))
     elif failure == "flush":
@@ -342,8 +348,8 @@ def test_data_manager_io_failures_preserve_history(data_manager_storage, monkeyp
 def test_data_manager_saved_result_display(cli, data_manager_storage, capsys):
     """Display persisted v2 reasons and guidance without the old input fields."""
     record = data_manager_report()
-    data_manager.save(record)
-    cli.io_manager.display_record(data_manager.load()[0])
+    data_manager_for(data_manager_storage).save(record)
+    cli.io_manager.display_record(data_manager_for(data_manager_storage).load()[0])
     output = capsys.readouterr().out
     assert "Rule-based score: 90" in output
     assert "Password disclosed." in output
@@ -412,12 +418,12 @@ def test_data_manager_legacy_field_corruption_recovers_without_replacing_file(
     before = data_manager_storage.read_bytes()
 
     with caplog.at_level(logging.WARNING, logger="data_manager"):
-        assert data_manager.load() == []
+        assert data_manager_for(data_manager_storage).load() == []
     assert "Could not read local report history" in caplog.text
     with pytest.raises(ValueError):
-        data_manager.load(strict=True)
+        data_manager_for(data_manager_storage).load(strict=True)
     with pytest.raises(ValueError):
-        data_manager.save(data_manager_report())
+        data_manager_for(data_manager_storage).save(data_manager_report())
 
     # Startup, explicit history viewing and normal exit must all remain usable.
     monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
@@ -450,7 +456,7 @@ def test_data_manager_supported_partial_legacy_fields_remain_readable(
     """Preserve accepted older shapes without inventing absent findings or actions."""
     data_manager_storage.write_text(json.dumps([legacy]), encoding="utf-8")
     before = data_manager_storage.read_bytes()
-    records = data_manager.load(strict=True)
+    records = data_manager_for(data_manager_storage).load(strict=True)
     cli.io_manager.display_list(records)
     cli.io_manager.display_record(records[0])
     assert records == [legacy]

@@ -7,16 +7,23 @@ from unittest.mock import Mock
 
 import pytest
 
-from phishreport import ai_manager, data_manager, io_manager, local_settings
-from phishreport.ai import groq_client
+from phishreport import local_settings
+from phishreport.ai import AIResponseValidator, groq_client
 from phishreport.cli import main, web_upload
+from phishreport.data import DataManager
+from phishreport.io import IOManager
+from phishreport.io.terminal import ConsoleTerminal
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
+io_manager = IOManager(ConsoleTerminal())
 
 
 # ============================================================================
 # Submission Boundaries
 # ============================================================================
+validator = AIResponseValidator()
+
+
 def submission_boundaries_deep_json():
     depth = sys.getrecursionlimit() * 3
     return "[" * depth + "0" + "]" * depth
@@ -24,8 +31,8 @@ def submission_boundaries_deep_json():
 
 def test_submission_boundaries_deep_ai_content_is_a_validation_failure():
     with pytest.raises(ValueError):
-        ai_manager.validate_response(
-            ai_manager.parse_response('{"details":' + submission_boundaries_deep_json() + "}")
+        validator.validate_response(
+            validator.parse_response('{"details":' + submission_boundaries_deep_json() + "}")
         )
 
 
@@ -65,9 +72,9 @@ def test_submission_boundaries_invalid_history_is_preserved_and_cannot_be_append
     path = tmp_path / "reports.json"
     path.write_text(payload, encoding="utf-8")
     before = path.read_bytes()
-    assert data_manager.load() == []
+    assert DataManager().load() == []
     with pytest.raises(ValueError):
-        data_manager.load(strict=True)
+        DataManager().load(strict=True)
     report = {
         "schema_version": 2,
         "channel": "email",
@@ -75,7 +82,7 @@ def test_submission_boundaries_invalid_history_is_preserved_and_cannot_be_append
         "result": {"score": 10, "priority": "LOW", "reasons": [], "checklist": []},
     }
     with pytest.raises(ValueError):
-        data_manager.save(report)
+        DataManager().save(report)
     assert path.read_bytes() == before
 
 
@@ -132,7 +139,7 @@ def test_submission_boundaries_folder_can_be_used_when_preference_cannot_be_save
     path = tmp_path / ".phishreport_config.json"
     path.write_text("{broken", encoding="utf-8")
     monkeypatch.setattr("builtins.input", lambda _: str(tmp_path))
-    assert io_manager.get_eml_folder() == str(tmp_path)
+    assert io_manager.folder_picker.get_eml_folder() == str(tmp_path)
     text = capsys.readouterr().out
     assert "Could not save" in text
     assert "Saved. You won't" not in text

@@ -6,9 +6,10 @@ import re
 from email import policy
 from email.parser import BytesHeaderParser
 
-from phishreport import io_manager
+from phishreport.io.eml import MAX_EML_BYTES
+from phishreport.io.manager import UPLOAD_TYPE_MESSAGE
 
-MAX_UPLOAD_BYTES = io_manager.MAX_EML_BYTES
+MAX_UPLOAD_BYTES = MAX_EML_BYTES
 SIZE_ERROR = "Email file exceeds the 2 MiB size limit."
 MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 64 * 1024
 
@@ -50,7 +51,7 @@ _PAGE = (
     "<div class='card' id='card'>"
     "<div class='icon'>&#128228;</div>"
     "<h1>Upload an email (.eml file)</h1>"
-    f"<p>{io_manager.UPLOAD_TYPE_MESSAGE}</p>"
+    f"<p>{UPLOAD_TYPE_MESSAGE}</p>"
     "<p>Click anywhere to choose an email (maximum 2 MiB).</p>"
     "<div class='pulse'>Waiting for your file&hellip;</div>"
     "</div>"
@@ -123,7 +124,7 @@ def parse_upload(content_type, body):
         raise ValueError("Unsupported upload encoding.")
     filename = part.get_filename()
     if not filename or not filename.lower().endswith(".eml"):
-        raise ValueError(io_manager.UPLOAD_TYPE_MESSAGE)
+        raise ValueError(UPLOAD_TYPE_MESSAGE)
     if not content:
         raise ValueError("Email file is empty.")
     if len(content) > MAX_UPLOAD_BYTES:
