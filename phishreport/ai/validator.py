@@ -4,8 +4,8 @@ import ipaddress
 import json
 import re
 
-from ._diagnostics import failure
-from ._json import load_strict_json
+from ._diagnostics import FailureDiagnostics
+from ._json import StrictJsonParser
 
 FINDING_KEYS = ("credential_request", "suspicious", "insufficient_context")
 
@@ -19,6 +19,14 @@ DETAIL_KEYS = ("emails", "phone_numbers", "ip_addresses")
 class AIResponseValidator:
     """Parse findings and verify that returned details occur in the source text."""
 
+    def __init__(
+        self,
+        diagnostics: FailureDiagnostics | None = None,
+        json_parser: StrictJsonParser | None = None,
+    ) -> None:
+        self._diagnostics = FailureDiagnostics() if diagnostics is None else diagnostics
+        self._json_parser = StrictJsonParser() if json_parser is None else json_parser
+
     def parse_response(self, raw: str) -> dict:
         """Parse JSON text, optionally enclosed in a complete plain or json fence.
 
@@ -26,25 +34,31 @@ class AIResponseValidator:
         non-text input, unsupported wrappers, invalid JSON or a non-object root.
         """
         if not isinstance(raw, str):
-            raise failure("parse_response", "AI reply must be text.", ValueError)
+            raise self._diagnostics.failure("parse_response", "AI reply must be text.", ValueError)
         text = raw.strip()
         if text.startswith("```"):
             lines = text.splitlines()
             if len(lines) < 3 or lines[0] not in ("```", "```json") or lines[-1] != "```":
-                raise failure("parse_response", "AI reply has an invalid code fence.", ValueError)
+                raise self._diagnostics.failure(
+                    "parse_response", "AI reply has an invalid code fence.", ValueError
+                )
             text = "\n".join(lines[1:-1])
         try:
-            data = load_strict_json(text)
+            data = self._json_parser.parse(text)
         except json.JSONDecodeError:
-            raise failure("parse_response", "AI reply is not valid JSON.", ValueError) from None
+            raise self._diagnostics.failure(
+                "parse_response", "AI reply is not valid JSON.", ValueError
+            ) from None
         except (ValueError, RecursionError):
-            raise failure(
+            raise self._diagnostics.failure(
                 "parse_response",
                 "AI reply contains invalid or excessively nested JSON.",
                 ValueError,
             ) from None
         if not isinstance(data, dict):
-            raise failure("parse_response", "AI reply must be a JSON object.", ValueError)
+            raise self._diagnostics.failure(
+                "parse_response", "AI reply must be a JSON object.", ValueError
+            )
         return data
 
     def validate_response(self, data: dict) -> dict:
@@ -55,16 +69,18 @@ class AIResponseValidator:
         The logic layer interprets the findings; validation does not decide priority.
         """
         if not isinstance(data, dict):
-            raise failure("validate_response", "AI reply must be a JSON object.", ValueError)
+            raise self._diagnostics.failure(
+                "validate_response", "AI reply must be a JSON object.", ValueError
+            )
         if set(data) != set(REQUIRED_KEYS):
-            raise failure(
+            raise self._diagnostics.failure(
                 "validate_response",
                 "AI reply must contain exactly: " + ", ".join(REQUIRED_KEYS),
                 ValueError,
             )
         for key in FINDING_KEYS:
             if not isinstance(data[key], bool):
-                raise failure(
+                raise self._diagnostics.failure(
                     "validate_response",
                     "AI reply key is not true/false: " + key,
                     ValueError,
@@ -72,7 +88,7 @@ class AIResponseValidator:
         try:
             self._validate_detail_schema(data["details"])
         except ValueError:
-            raise failure(
+            raise self._diagnostics.failure(
                 "validate_response",
                 "AI reply has invalid detail fields.",
                 ValueError,
@@ -88,7 +104,7 @@ class AIResponseValidator:
         try:
             return self._validate_source_details(details, message)
         except ValueError:
-            raise failure(
+            raise self._diagnostics.failure(
                 "validate_details",
                 "AI details have invalid fields or source occurrences.",
                 ValueError,
