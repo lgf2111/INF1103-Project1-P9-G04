@@ -24,7 +24,7 @@ class ScriptedTerminal:
 def test_eml_reader_decodes_fixture_from_bytes_and_path():
     from phishreport.io import EmlReader
 
-    path = Path(__file__).resolve().parent / "fixtures" / "sample-1.eml"
+    path = Path(__file__).resolve().parents[1] / "fixtures" / "sample-1.eml"
     reader = EmlReader()
 
     sender, message = reader.read_bytes(path.read_bytes())

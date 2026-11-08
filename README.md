@@ -25,11 +25,9 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 | `phishreport/logging_setup.py` | Configure diagnostic logs. |
 | `docs/` | Organized guides, teammate handoffs, and project references. |
 | `requirements.txt` | Dependencies for Telegram and the offline tests. |
-| `tests/test_logic_manager.py` | Offline logic tests. |
-| `tests/test_ai_core.py` | Offline assessment coordinator tests. |
-| `tests/test_io_core.py` | Offline tests for input routes, email parsing, folder selection and presentation. |
-| `tests/test_application.py` | Application tests and feature showcase. |
-| `tests/test_telegram_gui.py` | Offline Telegram handler and launcher checks. |
+| `tests/core/` | Offline tests for the shared core: AI, logic, data, I/O and the four manager modules. |
+| `tests/cli/` | Offline tests for the terminal interface, settings, uploads, the Docker helper and the feature showcase. |
+| `tests/bot/` | Offline Telegram handler and launcher checks. |
 | `tests/fixtures/` | Public sample emails for testing. |
 | `conftest.py` | Shared pytest configuration. |
 
@@ -161,7 +159,7 @@ The local launcher reads `reports.json` from the working directory. Set
 
 Add an async method to `TelegramIOManager` in `phishreport/bot/handlers.py`.
 Use the same private-chat check before accessing app data. Register the method
-in `phishreport/bot/main.py` and test it with fake updates in `tests/test_telegram_gui.py`.
+in `phishreport/bot/main.py` and test it with fake updates in `tests/bot/test_handlers.py`.
 Assessment and report browsing still run through the CLI.
 
 ### Offline tests
@@ -175,10 +173,10 @@ uv run --python 3.14 --no-project --with-requirements requirements.txt pytest
 Run a specific test suite or the feature showcase:
 
 ```bash
-uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_logic_manager.py -q
-uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_io_core.py -q
-uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_application.py -q
-uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/test_application.py -m demo -v
+uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/core/test_logic_manager.py -q
+uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/core/test_io_core.py -q
+uv run --python 3.14 --no-project --with-requirements requirements.txt pytest tests/cli -q
+uv run --python 3.14 --no-project --with-requirements requirements.txt pytest -m demo -v
 ```
 
 The application suite uses fake completion clients and mocked Groq HTTP calls
