@@ -12,15 +12,15 @@ CHECK_CONNECTION = "check_connection"
 
 
 class TelegramIOManager:
-    def __init__(self, data_manager: DataManager, allowed_chat_id: int) -> None:
+    def __init__(self, data_manager: DataManager, allowed_chat_id: int | None = None) -> None:
         self._data_manager = data_manager
         self._allowed_chat_id = allowed_chat_id
 
     def _is_allowed(self, update: Update) -> bool:
         chat = update.effective_chat
-        return (
-            chat is not None and chat.id == self._allowed_chat_id and chat.type == ChatType.PRIVATE
-        )
+        if chat is None or chat.type != ChatType.PRIVATE:
+            return False
+        return self._allowed_chat_id is None or chat.id == self._allowed_chat_id
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message

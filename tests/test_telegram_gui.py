@@ -109,6 +109,31 @@ def test_unauthorized_updates_cannot_get_a_menu_or_read_history(chat_settings):
     assert data_manager.mock_calls == []
 
 
+def test_without_allowed_chat_any_private_chat_is_served_but_not_groups():
+    data_manager = Mock(spec=DataManager)
+    manager = TelegramIOManager(data_manager)
+
+    private = fake_update(chat_id=67890)
+    asyncio.run(manager.start(private, None))
+    private.effective_message.reply_text.assert_awaited_once()
+
+    group = fake_update(chat_id=67890, chat_type="group")
+    asyncio.run(manager.start(group, None))
+    group.effective_message.reply_text.assert_not_called()
+
+
+def test_launcher_accepts_blank_allowed_chat_and_rejects_bad_values(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:offline-token")
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_ID", "")
+    with patch.object(Application, "run_polling", autospec=True) as polling:
+        assert main() == 0
+    polling.assert_called_once()
+
+    for bad in ("abc", "-5", "0"):
+        monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_ID", bad)
+        assert main() == 1
+
+
 def test_launcher_registers_welcome_and_button_handlers_for_polling(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:offline-token")
     monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_ID", str(ALLOWED_CHAT_ID))
