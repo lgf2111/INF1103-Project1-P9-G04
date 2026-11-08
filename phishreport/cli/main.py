@@ -5,6 +5,8 @@
 import os
 
 from phishreport.ai import AIManager
+from phishreport.ai.errors import AIErrorTranslator
+from phishreport.assessment import AssessmentService
 from phishreport.data import DataManager
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
@@ -12,27 +14,6 @@ from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
 
 logger = AppLogging.get_logger(__name__)
-
-
-class AIErrorTranslator:
-    """Turn an AI RuntimeError into a short, actionable message for the user.
-
-    Keeps the word 'failed' so the reason is clear, and adds guidance based on
-    the kind of failure (offline, service error, rate limit).
-    """
-
-    def translate(self, error) -> str:
-        text = str(error).lower()
-        if "timed out" in text or "could not complete" in text:
-            return (
-                "The check failed: could not reach the AI service. "
-                "Check your internet connection and try again."
-            )
-        if "http 5" in text:
-            return "The check failed: the AI service is temporarily unavailable. Try again shortly."
-        if "http 429" in text:
-            return "The check failed: the AI service is busy (rate limited). Try again shortly."
-        return "The check failed: the AI could not complete the assessment. Please try again."
 
 
 class EnvLoader:
@@ -87,6 +68,11 @@ class PhishReportApp:
         self._env_loader = env_loader or EnvLoader()
         self._error_translator = error_translator or AIErrorTranslator()
 
+    @property
+    def _assessment(self):
+        """Build the shared assessment workflow from the app's current managers."""
+        return AssessmentService(self._ai_manager, self._logic_manager)
+
     def check_message(self, record=None):
         """Validate one combined AI response before assessment, saving or display.
 
@@ -98,11 +84,7 @@ class PhishReportApp:
             record = self._io_manager.collect_input()
 
         try:
-            findings = self._ai_manager.assess(record)
-
-            # Enrich a new dictionary only after every AI check passes.
-            assessed_record = {**record, "ai": findings}
-            result = self._logic_manager.evaluate(assessed_record)
+            result = self._assessment.assess(record)
 
         # RuntimeError: the AI could not complete after its retries (service down,
         # offline, rate limited). Show an actionable message; the AI is never bypassed.
@@ -118,12 +100,7 @@ class PhishReportApp:
             return
 
         # Retain the original message and assessment in the agreed version-2 format.
-        report = {
-            "schema_version": 2,
-            "channel": record["channel"],
-            "message": record["message"],
-            "result": result,
-        }
+        report = self._assessment.build_report(record, result)
         try:
             self._data_manager.save(report)
         except (OSError, ValueError):
