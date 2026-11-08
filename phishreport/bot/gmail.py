@@ -134,11 +134,15 @@ class GmailMailbox:
         finally:
             self._close(connection)
 
-    def unread_since(self, last_uid: int, limit: int = 10) -> list[tuple[int, bytes]]:
-        """Return up to `limit` unread (uid, raw message) pairs newer than last_uid."""
+    def new_since(self, last_uid: int, limit: int = 10) -> list[tuple[int, bytes]]:
+        """Return up to `limit` (uid, raw message) pairs newer than last_uid.
+
+        Read state is ignored: opening or moving a message in Gmail marks it read, and
+        the stored UID already prevents checking the same message twice.
+        """
         connection = self._connect()
         try:
-            status, data = connection.uid("SEARCH", "UNSEEN", "UID", f"{last_uid + 1}:*")
+            status, data = connection.uid("SEARCH", "UID", f"{last_uid + 1}:*")
             if status != "OK":
                 return []
             # A "n:*" range always includes the newest message, even if it is older.

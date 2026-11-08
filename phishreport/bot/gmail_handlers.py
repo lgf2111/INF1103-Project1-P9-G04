@@ -21,7 +21,7 @@ LINK_HELP = (
     "- School or work accounts often have app passwords blocked by the admin. "
     "Use a personal Gmail instead.\n"
     '- Try searching for "app passwords" in your Google Account settings.\n\n'
-    "I delete your message once it is read and only look at unread mail that "
+    "I delete your message once it is read and only look at mail that "
     "arrives after linking. Use /unlinkgmail to stop."
 )
 

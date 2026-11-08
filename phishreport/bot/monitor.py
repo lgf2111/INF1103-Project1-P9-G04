@@ -44,6 +44,11 @@ class EmailMonitor:
         self._builder = ChatRecordBuilder()
         self._errors = AIErrorTranslator()
 
+    @staticmethod
+    def _say(text: str) -> None:
+        """Show progress in the terminal. Never include email content or secrets."""
+        print(f"[email] {text}", flush=True)
+
     async def run(self) -> None:
         """Poll forever; one failing cycle never stops the loop."""
         while True:
@@ -51,6 +56,7 @@ class EmailMonitor:
                 await self.poll_once()
             except Exception:
                 AppLogging.log_failure(logger, "Email polling cycle failed")
+            self._say("Checking the inbox failed; will retry.")
             await asyncio.sleep(self._interval)
 
     async def poll_once(self) -> None:
@@ -60,9 +66,10 @@ class EmailMonitor:
     async def _poll_account(self, account: LinkedAccount) -> None:
         mailbox = self._mailbox_factory(account.address, account.password)
         try:
-            emails = await asyncio.to_thread(mailbox.unread_since, account.last_uid)
+            emails = await asyncio.to_thread(mailbox.new_since, account.last_uid)
         except MailboxError as error:
             AppLogging.log_failure(logger, "Could not read a linked inbox")
+            self._say(f"{error} {'Unlinked.' if not error.retryable else 'Will retry.'}")
             if not error.retryable:
                 await asyncio.to_thread(self._store.remove, account.chat_id)
                 await self._send(
@@ -71,6 +78,8 @@ class EmailMonitor:
                     "Send /linkgmail to link it again.",
                 )
             return
+        if emails:
+            self._say(f"{len(emails)} new email(s) in {account.address}; checking.")
         for uid, raw in emails:
             if not await self._handle(account, raw):
                 return  # Temporary AI failure: keep this email and retry next cycle.
@@ -83,16 +92,18 @@ class EmailMonitor:
             sender, text = self._reader.read_bytes(raw)
         except ValueError:
             AppLogging.log_failure(logger, "Skipped an unreadable email")
+            self._say("Skipped an email that could not be read.")
             return True
         record = {**self._builder.build(text, sender), "channel": "email"}
         try:
             result = await asyncio.to_thread(self._assessment.assess, record)
         except RuntimeError as error:
             AppLogging.log_failure(logger, "Email assessment failed after AI retries")
-            logger.info("Will retry: %s", self._errors.translate(error))
+            self._say(f"AI check failed, will retry: {self._errors.translate(error)}")
             return False
         except ValueError:
             AppLogging.log_failure(logger, "Skipped an email the AI could not assess")
+            self._say("Skipped an email the AI could not assess.")
             return True
         try:
             async with self._save_lock:
@@ -101,7 +112,11 @@ class EmailMonitor:
                 )
         except (OSError, ValueError):
             AppLogging.log_failure(logger, "Could not save an email report")
-        if result["priority"] in ALERT_PRIORITIES:
+        alert = result["priority"] in ALERT_PRIORITIES
+        self._say(
+            f"Checked an email: priority {result['priority']}" + (", alert sent." if alert else ".")
+        )
+        if alert:
             await self._send(
                 account.chat_id,
                 f"Possible phishing email from {sender or 'an unknown sender'}\n\n"

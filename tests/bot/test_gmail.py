@@ -26,7 +26,7 @@ class FakeMailbox:
             raise self.error
         return self.newest
 
-    def unread_since(self, last_uid):
+    def new_since(self, last_uid):
         self.asked.append(last_uid)
         if self.error:
             raise self.error
