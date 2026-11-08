@@ -6,7 +6,7 @@ import re
 from email import policy
 from email.parser import BytesHeaderParser
 
-import io_manager
+from phishreport import io_manager
 
 MAX_UPLOAD_BYTES = io_manager.MAX_EML_BYTES
 SIZE_ERROR = "Email file exceeds the 2 MiB size limit."

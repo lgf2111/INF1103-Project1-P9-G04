@@ -10,19 +10,19 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 
 | Path | Purpose |
 | --- | --- |
-| `app_cli/io_manager.py` | Compatibility functions for the I/O manager. |
-| `app_cli/io_core/` | Console adapter, input coordinator, email parsing, folder selection and report presentation. |
-| `app_cli/ai_manager.py` | Compatibility functions for AI prompting, requests and validation. |
-| `app_cli/ai_core/` | AI assessment coordinator, prompt builder, completion client and response validator. |
-| `app_cli/logic_manager.py` | Apply assessment rules, scoring and routing. |
-| `app_cli/data_manager.py` | Save, load and query JSON reports. |
-| `app_cli/main.py` | Compose the four managers and run the CLI through `PhishReportApp`. |
-| `app_cli/ai_prompts.py` | Define the AI assessment instructions. |
-| `app_cli/email_html.py` | Convert HTML email content to safe text. |
-| `app_cli/local_settings.py` | Manage local preferences. |
-| `app_cli/logging_setup.py` | Configure diagnostic logs. |
-| `app_cli/web_upload.py` | Handle browser-based `.eml` uploads. |
-| `app_gui/` | Telegram launcher and I/O manager. |
+| `phishreport/io_manager.py` | Compatibility functions for the I/O manager. |
+| `phishreport/io/` | Console adapter, input coordinator, email parsing, folder selection and report presentation. |
+| `phishreport/ai_manager.py` | Compatibility functions for AI prompting, requests and validation. |
+| `phishreport/ai/` | AI assessment coordinator, prompt builder, completion client and response validator. |
+| `phishreport/logic_manager.py` | Apply assessment rules, scoring and routing. |
+| `phishreport/logic/` | Assessment rules, scoring, routing and response guidance. |
+| `phishreport/data_manager.py` | Save, load and query JSON reports. |
+| `phishreport/data/` | Report validation and JSON storage. |
+| `phishreport/cli/` | Terminal interface: `main.py` composes the four managers through `PhishReportApp`; `web_upload.py` handles browser-based `.eml` uploads. |
+| `phishreport/bot/` | Telegram interface: launcher and handlers. |
+| `phishreport/email_html.py` | Convert HTML email content to safe text. |
+| `phishreport/local_settings.py` | Manage local preferences. |
+| `phishreport/logging_setup.py` | Configure diagnostic logs. |
 | `docs/` | Organized guides, teammate handoffs, and project references. |
 | `requirements.txt` | Dependencies for Telegram and the offline tests. |
 | `tests/test_logic_manager.py` | Offline logic tests. |
@@ -86,7 +86,7 @@ Get an API key from the [Groq console](https://console.groq.com). A key is requi
 Start the application:
 
 ```bash
-uv run --python 3.14 --no-project --with-requirements requirements.txt python app_cli/main.py
+uv run --python 3.14 --no-project --with-requirements requirements.txt python -m phishreport.cli
 ```
 
 You can manually check a suspicious message, import or upload an `.eml` email, and view saved reports. New assessments require a valid response from the Groq API.
@@ -142,7 +142,7 @@ Outside Docker, set both Telegram settings in the current shell environment
 and launch from the repository root:
 
 ```bash
-uv run --python 3.14 --no-project --with-requirements requirements.txt python -m app_gui.main
+uv run --python 3.14 --no-project --with-requirements requirements.txt python -m phishreport.bot
 ```
 
 The local launcher reads `reports.json` from the working directory. Set
@@ -159,9 +159,9 @@ The local launcher reads `reports.json` from the working directory. Set
 
 #### Add the next handler
 
-Add an async method to `TelegramIOManager` in `app_gui/telegram_io_manager.py`.
+Add an async method to `TelegramIOManager` in `phishreport/bot/handlers.py`.
 Use the same private-chat check before accessing app data. Register the method
-in `app_gui/main.py` and test it with fake updates in `tests/test_telegram_gui.py`.
+in `phishreport/bot/main.py` and test it with fake updates in `tests/test_telegram_gui.py`.
 Assessment and report browsing still run through the CLI.
 
 ### Offline tests

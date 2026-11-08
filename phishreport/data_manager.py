@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from data_core import DataManager, JsonReportStorage
+from phishreport.data import DataManager, JsonReportStorage
 
 FILE = "reports.json"
 

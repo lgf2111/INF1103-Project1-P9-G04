@@ -1,9 +1,9 @@
 # io_manager.py
 # Console adapter and compatibility functions. OWNER: Jeremy Goh & Bryan Lee.
 
-from io_core import IOManager, eml, folder
-from io_core.manager import UPLOAD_TYPE_MESSAGE as UPLOAD_TYPE_MESSAGE
-from io_core.terminal import ConsoleTerminal as ConsoleTerminal
+from phishreport.io import IOManager, eml, folder
+from phishreport.io.manager import UPLOAD_TYPE_MESSAGE as UPLOAD_TYPE_MESSAGE
+from phishreport.io.terminal import ConsoleTerminal as ConsoleTerminal
 
 MAX_EML_BYTES = eml.MAX_EML_BYTES
 MAX_MIME_PARTS = eml.MAX_MIME_PARTS

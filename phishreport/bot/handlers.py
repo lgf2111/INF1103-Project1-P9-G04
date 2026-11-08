@@ -6,7 +6,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
 from telegram.ext import ContextTypes
 
-from app_cli.data_core import DataManager
+from phishreport.data import DataManager
 
 CHECK_CONNECTION = "check_connection"
 

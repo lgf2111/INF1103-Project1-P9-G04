@@ -8,7 +8,7 @@ import pytest
 
 def validator():
     """Resolve the new API at test time so missing implementation fails tests."""
-    return import_module("data_core.validator").ReportValidator()
+    return import_module("phishreport.data.validator").ReportValidator()
 
 
 def v2_report():
@@ -190,12 +190,12 @@ def test_v1_requires_complete_fields_and_boolean_findings():
 
 
 def json_storage(path):
-    return import_module("data_core.json_storage").JsonReportStorage(path)
+    return import_module("phishreport.data.json_storage").JsonReportStorage(path)
 
 
 @pytest.fixture(params=["json", "memory"])
 def storage(request, tmp_path):
-    contract = import_module("data_core.storage").ReportStorage
+    contract = import_module("phishreport.data.storage").ReportStorage
 
     class MemoryStorage(contract):
         def __init__(self):
@@ -241,7 +241,7 @@ def test_storage_contract_nested_isolation(storage):
 
 def test_storage_interface_is_abstract():
     with pytest.raises(TypeError):
-        import_module("data_core.storage").ReportStorage()
+        import_module("phishreport.data.storage").ReportStorage()
 
 
 @pytest.mark.parametrize(
@@ -284,7 +284,7 @@ def test_json_write_failure_preserves_bytes_and_cleans_temporary(tmp_path, monke
     path = tmp_path / "reports.json"
     path.write_bytes(b"[{}]\n")
     backend = json_storage(path)
-    module = import_module("data_core.json_storage")
+    module = import_module("phishreport.data.json_storage")
     error = OSError("injected " + stage)
 
     def fail(*args, **kwargs):
@@ -314,7 +314,7 @@ def test_json_cleanup_failure_preserves_primary_exception(tmp_path, monkeypatch)
     path = tmp_path / "reports.json"
     path.write_bytes(b"[{}]")
     backend = json_storage(path)
-    module = import_module("data_core.json_storage")
+    module = import_module("phishreport.data.json_storage")
     primary = ValueError("serialization failed")
 
     def fail_dump(*args, **kwargs):
@@ -370,7 +370,7 @@ def test_json_nonfinite_write_preserves_original(tmp_path):
 def test_json_successful_replace_needs_no_cleanup(tmp_path, monkeypatch):
     path = tmp_path / "reports.json"
     backend = json_storage(path)
-    module = import_module("data_core.json_storage")
+    module = import_module("phishreport.data.json_storage")
 
     def deny_cleanup(*args, **kwargs):
         raise PermissionError("cleanup denied")
@@ -383,7 +383,7 @@ def test_json_successful_replace_needs_no_cleanup(tmp_path, monkeypatch):
 
 
 def manager(storage=None, validator=None):
-    return import_module("data_core").DataManager(storage=storage, validator=validator)
+    return import_module("phishreport.data").DataManager(storage=storage, validator=validator)
 
 
 def test_manager_saves_v2_and_appends_mixed_history_unchanged(storage):
@@ -430,7 +430,7 @@ def test_manager_query_preserves_order_and_propagates_predicate_errors(storage):
 
 @pytest.fixture
 def backend_spy():
-    contract = import_module("data_core.storage").ReportStorage
+    contract = import_module("phishreport.data.storage").ReportStorage
 
     class BackendSpy(contract):
         def __init__(self):
@@ -568,14 +568,15 @@ def test_manager_defaults_follow_current_directory(tmp_path, monkeypatch):
 
 
 def test_data_core_exports_storage_and_validator_contracts():
-    package = import_module("data_core")
+    package = import_module("phishreport.data")
     assert package.ReportValidator is type(validator())
-    assert package.ReportStorage is import_module("data_core.storage").ReportStorage
-    assert package.JsonReportStorage is import_module("data_core.json_storage").JsonReportStorage
+    assert package.ReportStorage is import_module("phishreport.data.storage").ReportStorage
+    json_storage = import_module("phishreport.data.json_storage")
+    assert package.JsonReportStorage is json_storage.JsonReportStorage
 
 
 def test_adapter_and_class_share_mixed_history_and_query(tmp_path, monkeypatch):
-    adapter = import_module("data_manager")
+    adapter = import_module("phishreport.data_manager")
     path = tmp_path / "custom.json"
     monkeypatch.setattr(adapter, "FILE", path)
     backend = json_storage(path)
@@ -594,7 +595,7 @@ def test_adapter_and_class_share_mixed_history_and_query(tmp_path, monkeypatch):
 
 
 def test_adapter_uses_current_file_and_directory_on_each_call(tmp_path, monkeypatch):
-    adapter = import_module("data_manager")
+    adapter = import_module("phishreport.data_manager")
     first = tmp_path / "first"
     second = tmp_path / "second"
     first.mkdir()
@@ -615,7 +616,7 @@ def test_adapter_uses_current_file_and_directory_on_each_call(tmp_path, monkeypa
 
 @pytest.mark.parametrize("content", [b'{broken', b'[{"score":true}]'])
 def test_adapter_and_class_error_parity_preserves_history(tmp_path, monkeypatch, content):
-    adapter = import_module("data_manager")
+    adapter = import_module("phishreport.data_manager")
     path = tmp_path / "reports.json"
     monkeypatch.setattr(adapter, "FILE", path)
     path.write_bytes(content)

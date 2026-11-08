@@ -115,7 +115,7 @@ elif [ "$command" = "run" ]; then
         -v "$(docker_path "$DATA_DIR"):/data" \
         -v "$(docker_path "$EMAIL_DIR"):/emails:ro" \
         -w /data \
-        "$IMAGE" python /app/app_cli/main.py
+        "$IMAGE" python -m phishreport.cli
 
 elif [ "$command" = "test" ]; then
     ensure_image

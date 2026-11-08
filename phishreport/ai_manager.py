@@ -2,17 +2,17 @@
 # Compatibility functions for AI assessment.
 # Required functions live here to meet the Phase 1 manager-file contract.
 
-from ai_core import AIResponseValidator, GroqClient
-from ai_core.groq_client import DEFAULT_MAX_ATTEMPTS as DEFAULT_MAX_ATTEMPTS
-from ai_core.groq_client import DEFAULT_MODEL as DEFAULT_MODEL
-from ai_core.groq_client import MAX_RATE_LIMIT_WAIT as MAX_RATE_LIMIT_WAIT
-from ai_core.groq_client import URL as URL
-from ai_core.prompt import build_prompt as _build_prompt
-from ai_core.validator import DETAIL_KEYS as DETAIL_KEYS
-from ai_core.validator import FINDING_KEYS as FINDING_KEYS
-from ai_core.validator import REQUIRED_KEYS as REQUIRED_KEYS
-from ai_prompts import EXTRACTION_INSTRUCTIONS as EXTRACTION_INSTRUCTIONS
-from ai_prompts import FINDINGS_INSTRUCTIONS as FINDINGS_INSTRUCTIONS
+from phishreport.ai import AIResponseValidator, GroqClient
+from phishreport.ai.groq_client import DEFAULT_MAX_ATTEMPTS as DEFAULT_MAX_ATTEMPTS
+from phishreport.ai.groq_client import DEFAULT_MODEL as DEFAULT_MODEL
+from phishreport.ai.groq_client import MAX_RATE_LIMIT_WAIT as MAX_RATE_LIMIT_WAIT
+from phishreport.ai.groq_client import URL as URL
+from phishreport.ai.prompt import build_prompt as _build_prompt
+from phishreport.ai.prompts import EXTRACTION_INSTRUCTIONS as EXTRACTION_INSTRUCTIONS
+from phishreport.ai.prompts import FINDINGS_INSTRUCTIONS as FINDINGS_INSTRUCTIONS
+from phishreport.ai.validator import DETAIL_KEYS as DETAIL_KEYS
+from phishreport.ai.validator import FINDING_KEYS as FINDING_KEYS
+from phishreport.ai.validator import REQUIRED_KEYS as REQUIRED_KEYS
 
 _DEFAULT_VALIDATOR = AIResponseValidator()
 

@@ -1,4 +1,4 @@
-# ai_prompts.py
+# prompts.py
 # Plain prompt constants used by ai_manager.py; no runtime file reading.
 # OWNER: Pair A (Akari-light and Lee Guan Feng).
 

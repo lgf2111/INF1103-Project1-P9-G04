@@ -4,12 +4,12 @@
 
 import os
 
-import logging_setup
-from ai_core import AIManager
-from data_core import DataManager
-from io_core import IOManager
-from io_core.terminal import ConsoleTerminal
-from logic_core import LogicManager
+from phishreport import logging_setup
+from phishreport.ai import AIManager
+from phishreport.data import DataManager
+from phishreport.io import IOManager
+from phishreport.io.terminal import ConsoleTerminal
+from phishreport.logic import LogicManager
 
 logger = logging_setup.get_logger(__name__)
 
@@ -121,7 +121,7 @@ class PhishReportApp:
         """Parse uploaded email through the same I/O contract as folder imports."""
         try:
             # Load the server only when the user chooses to upload a file.
-            import web_upload
+            from phishreport.cli import web_upload
 
             self._io_manager.show_upload_instructions(web_upload.DISPLAY_HOST, web_upload.PORT)
             upload = web_upload.start_and_wait_for_upload()

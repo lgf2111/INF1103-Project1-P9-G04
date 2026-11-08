@@ -8,7 +8,7 @@ import json
 import os
 import tempfile
 
-import logging_setup
+from phishreport import logging_setup
 
 logger = logging_setup.get_logger(__name__)
 
