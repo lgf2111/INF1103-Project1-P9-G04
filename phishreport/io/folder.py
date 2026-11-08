@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from phishreport import local_settings
+from phishreport.local_settings import LocalSettings
 
 from .eml import EmlReader
 from .terminal import Terminal
@@ -11,27 +11,30 @@ EML_FOLDER_KEY = "eml_folder"
 EML_PAGE_SIZE = 5
 
 
-def _is_email_folder(folder: object) -> bool:
-    """Check external preference/input values before constructing a filesystem path."""
-    if not isinstance(folder, str) or not folder.strip():
-        return False
-    try:
-        return Path(folder).is_dir()
-    except (OSError, ValueError):
-        return False
-
-
 class EmlFolderPicker:
     """Manage the email folder preference and paginated file selection."""
 
-    def __init__(self, terminal: Terminal, reader: EmlReader):
+    def __init__(
+        self, terminal: Terminal, reader: EmlReader, settings: LocalSettings | None = None
+    ):
         self._terminal = terminal
         self._reader = reader
+        self._settings = settings if settings is not None else LocalSettings()
+
+    @staticmethod
+    def _is_email_folder(folder: object) -> bool:
+        """Check external preference/input values before constructing a filesystem path."""
+        if not isinstance(folder, str) or not folder.strip():
+            return False
+        try:
+            return Path(folder).is_dir()
+        except (OSError, ValueError):
+            return False
 
     def get_eml_folder(self) -> str:
         """Return a usable saved folder or prompt for one and try to save it."""
-        folder = local_settings.get_setting(EML_FOLDER_KEY)
-        if _is_email_folder(folder):
+        folder = self._settings.get(EML_FOLDER_KEY)
+        if self._is_email_folder(folder):
             return folder
 
         if folder:
@@ -43,12 +46,12 @@ class EmlFolderPicker:
             if not entered:
                 self._terminal.write("Folder path cannot be blank.")
                 continue
-            if not _is_email_folder(entered):
+            if not self._is_email_folder(entered):
                 self._terminal.write(
                     "That folder does not exist. Please enter a valid folder path."
                 )
                 continue
-            if local_settings.save_setting(EML_FOLDER_KEY, entered):
+            if self._settings.save(EML_FOLDER_KEY, entered):
                 self._terminal.write(
                     "Saved. You won't be asked again while this folder remains available."
                 )

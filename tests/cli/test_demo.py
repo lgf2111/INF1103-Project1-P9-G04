@@ -12,12 +12,12 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 import phishreport
-from phishreport import local_settings
 from phishreport.ai import groq_client
 from phishreport.cli import web_upload
 from phishreport.data import DataManager, json_storage
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
+from phishreport.local_settings import LocalSettings
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 io_manager = IOManager(ConsoleTerminal())
@@ -80,7 +80,7 @@ def test_demo_real_email_pipeline_and_reload(
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         cli.app.check_message()
     elif entry == "folder":
-        local_settings.save_setting("eml_folder", str(REAL_EMAILS))
+        LocalSettings().save("eml_folder", str(REAL_EMAILS))
         files = io_manager.folder_picker.list_eml_files(REAL_EMAILS)
         answers = iter([str(files.index(path) + 1), "no", "no", "no"])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))

@@ -10,10 +10,10 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
-from phishreport import local_settings
 from phishreport.cli import main
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
+from phishreport.local_settings import LocalSettings
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 io_manager = IOManager(ConsoleTerminal())
@@ -244,7 +244,7 @@ def test_runtime_settings_non_object_settings_are_logged_and_recovered(
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".phishreport_config.json").write_text(json.dumps(payload), encoding="utf-8")
     with caplog.at_level(logging.WARNING, logger="phishreport.local_settings"):
-        assert local_settings.load_settings() == {}
+        assert LocalSettings().load() == {}
     assert "Could not read local config" in caplog.text
 
 
