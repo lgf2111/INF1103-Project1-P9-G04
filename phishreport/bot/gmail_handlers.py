@@ -13,6 +13,14 @@ LINK_HELP = (
     "1. Turn on 2-Step Verification for your Google account.\n"
     "2. Create an app password at https://myaccount.google.com/apppasswords\n"
     "3. Send: /linkgmail you@gmail.com your app password\n\n"
+    'If Google says "The setting you are looking for is not available for your '
+    'account":\n'
+    "- 2-Step Verification must be on, with a phone prompt or authenticator app "
+    "(a security key or passkey alone is not enough).\n"
+    "- Advanced Protection must be off.\n"
+    "- School or work accounts often have app passwords blocked by the admin. "
+    "Use a personal Gmail instead.\n"
+    '- Try searching for "app passwords" in your Google Account settings.\n\n'
     "I delete your message once it is read and only look at unread mail that "
     "arrives after linking. Use /unlinkgmail to stop."
 )
