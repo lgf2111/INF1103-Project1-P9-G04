@@ -2,13 +2,13 @@
 
 from collections.abc import Callable
 
-from phishreport import logging_setup
+from phishreport.logging_setup import AppLogging
 
 from .json_storage import JsonReportStorage
 from .storage import ReportStorage
 from .validator import ReportValidator
 
-logger = logging_setup.get_logger("data_manager")
+logger = AppLogging.get_logger("data_manager")
 
 
 class DataManager:
@@ -44,7 +44,7 @@ class DataManager:
                 self._validator.validate_stored(record)
             return records
         except (OSError, ValueError):
-            logging_setup.log_failure(
+            AppLogging.log_failure(
                 logger, "Could not read local report history; existing file preserved."
             )
             if strict:

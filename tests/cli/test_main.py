@@ -12,6 +12,7 @@ import pytest
 from phishreport.ai import GroqClient, groq_client
 from phishreport.cli import main, web_upload
 from phishreport.data import DataManager
+from phishreport.logging_setup import AppLogging
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -75,7 +76,7 @@ def main_app_boundary(cli, tmp_path, monkeypatch):
     monkeypatch.setattr(cli.io_manager, "display_result", Mock())
     # Reset the central logging so each test configures a fresh file logger in
     # its own tmp_path, and restore the root logger afterwards.
-    main.logging_setup._configured = False
+    AppLogging._configured = False
     root = logging.getLogger()
     saved_handlers = root.handlers[:]
     saved_level = root.level
@@ -85,7 +86,7 @@ def main_app_boundary(cli, tmp_path, monkeypatch):
         handler.close()
     root.handlers = saved_handlers
     root.setLevel(saved_level)
-    main.logging_setup._configured = False
+    AppLogging._configured = False
     for name in ("ai_manager", "data_manager"):
         for handler in list(logging.getLogger(name).handlers):
             handler.close()
@@ -140,7 +141,8 @@ def main_record():
 @pytest.mark.parametrize("invented_contact", [False, True])
 @pytest.mark.parametrize("disclosure, expected_score", [("no", 60), ("otp", 90)])
 def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
-    cli, main_app_boundary,
+    cli,
+    main_app_boundary,
     monkeypatch,
     invented_contact,
     disclosure,
@@ -154,8 +156,8 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
         b'<a href="https://credential.example.test/login">Verify account</a>'
     )
     monkeypatch.setattr(
-        web_upload,
-        "start_and_wait_for_upload",
+        web_upload.BrowserUploadService,
+        "receive_upload",
         Mock(
             return_value={
                 "filename": "fictional.eml",
@@ -198,8 +200,8 @@ def test_main_invalid_browser_email_stops_before_ai_or_save(
 ):
 
     monkeypatch.setattr(
-        web_upload,
-        "start_and_wait_for_upload",
+        web_upload.BrowserUploadService,
+        "receive_upload",
         Mock(
             return_value={
                 "filename": "fictional.eml",
@@ -215,7 +217,8 @@ def test_main_invalid_browser_email_stops_before_ai_or_save(
 
 @pytest.mark.parametrize("invented_contact", [False, True])
 def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
-    cli, main_app_boundary,
+    cli,
+    main_app_boundary,
     monkeypatch,
     tmp_path,
     invented_contact,
@@ -269,7 +272,8 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
 
 @pytest.mark.parametrize("failure", ["input", "timeout", "http", "incomplete", "json", "schema"])
 def test_main_failed_assessment_never_reaches_logic_storage_or_success_display(
-    cli, main_app_boundary,
+    cli,
+    main_app_boundary,
     monkeypatch,
     failure,
 ):
@@ -344,7 +348,8 @@ def test_main_successful_assessment_reaches_real_logic_and_storage(
 
 
 def test_main_menu_continues_after_bad_record_then_saves_next_assessment(
-    cli, main_app_boundary,
+    cli,
+    main_app_boundary,
     monkeypatch,
     tmp_path,
 ):
@@ -374,7 +379,7 @@ def test_main_menu_continues_after_bad_record_then_saves_next_assessment(
 
 def test_main_configured_logging_writes_sanitised_diagnostics(main_app_boundary, tmp_path, capsys):
     # Default level (no LOG_LEVEL=DEBUG): sanitised, no traceback, no secrets.
-    assert main.logging_setup.setup_logging() is True
+    assert AppLogging.setup() is True
     main_app_boundary.side_effect = TimeoutError("PRIVATE_EXCEPTION")
     with pytest.raises(RuntimeError):
         GroqClient().complete("PRIVATE_PROMPT")
@@ -407,7 +412,7 @@ def test_main_unwritable_log_destination_keeps_menu_available(
 def test_main_failed_log_write_does_not_crash_or_leak(main_app_boundary, monkeypatch, capsys):
     # Even if writing to the log file fails, the AI error must still surface and
     # nothing private may reach the terminal.
-    assert main.logging_setup.setup_logging() is True
+    assert AppLogging.setup() is True
     for handler in logging.getLogger().handlers:
         if hasattr(handler, "stream"):
             stream = Mock(wraps=handler.stream)
@@ -426,7 +431,8 @@ def test_main_failed_log_write_does_not_crash_or_leak(main_app_boundary, monkeyp
 
 @pytest.mark.parametrize("failure", ["missing-findings", "detail-type", "invented-contact"])
 def test_main_combined_validation_failure_stops_before_logic_and_storage(
-    cli, main_app_boundary,
+    cli,
+    main_app_boundary,
     monkeypatch,
     failure,
 ):

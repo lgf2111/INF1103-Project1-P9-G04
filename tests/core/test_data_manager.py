@@ -10,8 +10,8 @@ from unittest.mock import Mock
 import pytest
 
 from phishreport.ai import AIManager
-from phishreport.cli import main
 from phishreport.data import DataManager, JsonReportStorage, json_storage
+from phishreport.logging_setup import AppLogging
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -299,7 +299,7 @@ def test_data_manager_history_recovery(
 ):
     """Keep malformed JSON and invalid v2 records safe across coordinator paths."""
     data_manager_storage.write_text(content)
-    monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
+    monkeypatch.setattr(AppLogging, "setup", lambda: True)
     monkeypatch.setattr(cli.io_manager, "main_menu", lambda: "5")
     if operation == "save":
         record = data_manager_complete_report()
@@ -426,7 +426,7 @@ def test_data_manager_legacy_field_corruption_recovers_without_replacing_file(
         data_manager_for(data_manager_storage).save(data_manager_report())
 
     # Startup, explicit history viewing and normal exit must all remain usable.
-    monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
+    monkeypatch.setattr(AppLogging, "setup", lambda: True)
     choices = iter(["4", "5"])
     monkeypatch.setattr(cli.io_manager, "main_menu", lambda: next(choices))
     cli.app.run()

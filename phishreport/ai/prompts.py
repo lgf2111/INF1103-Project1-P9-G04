@@ -3,7 +3,7 @@
 # OWNER: Pair A (Akari-light and Lee Guan Feng).
 
 # The fixed instruction block of the assessment prompt (everything except the
-# per-request metadata/message, which build_prompt appends).
+# per-request metadata/message, which PromptBuilder appends).
 FINDINGS_INSTRUCTIONS = (
     "You are a phishing checker. Assess the supplied message and unverified metadata. "
     "Reply with ONLY a JSON object (no extra text) with exactly these fields:\n"

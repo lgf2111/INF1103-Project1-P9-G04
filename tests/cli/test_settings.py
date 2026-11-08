@@ -10,10 +10,11 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
-from phishreport import local_settings
 from phishreport.cli import main
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
+from phishreport.local_settings import LocalSettings
+from phishreport.logging_setup import AppLogging
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 io_manager = IOManager(ConsoleTerminal())
@@ -32,13 +33,13 @@ def env_loading_env_folder(tmp_path, monkeypatch):
 
 
 def test_env_loading_missing_env_is_optional(env_loading_env_folder):
-    assert main.load_env() is True
+    assert main.EnvLoader().load() is True
 
 
 @pytest.mark.parametrize("content", [b"", b"# comment\n\n", b"ignored line without assignment\n"])
 def test_env_loading_empty_or_ignored_env_is_optional(env_loading_env_folder, content):
     env_loading_env_folder.write_bytes(content)
-    assert main.load_env() is True
+    assert main.EnvLoader().load() is True
     assert "PHISHREPORT_TEST_NEW" not in os.environ
 
 
@@ -52,21 +53,21 @@ def test_env_loading_valid_env_preserves_existing_and_first_assignment(
         "PHISHREPORT_TEST_NEW = caf\u00e9=value\nPHISHREPORT_TEST_NEW=second-value\n",
         encoding=encoding,
     )
-    assert main.load_env() is True
+    assert main.EnvLoader().load() is True
     assert os.environ["PHISHREPORT_TEST_EXISTING"] == "supplied-by-shell"
     assert os.environ["PHISHREPORT_TEST_NEW"] == "caf\u00e9=value"
 
 
 def test_env_loading_directory_env_does_not_crash(env_loading_env_folder):
     env_loading_env_folder.mkdir()
-    assert main.load_env() is False
+    assert main.EnvLoader().load() is False
 
 
 @pytest.mark.parametrize("error", [PermissionError, OSError])
 def test_env_loading_unreadable_env_does_not_crash(env_loading_env_folder, monkeypatch, error):
     env_loading_env_folder.write_text("PHISHREPORT_TEST_NEW=private-value\n")
     monkeypatch.setattr("builtins.open", Mock(side_effect=error("PRIVATE_CONFIG_SENTINEL")))
-    assert main.load_env() is False
+    assert main.EnvLoader().load() is False
     assert "PHISHREPORT_TEST_NEW" not in os.environ
 
 
@@ -82,7 +83,7 @@ def test_env_loading_invalid_utf8_env_is_rejected_without_partial_settings(
     env_loading_env_folder, prefix
 ):
     env_loading_env_folder.write_bytes(prefix + b"\xff\n")
-    assert main.load_env() is False
+    assert main.EnvLoader().load() is False
     assert "PHISHREPORT_TEST_NEW" not in os.environ
 
 
@@ -93,7 +94,7 @@ def test_env_loading_invalid_assignment_is_rejected_without_partial_settings(
     env_loading_env_folder.write_text(
         "PHISHREPORT_TEST_NEW=private-value\n" + invalid, encoding="utf-8"
     )
-    assert main.load_env() is False
+    assert main.EnvLoader().load() is False
     assert "PHISHREPORT_TEST_NEW" not in os.environ
 
 
@@ -107,7 +108,7 @@ def test_env_loading_interrupted_read_does_not_apply_earlier_lines(
     opened = MagicMock()
     opened.return_value.__enter__.return_value.__iter__.side_effect = interrupted
     monkeypatch.setattr("builtins.open", opened)
-    assert main.load_env() is False
+    assert main.EnvLoader().load() is False
     assert "PHISHREPORT_TEST_NEW" not in os.environ
 
 
@@ -116,7 +117,7 @@ def env_loading_startup(cli, monkeypatch):
     setup = Mock(return_value=True)
     menu = Mock(return_value="5")
     notice = Mock()
-    monkeypatch.setattr(main.logging_setup, "setup_logging", setup)
+    monkeypatch.setattr(AppLogging, "setup", setup)
     monkeypatch.setattr(cli.app, "load_reports", Mock(return_value=[]))
     monkeypatch.setattr(cli.io_manager, "main_menu", menu)
     monkeypatch.setattr(cli.io_manager, "show_message", notice)
@@ -244,7 +245,7 @@ def test_runtime_settings_non_object_settings_are_logged_and_recovered(
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".phishreport_config.json").write_text(json.dumps(payload), encoding="utf-8")
     with caplog.at_level(logging.WARNING, logger="phishreport.local_settings"):
-        assert local_settings.load_settings() == {}
+        assert LocalSettings().load() == {}
     assert "Could not read local config" in caplog.text
 
 

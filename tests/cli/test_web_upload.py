@@ -40,7 +40,9 @@ def test_web_upload_real_tracked_email_upload_preserves_bytes_for_browser_media_
         + content
         + b"\r\n--real-boundary--\r\n"
     )
-    assert web_upload.parse_upload('multipart/form-data; boundary="real-boundary"', body) == {
+    assert web_upload.UploadParser().parse(
+        'multipart/form-data; boundary="real-boundary"', body
+    ) == {
         "filename": name,
         "content": content,
     }
@@ -58,7 +60,7 @@ def web_upload_form(content=b"Fictional message\r\n", filename="fictional.eml"):
 
 def test_web_upload_quoted_multipart_boundary_preserves_original_bytes():
     content = b"From: fictional@example.test\r\n\r\nOriginal \xff\r\n--not-the-boundary\r\n"
-    assert web_upload.parse_upload(
+    assert web_upload.UploadParser().parse(
         'multipart/form-data; boundary="boundary"', web_upload_form(content)
     ) == {
         "filename": "fictional.eml",
@@ -80,12 +82,12 @@ def test_web_upload_quoted_multipart_boundary_preserves_original_bytes():
 )
 def test_web_upload_invalid_http_uploads_are_rejected(content_type, body):
     with pytest.raises(ValueError):
-        web_upload.parse_upload(content_type, body)
+        web_upload.UploadParser().parse(content_type, body)
 
 
 def test_web_upload_oversize_http_upload_is_rejected():
     with pytest.raises(ValueError, match="size limit"):
-        web_upload.parse_upload(
+        web_upload.UploadParser().parse(
             "multipart/form-data; boundary=boundary",
             web_upload_form(b"x" * (web_upload.MAX_UPLOAD_BYTES + 1)),
         )
@@ -117,19 +119,15 @@ def test_web_upload_real_http_server_recovers_from_bad_request_then_preserves_em
     servers = []
     original = web_upload._UploadServer
 
-    def make_server(address):
-        server = original(address)
+    def make_server(address, parser):
+        server = original(address, parser)
         servers.append(server)
         ready.set()
         return server
 
-    monkeypatch.setattr(web_upload, "BIND_HOST", "127.0.0.1")
-    monkeypatch.setattr(web_upload, "PORT", 0)
-    monkeypatch.setattr(web_upload, "_UploadServer", make_server)
+    service = web_upload.BrowserUploadService(host="127.0.0.1", port=0, server_factory=make_server)
     results = []
-    worker = threading.Thread(
-        target=lambda: results.append(web_upload.start_and_wait_for_upload()), daemon=True
-    )
+    worker = threading.Thread(target=lambda: results.append(service.receive_upload()), daemon=True)
     worker.start()
     assert ready.wait(5)
     connection = http.client.HTTPConnection("127.0.0.1", servers[0].server_port, timeout=5)
@@ -159,6 +157,9 @@ def test_web_upload_real_http_server_recovers_from_bad_request_then_preserves_em
 
 
 def test_web_upload_overlapping_sessions_return_their_own_files(monkeypatch):
+    def new_service():
+        return web_upload.BrowserUploadService(host="127.0.0.1", port=0)
+
     original_handle_request = web_upload.http.server.HTTPServer.handle_request
     first_server = None
     second_upload = None
@@ -187,7 +188,7 @@ def test_web_upload_overlapping_sessions_return_their_own_files(monkeypatch):
         if first_server is None:
             first_server = server
             # Finish the second session while the first is still serving its page.
-            second_upload = web_upload.start_and_wait_for_upload()
+            second_upload = new_service().receive_upload()
             serve_request(server, "GET")
             return
 
@@ -198,11 +199,9 @@ def test_web_upload_overlapping_sessions_return_their_own_files(monkeypatch):
         else:
             serve_request(server, "POST", web_upload_form(second_content, "second.eml"))
 
-    monkeypatch.setattr(web_upload, "BIND_HOST", "127.0.0.1")
-    monkeypatch.setattr(web_upload, "PORT", 0)
     monkeypatch.setattr(web_upload.http.server.HTTPServer, "handle_request", handle_request)
 
-    first_upload = web_upload.start_and_wait_for_upload()
+    first_upload = new_service().receive_upload()
     assert second_upload == {"filename": "second.eml", "content": second_content}
     assert first_upload == {"filename": "first.eml", "content": first_content}
 
@@ -217,6 +216,7 @@ def web_upload_request_handler(body):
     handler.rfile = io.BytesIO(body)
     handler.wfile = io.BytesIO()
     handler.server = Mock()
+    handler.server.parser = web_upload.UploadParser()
     handler.send_response = Mock()
     handler.send_header = Mock()
     handler.end_headers = Mock()
@@ -226,7 +226,6 @@ def web_upload_request_handler(body):
 
 def test_web_upload_valid_web_eml_matches_folder_input(tmp_path, monkeypatch):
     from email.message import EmailMessage
-
 
     email = EmailMessage()
     email["From"] = "fictional@example.test"

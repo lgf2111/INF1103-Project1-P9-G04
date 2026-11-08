@@ -26,17 +26,24 @@ IGNORED = {"script", "style", "head", "template"}
 LINE_BREAKS = "\r\n\v\f\x1c\x1d\x1e\x85\u2028\u2029"
 
 
-def html_to_text(source, limit, allow_empty=False):
-    """Convert HTML source into bounded text without rendering or fetching URLs.
+class EmailTextExtractor:
+    """Convert email HTML into bounded text without rendering or fetching URLs."""
 
-    Retain visible text and selected attribute values; omit ignored sections.
-    The limit counts normalized output characters. Raise ValueError if the
-    limit is exceeded, or the result is empty unless allow_empty is True.
-    """
-    text = _EmailHTMLParser(limit).extract_text(source)
-    if not text and not allow_empty:
-        raise ValueError("Email HTML has no usable text or link targets.")
-    return text
+    def __init__(self, limit, allow_empty=False):
+        self._limit = limit
+        self._allow_empty = allow_empty
+
+    def extract(self, source):
+        """Convert HTML source into bounded text without rendering or fetching URLs.
+
+        Retain visible text and selected attribute values; omit ignored sections.
+        The limit counts normalized output characters. Raise ValueError if the
+        limit is exceeded, or the result is empty unless allow_empty is True.
+        """
+        text = _EmailHTMLParser(self._limit).extract_text(source)
+        if not text and not self._allow_empty:
+            raise ValueError("Email HTML has no usable text or link targets.")
+        return text
 
 
 class _EmailHTMLParser(HTMLParser):

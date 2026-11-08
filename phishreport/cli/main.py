@@ -4,70 +4,88 @@
 
 import os
 
-from phishreport import logging_setup
 from phishreport.ai import AIManager
 from phishreport.data import DataManager
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
+from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
 
-logger = logging_setup.get_logger(__name__)
+logger = AppLogging.get_logger(__name__)
 
 
-def _friendly_ai_error(error):
+class AIErrorTranslator:
     """Turn an AI RuntimeError into a short, actionable message for the user.
 
     Keeps the word 'failed' so the reason is clear, and adds guidance based on
     the kind of failure (offline, service error, rate limit).
     """
-    text = str(error).lower()
-    if "timed out" in text or "could not complete" in text:
-        return (
-            "The check failed: could not reach the AI service. "
-            "Check your internet connection and try again."
-        )
-    if "http 5" in text:
-        return "The check failed: the AI service is temporarily unavailable. Try again shortly."
-    if "http 429" in text:
-        return "The check failed: the AI service is busy (rate limited). Try again shortly."
-    return "The check failed: the AI could not complete the assessment. Please try again."
+
+    def translate(self, error) -> str:
+        text = str(error).lower()
+        if "timed out" in text or "could not complete" in text:
+            return (
+                "The check failed: could not reach the AI service. "
+                "Check your internet connection and try again."
+            )
+        if "http 5" in text:
+            return "The check failed: the AI service is temporarily unavailable. Try again shortly."
+        if "http 429" in text:
+            return "The check failed: the AI service is busy (rate limited). Try again shortly."
+        return "The check failed: the AI could not complete the assessment. Please try again."
 
 
-def load_env() -> bool:
-    """Load an optional UTF-8 file, returning False if it cannot be used safely.
+class EnvLoader:
+    """Load an optional UTF-8 settings file into the process environment."""
 
-    Read and validate every assignment before applying any settings. Existing
-    environment values and the first occurrence of each file key take precedence.
-    Failure details stay private; main reports a fixed warning after logging setup.
-    """
-    values = {}
-    try:
-        with open(".env", encoding="utf-8-sig") as stream:
-            for line in stream:
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, value = (part.strip() for part in line.split("=", 1))
-                    if not key or "\x00" in key or "\x00" in value:
-                        return False
-                    values.setdefault(key, value)
-    except FileNotFoundError:
-        return True  # The file is optional when settings come from the environment.
-    except (OSError, UnicodeError):
-        return False
+    def __init__(self, path: str = ".env"):
+        self._path = path
 
-    for key, value in values.items():
-        os.environ.setdefault(key, value)
-    return True
+    def load(self) -> bool:
+        """Return False if the file cannot be used safely.
+
+        Read and validate every assignment before applying any settings. Existing
+        environment values and the first occurrence of each file key take precedence.
+        Failure details stay private; the app reports a fixed warning after logging setup.
+        """
+        values = {}
+        try:
+            with open(self._path, encoding="utf-8-sig") as stream:
+                for line in stream:
+                    line = line.strip()
+                    if line and not line.startswith("#") and "=" in line:
+                        key, value = (part.strip() for part in line.split("=", 1))
+                        if not key or "\x00" in key or "\x00" in value:
+                            return False
+                        values.setdefault(key, value)
+        except FileNotFoundError:
+            return True  # The file is optional when settings come from the environment.
+        except (OSError, UnicodeError):
+            return False
+
+        for key, value in values.items():
+            os.environ.setdefault(key, value)
+        return True
 
 
 class PhishReportApp:
     """Run the CLI workflows with the supplied managers."""
 
-    def __init__(self, io_manager, ai_manager, logic_manager, data_manager):
+    def __init__(
+        self,
+        io_manager,
+        ai_manager,
+        logic_manager,
+        data_manager,
+        env_loader=None,
+        error_translator=None,
+    ):
         self._io_manager = io_manager
         self._ai_manager = ai_manager
         self._logic_manager = logic_manager
         self._data_manager = data_manager
+        self._env_loader = env_loader or EnvLoader()
+        self._error_translator = error_translator or AIErrorTranslator()
 
     def check_message(self, record=None):
         """Validate one combined AI response before assessment, saving or display.
@@ -89,13 +107,13 @@ class PhishReportApp:
         # RuntimeError: the AI could not complete after its retries (service down,
         # offline, rate limited). Show an actionable message; the AI is never bypassed.
         except RuntimeError as error:
-            logging_setup.log_failure(logger, "Assessment failed after AI retries")
-            self._io_manager.show_message(_friendly_ai_error(error))
+            AppLogging.log_failure(logger, "Assessment failed after AI retries")
+            self._io_manager.show_message(self._error_translator.translate(error))
             return
         # ValueError: bad input or an invalid AI reply - not retryable. KeyError and
         # TypeError would be programming bugs, so let them surface.
         except ValueError as error:
-            logging_setup.log_failure(logger, "Assessment failed")
+            AppLogging.log_failure(logger, "Assessment failed")
             self._io_manager.show_message("Sorry, the check failed: " + str(error))
             return
 
@@ -109,7 +127,7 @@ class PhishReportApp:
         try:
             self._data_manager.save(report)
         except (OSError, ValueError):
-            logging_setup.log_failure(logger, "Local report save failed")
+            AppLogging.log_failure(logger, "Local report save failed")
             self._io_manager.show_message(
                 "Could not save the local report; existing history preserved."
             )
@@ -124,10 +142,10 @@ class PhishReportApp:
             from phishreport.cli import web_upload
 
             self._io_manager.show_upload_instructions(web_upload.DISPLAY_HOST, web_upload.PORT)
-            upload = web_upload.start_and_wait_for_upload()
+            upload = web_upload.BrowserUploadService().receive_upload()
             record = self._io_manager.collect_input_from_upload(upload)
         except (OSError, RuntimeError, ValueError) as error:
-            logging_setup.log_failure(logger, "File upload failed")
+            AppLogging.log_failure(logger, "File upload failed")
             self._io_manager.show_message("Upload failed: " + str(error))
             return
 
@@ -142,7 +160,7 @@ class PhishReportApp:
         try:
             return self._data_manager.load(strict=True)
         except (OSError, ValueError):
-            logging_setup.log_failure(logger, "Reading local report history failed")
+            AppLogging.log_failure(logger, "Reading local report history failed")
             self._io_manager.show_message(
                 "Could not load local report history; existing file preserved."
             )
@@ -160,10 +178,10 @@ class PhishReportApp:
         Check stored history on startup and delegate each choice to its manager
         flow. Handle EOF and keyboard interruption as an application exit.
         """
-        env_loaded = load_env()
+        env_loaded = self._env_loader.load()
         # Load environment settings before logging so LOG_LEVEL is respected.
         # Set LOG_LEVEL=DEBUG to include tracebacks in subsequent failure diagnostics.
-        if not logging_setup.setup_logging():
+        if not AppLogging.setup():
             self._io_manager.show_message("Warning: diagnostic logging is unavailable.")
         if not env_loaded:
             # No raw file/exception details: even DEBUG must not expose credentials.

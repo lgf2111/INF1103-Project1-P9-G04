@@ -10,8 +10,8 @@ import urllib.error
 import urllib.request
 from email.utils import parsedate_to_datetime
 
-from ._diagnostics import failure, logger
-from ._json import load_strict_json
+from ._diagnostics import FailureDiagnostics
+from ._json import StrictJsonParser
 
 DEFAULT_MODEL = "openai/gpt-oss-20b"
 URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -21,6 +21,14 @@ DEFAULT_MAX_ATTEMPTS = 2
 
 class GroqClient:
     """Request Groq completions with bounded transient retries."""
+
+    def __init__(
+        self,
+        diagnostics: FailureDiagnostics | None = None,
+        json_parser: StrictJsonParser | None = None,
+    ) -> None:
+        self._diagnostics = FailureDiagnostics() if diagnostics is None else diagnostics
+        self._json_parser = StrictJsonParser() if json_parser is None else json_parser
 
     def complete(self, prompt: str) -> str:
         """Return completed content with a configured bound on transient retries.
@@ -40,23 +48,27 @@ class GroqClient:
         at most five seconds. Invalid responses and configuration errors are not retried.
         """
         if not isinstance(prompt, str) or not prompt.strip():
-            raise failure("call_api", "AI prompt must be nonblank text.", ValueError)
+            raise self._diagnostics.failure(
+                "call_api", "AI prompt must be nonblank text.", ValueError
+            )
 
         api_key = os.environ.get("GROQ_API_KEY")
         if not api_key:
-            raise failure(
+            raise self._diagnostics.failure(
                 "call_api", "Set the GROQ_API_KEY environment variable first.", RuntimeError
             )
 
         model = os.environ.get("GROQ_MODEL", DEFAULT_MODEL)
         if not model.strip():
-            raise failure("call_api", "GROQ_MODEL must not be blank.", RuntimeError)
+            raise self._diagnostics.failure(
+                "call_api", "GROQ_MODEL must not be blank.", RuntimeError
+            )
 
         fallback_model = os.environ.get("GROQ_FALLBACK_MODEL")
         if fallback_model is not None:
             fallback_model = fallback_model.strip()
             if not fallback_model or fallback_model == model.strip():
-                raise failure(
+                raise self._diagnostics.failure(
                     "call_api",
                     "GROQ_FALLBACK_MODEL must be nonblank and differ from GROQ_MODEL.",
                     RuntimeError,
@@ -118,7 +130,7 @@ class GroqClient:
                         else "Could not complete the AI request."
                     )
                 if attempt == max_attempts or not retryable:
-                    raise failure("call_api", reason, RuntimeError) from None
+                    raise self._diagnostics.failure("call_api", reason, RuntimeError) from None
                 # Only fixed diagnostics are logged; never include raw exception/provider data.
                 retry_model = "same_model"
                 if timed_out and fallback_model is not None:
@@ -130,15 +142,17 @@ class GroqClient:
                         headers=dict(request.header_items()),
                     )
                     retry_model = "fallback_model"
-                logger.info(
+                self._diagnostics.logger.info(
                     "stage=call_api attempt=%s retry=%s reason=%s", attempt, retry_model, reason
                 )
                 time.sleep(random.uniform(0.5, 1.5) if retry_delay is None else retry_delay)
 
         try:
-            data = load_strict_json(raw)
+            data = self._json_parser.parse(raw)
         except (ValueError, RecursionError):
-            raise failure("call_api", "AI provider returned invalid JSON.", RuntimeError) from None
+            raise self._diagnostics.failure(
+                "call_api", "AI provider returned invalid JSON.", RuntimeError
+            ) from None
         return self._completed_content(data)
 
     @staticmethod
@@ -172,35 +186,44 @@ class GroqClient:
             return None
         return delay if delay <= MAX_RATE_LIMIT_WAIT else None
 
-    @staticmethod
-    def _completed_content(data: object) -> str:
+    def _completed_content(self, data: object) -> str:
         """Return the first completed, non-refused choice as unchanged response text.
 
         Validate the provider envelope before extracting content. Raise RuntimeError
         for rejected responses; content JSON/schema checks belong to later stages.
         """
         if not isinstance(data, dict) or data.get("error") is not None:
-            raise failure(
+            raise self._diagnostics.failure(
                 "call_api",
                 "AI provider returned an invalid response envelope.",
                 RuntimeError,
             )
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices:
-            raise failure("call_api", "AI provider response has no valid choices.", RuntimeError)
+            raise self._diagnostics.failure(
+                "call_api", "AI provider response has no valid choices.", RuntimeError
+            )
         choice = choices[0]
         if not isinstance(choice, dict):
-            raise failure("call_api", "AI provider returned an invalid choice.", RuntimeError)
+            raise self._diagnostics.failure(
+                "call_api", "AI provider returned an invalid choice.", RuntimeError
+            )
         if choice.get("finish_reason") != "stop":
-            raise failure(
+            raise self._diagnostics.failure(
                 "call_api", "AI provider did not return a completed answer.", RuntimeError
             )
         message = choice.get("message")
         if not isinstance(message, dict):
-            raise failure("call_api", "AI provider returned an invalid message.", RuntimeError)
+            raise self._diagnostics.failure(
+                "call_api", "AI provider returned an invalid message.", RuntimeError
+            )
         if message.get("refusal") is not None:
-            raise failure("call_api", "AI provider refused the assessment.", RuntimeError)
+            raise self._diagnostics.failure(
+                "call_api", "AI provider refused the assessment.", RuntimeError
+            )
         content = message.get("content")
         if not isinstance(content, str) or not content.strip():
-            raise failure("call_api", "AI provider returned no usable response text.", RuntimeError)
+            raise self._diagnostics.failure(
+                "call_api", "AI provider returned no usable response text.", RuntimeError
+            )
         return content

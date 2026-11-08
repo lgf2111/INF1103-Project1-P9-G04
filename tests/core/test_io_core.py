@@ -67,12 +67,13 @@ def test_folder_picker_can_select_an_earlier_page_after_an_invalid_answer(tmp_pa
 
 
 @pytest.mark.parametrize("interruption", [EOFError, KeyboardInterrupt])
-def test_folder_picker_propagates_terminal_interruption(monkeypatch, interruption):
+def test_folder_picker_propagates_terminal_interruption(tmp_path, interruption):
     from phishreport.io import EmlFolderPicker, EmlReader
+    from phishreport.local_settings import LocalSettings
 
-    monkeypatch.setattr("phishreport.local_settings.get_setting", lambda key: None)
+    settings = LocalSettings(str(tmp_path / "missing.json"))
     terminal = ScriptedTerminal([interruption()])
-    picker = EmlFolderPicker(terminal, EmlReader())
+    picker = EmlFolderPicker(terminal, EmlReader(), settings)
 
     with pytest.raises(interruption):
         picker.get_eml_from_folder()

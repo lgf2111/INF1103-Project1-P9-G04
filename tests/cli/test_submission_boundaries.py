@@ -7,12 +7,14 @@ from unittest.mock import Mock
 
 import pytest
 
-from phishreport import local_settings
+from phishreport import local_settings as local_settings_module
 from phishreport.ai import AIResponseValidator, groq_client
-from phishreport.cli import main, web_upload
+from phishreport.cli import web_upload
 from phishreport.data import DataManager
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
+from phishreport.local_settings import LocalSettings
+from phishreport.logging_setup import AppLogging
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 io_manager = IOManager(ConsoleTerminal())
@@ -93,7 +95,7 @@ def test_submission_boundaries_deep_history_keeps_startup_and_history_menu_usabl
     path = tmp_path / "reports.json"
     path.write_text(submission_boundaries_deep_json(), encoding="utf-8")
     before = path.read_bytes()
-    monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
+    monkeypatch.setattr(AppLogging, "setup", lambda: True)
     choices = iter(["4", "5"])
     monkeypatch.setattr(cli.io_manager, "main_menu", lambda: next(choices))
     cli.app.run()
@@ -115,7 +117,7 @@ def test_submission_boundaries_settings_save_preserves_corrupt_file(tmp_path, mo
     monkeypatch.chdir(tmp_path)
     path = tmp_path / ".phishreport_config.json"
     path.write_bytes(payload)
-    assert local_settings.save_setting("eml_folder", str(tmp_path)) is False
+    assert LocalSettings().save("eml_folder", str(tmp_path)) is False
     assert path.read_bytes() == payload
 
 
@@ -126,8 +128,9 @@ def test_submission_boundaries_settings_write_failure_preserves_existing_values(
     path = tmp_path / ".phishreport_config.json"
     path.write_text('{"other":"keep"}', encoding="utf-8")
     before = path.read_bytes()
-    monkeypatch.setattr(local_settings.os, "replace", Mock(side_effect=PermissionError("PRIVATE")))
-    assert local_settings.save_setting("eml_folder", str(tmp_path)) is False
+    replace = Mock(side_effect=PermissionError("PRIVATE"))
+    monkeypatch.setattr(local_settings_module.os, "replace", replace)
+    assert LocalSettings().save("eml_folder", str(tmp_path)) is False
     assert path.read_bytes() == before
     assert list(tmp_path.glob("*.tmp")) == []
 
@@ -150,5 +153,5 @@ def test_submission_boundaries_valid_settings_save_retains_unrelated_values(tmp_
     monkeypatch.chdir(tmp_path)
     path = tmp_path / ".phishreport_config.json"
     path.write_text('{"other":"keep"}', encoding="utf-8")
-    assert local_settings.save_setting("eml_folder", str(tmp_path)) is True
+    assert LocalSettings().save("eml_folder", str(tmp_path)) is True
     assert json.loads(path.read_text()) == {"other": "keep", "eml_folder": str(tmp_path)}
