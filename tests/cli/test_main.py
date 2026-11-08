@@ -9,8 +9,8 @@ from unittest.mock import MagicMock, Mock, call
 
 import pytest
 
-from phishreport import ai_manager, data_manager
-from phishreport.ai import groq_client
+from phishreport import data_manager
+from phishreport.ai import GroqClient, groq_client
 from phishreport.cli import main, web_upload
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
@@ -377,7 +377,7 @@ def test_main_configured_logging_writes_sanitised_diagnostics(main_app_boundary,
     assert main.logging_setup.setup_logging() is True
     main_app_boundary.side_effect = TimeoutError("PRIVATE_EXCEPTION")
     with pytest.raises(RuntimeError):
-        ai_manager.call_api("PRIVATE_PROMPT")
+        GroqClient().complete("PRIVATE_PROMPT")
     for handler in logging.getLogger().handlers:
         handler.flush()
     log = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
@@ -418,7 +418,7 @@ def test_main_failed_log_write_does_not_crash_or_leak(main_app_boundary, monkeyp
     main_app_boundary.side_effect = TimeoutError("PRIVATE_PROVIDER_ERROR")
 
     with pytest.raises(RuntimeError, match="timed out"):
-        ai_manager.call_api("PRIVATE_PROMPT")
+        GroqClient().complete("PRIVATE_PROMPT")
 
     captured = capsys.readouterr()
     assert "PRIVATE_" not in captured.out and "PRIVATE_" not in captured.err

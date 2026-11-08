@@ -7,8 +7,8 @@ from unittest.mock import Mock
 
 import pytest
 
-from phishreport import ai_manager, data_manager, io_manager, local_settings
-from phishreport.ai import groq_client
+from phishreport import data_manager, io_manager, local_settings
+from phishreport.ai import AIResponseValidator, groq_client
 from phishreport.cli import main, web_upload
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
@@ -17,6 +17,9 @@ REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 # ============================================================================
 # Submission Boundaries
 # ============================================================================
+validator = AIResponseValidator()
+
+
 def submission_boundaries_deep_json():
     depth = sys.getrecursionlimit() * 3
     return "[" * depth + "0" + "]" * depth
@@ -24,8 +27,8 @@ def submission_boundaries_deep_json():
 
 def test_submission_boundaries_deep_ai_content_is_a_validation_failure():
     with pytest.raises(ValueError):
-        ai_manager.validate_response(
-            ai_manager.parse_response('{"details":' + submission_boundaries_deep_json() + "}")
+        validator.validate_response(
+            validator.parse_response('{"details":' + submission_boundaries_deep_json() + "}")
         )
 
 
