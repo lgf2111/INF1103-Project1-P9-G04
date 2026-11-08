@@ -24,13 +24,20 @@ def main() -> int:
         print("Set TELEGRAM_BOT_TOKEN to the existing bot token.", file=sys.stderr)
         return 1
 
-    try:
-        chat_id = int(os.environ.get("TELEGRAM_ALLOWED_CHAT_ID", ""))
-        if chat_id <= 0:
-            raise ValueError
-    except ValueError:
-        print("Set TELEGRAM_ALLOWED_CHAT_ID to a positive private chat ID.", file=sys.stderr)
-        return 1
+    # A blank or unset ID accepts any private chat; a value restricts to that chat.
+    chat_id = None
+    raw_chat_id = os.environ.get("TELEGRAM_ALLOWED_CHAT_ID", "").strip()
+    if raw_chat_id:
+        try:
+            chat_id = int(raw_chat_id)
+            if chat_id <= 0:
+                raise ValueError
+        except ValueError:
+            print(
+                "TELEGRAM_ALLOWED_CHAT_ID must be a positive private chat ID, or blank.",
+                file=sys.stderr,
+            )
+            return 1
 
     history_path = os.environ.get("PHISHREPORT_REPORTS_PATH", "reports.json")
     manager = TelegramIOManager(DataManager(JsonReportStorage(history_path)), chat_id)

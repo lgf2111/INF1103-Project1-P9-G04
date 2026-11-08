@@ -101,18 +101,20 @@ leaves history untouched.
 
 #### Configure and run the bot
 
-Create a bot with [BotFather](https://t.me/BotFather). Use its username to open
-the private chat you want to authorize and send `/start`. Before starting the
-container, use the [Telegram Bot API](https://core.telegram.org/bots/api#getupdates)
-to get `message.chat.id` from that update and confirm `message.chat.type` is
-`private`.
+Create a bot with [BotFather](https://t.me/BotFather). By default the bot
+answers any private chat and ignores groups and channels. To restrict it to one
+chat, open that private chat with the bot's username, send `/start`, and use the
+[Telegram Bot API](https://core.telegram.org/bots/api#getupdates) to get
+`message.chat.id` from that update. Confirm `message.chat.type` is `private`.
 
 Add these settings to the repo root's `.env` file. Git ignores `.env`. If you
-previously used `.env.telegram`, move the two Telegram settings into `.env`.
+previously used `.env.telegram`, move the Telegram settings into `.env`.
 
 ```dotenv
 TELEGRAM_BOT_TOKEN=<token from BotFather>
-TELEGRAM_ALLOWED_CHAT_ID=<positive private chat ID>
+# Optional: leave blank to accept any private chat, or set a positive chat ID
+# to restrict the bot to that chat.
+TELEGRAM_ALLOWED_CHAT_ID=<optional positive private chat ID>
 ```
 
 Start Docker and run this from Bash or Git Bash:

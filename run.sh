@@ -125,7 +125,7 @@ elif [ "$command" = "test" ]; then
 elif [ "$command" = "telegram" ]; then
     TELEGRAM_ENV="$PROJECT_DIR/.env"
     if [ ! -f "$TELEGRAM_ENV" ]; then
-        echo "Copy .env.example to .env and set TELEGRAM_BOT_TOKEN and TELEGRAM_ALLOWED_CHAT_ID."
+        echo "Copy .env.example to .env and set TELEGRAM_BOT_TOKEN (TELEGRAM_ALLOWED_CHAT_ID is optional)."
         exit 1
     fi
 
