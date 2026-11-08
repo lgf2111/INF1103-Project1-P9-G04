@@ -115,7 +115,7 @@ def test_env_loading_interrupted_read_does_not_apply_earlier_lines(
 @pytest.fixture
 def env_loading_startup(cli, monkeypatch):
     setup = Mock(return_value=True)
-    menu = Mock(return_value="5")
+    menu = Mock(return_value="6")
     notice = Mock()
     monkeypatch.setattr(AppLogging, "setup", setup)
     monkeypatch.setattr(cli.app, "load_reports", Mock(return_value=[]))
@@ -189,7 +189,7 @@ def test_env_loading_bad_env_warning_survives_unavailable_logging(
 
 
 @pytest.mark.parametrize("failure", ["directory", "invalid-utf8"])
-@pytest.mark.parametrize("answers", ["5\n", ""], ids=["quit", "eof"])
+@pytest.mark.parametrize("answers", ["6\n", ""], ids=["quit", "eof"])
 def test_env_loading_actual_cli_reaches_menu_after_configuration_failure(
     env_loading_env_folder, failure, answers
 ):
@@ -258,7 +258,7 @@ def test_runtime_settings_logging_attribute_names_do_not_crash_startup(tmp_path,
     result = subprocess.run(
         [sys.executable, "-m", "phishreport.cli"],
         cwd=tmp_path,
-        input="5\n",
+        input="6\n",
         text=True,
         capture_output=True,
         env=environment,

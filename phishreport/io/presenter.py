@@ -71,3 +71,16 @@ class ReportPresenter:
                 preview = preview[:47] + "..."
             self._terminal.write(f"{number}. {channel} | {priority} | Score: {score}")
             self._terminal.write(f"   {preview}")
+
+    def display_summary(self, summary, description: str = "all reports") -> None:
+        """Display counts and statistics for the reports that matched a filter."""
+        self._terminal.write("\n=== Report summary ===")
+        self._terminal.write("Showing:", description)
+        self._terminal.write("Reports:", summary.total)
+        if summary.total == 0:
+            self._terminal.write("No saved reports match.")
+            return
+        for section in summary.sections:
+            self._terminal.write(f"\n{section.title}:")
+            for label, value in section.rows:
+                self._terminal.write(f" - {label}: {value}")

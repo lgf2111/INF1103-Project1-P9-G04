@@ -15,7 +15,7 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 | `phishreport/ai_manager.py` | Compatibility functions for AI prompting, requests and validation. |
 | `phishreport/ai/` | AI assessment coordinator, prompt builder, completion client and response validator. |
 | `phishreport/logic_manager.py` | Apply assessment rules, scoring and routing. |
-| `phishreport/logic/` | Assessment rules, scoring, routing and response guidance. |
+| `phishreport/logic/` | Assessment rules, scoring, routing, response guidance and report summaries. |
 | `phishreport/data_manager.py` | Save, load and query JSON reports. |
 | `phishreport/data/` | Report validation and JSON storage. |
 | `phishreport/cli/` | Terminal interface: `main.py` composes the four managers through `PhishReportApp`; `web_upload.py` handles browser-based `.eml` uploads. |
@@ -87,7 +87,37 @@ Start the application:
 uv run --python 3.14 --no-project --with-requirements requirements.txt python -m phishreport.cli
 ```
 
-You can manually check a suspicious message, import or upload an `.eml` email, and view saved reports. New assessments require a valid response from the Groq API.
+You can manually check a suspicious message, import or upload an `.eml` email, view saved reports, and summarize them. New assessments require a valid response from the Groq API.
+
+### Report summary
+
+**Problem:** Saved reports are only a numbered list, so it is hard to see how many
+messages were high priority, which channel they came from, or whether people who
+reported clicking a link are a growing share.
+
+**How to use it:** Choose **5. Summarize saved reports** in the CLI menu. Optionally
+filter by priority (high, medium, low) and channel (email, sms, chat), or press Enter
+to include everything. The summary shows counts by priority and channel, the average,
+highest and lowest rule-based score, and how many reports include a clicked link, a
+downloaded file or a submitted password or code.
+
+**Classes:**
+
+| Class | Role |
+| --- | --- |
+| `ReportFilter` | Immutable criteria (priority, channel, minimum score) with a `matches(record)` predicate. Unknown values raise `ValueError`. |
+| `StoredReport` | Read-only view that hides the current (`result`) and older (top-level score) record layouts. |
+| `SummaryMetric` (abstract) | Contract for one summary block. Subclasses: `PriorityBreakdown`, `ChannelBreakdown`, `ScoreStatistics`, `ReportedExposure`. |
+| `ReportSummarizer` | Runs each metric over the records and builds a `ReportSummary`. A new statistic is a new `SummaryMetric` subclass, with no change to the summarizer. |
+| `LogicManager` | `build_filter()` and `summarize()` expose the feature to the application. |
+| `DataManager` | The existing `query()` returns only the records that match the filter. |
+| `IOManager` / `ReportPresenter` | `collect_summary_filter()` asks for the criteria and `display_summary()` prints the result. |
+| `PhishReportApp` | `summarize_reports()` connects the four managers. |
+
+**Tests:** `tests/core/test_summary.py` covers filter matching and validation, both
+stored layouts, each metric (including unclassifiable values), a custom metric
+subclass, an empty history, an unreadable history file, the filter prompts, the printed
+summary and the menu flow. No AI service is needed.
 
 ### Telegram connection MVP
 

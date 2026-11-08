@@ -96,7 +96,7 @@ def test_submission_boundaries_deep_history_keeps_startup_and_history_menu_usabl
     path.write_text(submission_boundaries_deep_json(), encoding="utf-8")
     before = path.read_bytes()
     monkeypatch.setattr(AppLogging, "setup", lambda: True)
-    choices = iter(["4", "5"])
+    choices = iter(["4", "6"])
     monkeypatch.setattr(cli.io_manager, "main_menu", lambda: next(choices))
     cli.app.run()
     assert "Bye!" in capsys.readouterr().out

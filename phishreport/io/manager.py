@@ -26,12 +26,13 @@ class IOManager:
         self._terminal.write("2. Import an email (.eml file)")
         self._terminal.write("3. Upload an email (.eml file)")
         self._terminal.write("4. View saved reports")
-        self._terminal.write("5. Quit")
+        self._terminal.write("5. Summarize saved reports")
+        self._terminal.write("6. Quit")
 
         return self.get_valid_choice(
-            "Choose 1-5: ",
-            ("1", "2", "3", "4", "5"),
-            "Invalid choice. Please choose 1-5: ",
+            "Choose 1-6: ",
+            ("1", "2", "3", "4", "5", "6"),
+            "Invalid choice. Please choose 1-6: ",
         )
 
     def get_valid_choice(self, prompt, valid_choices, error_message):
@@ -222,6 +223,24 @@ class IOManager:
     def display_record(self, record: dict) -> None:
         """Display a validated saved record, preserving absent historical fields."""
         self._presenter.display_record(record)
+
+    def collect_summary_filter(self) -> dict:
+        """Ask which priority and channel to summarize; Enter keeps every report."""
+        priority = self.get_valid_choice(
+            "Priority to include (high, medium, low, or Enter for all): ",
+            ("", "high", "medium", "low"),
+            "Please enter high, medium, low, or press Enter: ",
+        )
+        channel = self.get_valid_choice(
+            "Channel to include (email, sms, chat, or Enter for all): ",
+            ("", "email", "sms", "chat"),
+            "Please enter email, sms, chat, or press Enter: ",
+        )
+        return {"priority": priority or None, "channel": channel or None}
+
+    def display_summary(self, summary, description: str = "all reports") -> None:
+        """Display a report summary for the given filter description."""
+        self._presenter.display_summary(summary, description)
 
     def display_list(self, records: list[dict]) -> None:
         """Display validated saved summaries without altering or reassessing outcomes."""

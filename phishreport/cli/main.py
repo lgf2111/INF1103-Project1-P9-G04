@@ -172,6 +172,22 @@ class PhishReportApp:
         if records is not None:
             self._io_manager.display_list(records)
 
+    def summarize_reports(self):
+        """Ask for filter criteria, then show counts and statistics for matching reports."""
+        records = self.load_reports()
+        if records is None:
+            return
+        try:
+            report_filter = self._logic_manager.build_filter(
+                **self._io_manager.collect_summary_filter()
+            )
+        except ValueError as error:
+            self._io_manager.show_message(str(error))
+            return
+        matching = self._data_manager.query(report_filter.matches)
+        summary = self._logic_manager.summarize(matching)
+        self._io_manager.display_summary(summary, report_filter.describe())
+
     def run(self):
         """Initialize configuration and logging, then run the interactive menu loop.
 
@@ -210,10 +226,13 @@ class PhishReportApp:
                     # View previous assessments.
                     self.view_reports()
                 elif choice == "5":
+                    # Counts and statistics for saved reports, optionally filtered.
+                    self.summarize_reports()
+                elif choice == "6":
                     self._io_manager.show_message("Bye!")
                     break
                 else:
-                    self._io_manager.show_message("Please choose 1, 2, 3, 4 or 5.")
+                    self._io_manager.show_message("Please choose 1, 2, 3, 4, 5 or 6.")
         except (KeyboardInterrupt, EOFError):
             # Ctrl+C (interrupt) or Ctrl+D (end of input): exit cleanly, no traceback.
             self._io_manager.show_message("\nInterrupted. Goodbye!")

@@ -242,7 +242,7 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
     # Option 2 now picks a .eml from a saved folder. First run asks for the
     # folder; then the newest files are listed (encoded.eml is newer than
     # malformed.eml). Pick the malformed one first (retry), then the good one.
-    answers = iter(["2", str(tmp_path), "2", "1", "no", "no", "no", "5"])
+    answers = iter(["2", str(tmp_path), "2", "1", "no", "no", "no", "6"])
     prompts = []
 
     def answer(prompt):
@@ -251,7 +251,7 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
 
     monkeypatch.setattr("builtins.input", answer)
     cli.app.run()
-    assert prompts[0] == "Choose 1-5: "
+    assert prompts[0] == "Choose 1-6: "
     assert any("email folder" in prompt.lower() for prompt in prompts)
     assert not any(
         "channel" in prompt.lower() or "input method" in prompt.lower() for prompt in prompts
@@ -354,7 +354,7 @@ def test_main_menu_continues_after_bad_record_then_saves_next_assessment(
     tmp_path,
 ):
     main_successful_reply(main_app_boundary)
-    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=["1", "1", "5"]))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=["1", "1", "6"]))
     monkeypatch.setattr(
         cli.io_manager,
         "collect_input",
@@ -398,7 +398,7 @@ def test_main_unwritable_log_destination_keeps_menu_available(
     # A file named "logs" makes os.makedirs("logs") fail, so the file log can't
     # open - the app must still run and warn about logging being unavailable.
     (tmp_path / "logs").write_text("not a directory")
-    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="5"))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="6"))
 
     cli.app.run()
 
@@ -517,7 +517,7 @@ def test_main_configured_storage_logging_uses_application_file(
     cli, main_app_boundary, tmp_path, monkeypatch
 ):
     (tmp_path / "reports.json").write_text("{PRIVATE_BROKEN")
-    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="5"))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="6"))
     cli.app.run()
     text = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
     assert "data_manager" in text and "Could not read local report history" in text
@@ -581,7 +581,7 @@ def test_main_menu_routes_upload_and_saved_reports(
 ):
     handler = Mock()
     monkeypatch.setattr(cli.app, handler_name, handler)
-    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=[choice, "5"]))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=[choice, "6"]))
 
     cli.app.run()
 
