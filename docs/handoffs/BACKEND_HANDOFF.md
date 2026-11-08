@@ -14,7 +14,7 @@ for the implemented connection check.
 The frontend needs a typed Python service boundary for assessment. It must not
 call the CLI's interactive `check_message()` flow: that flow prompts on stdin
 and mixes application work with terminal presentation. Extract the workflow
-into reusable functions under `app_cli/` (for example `app_cli/services/`) and call
+into reusable functions under `phishreport/` (for example `phishreport/services/`) and call
 them directly from the Telegram process. Keep Telegram and terminal I/O out
 of the service. Run slow AI or file operations off the bot's event loop.
 

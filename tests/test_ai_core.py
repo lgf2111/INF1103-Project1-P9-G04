@@ -2,8 +2,9 @@
 
 import json
 
-import ai_core
 import pytest
+
+from phishreport import ai as ai_core
 
 
 class FakeClient:

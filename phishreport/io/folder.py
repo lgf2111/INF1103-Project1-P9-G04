@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-import local_settings
+from phishreport import local_settings
 
 from .eml import EmlReader
 from .terminal import Terminal

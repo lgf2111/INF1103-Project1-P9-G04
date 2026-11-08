@@ -22,7 +22,7 @@ class ScriptedTerminal:
 
 
 def test_eml_reader_decodes_fixture_from_bytes_and_path():
-    from io_core import EmlReader
+    from phishreport.io import EmlReader
 
     path = Path(__file__).resolve().parent / "fixtures" / "sample-1.eml"
     reader = EmlReader()
@@ -35,7 +35,7 @@ def test_eml_reader_decodes_fixture_from_bytes_and_path():
 
 
 def test_folder_picker_can_select_an_earlier_page_after_an_invalid_answer(tmp_path, monkeypatch):
-    from io_core import EmlFolderPicker, EmlReader
+    from phishreport.io import EmlFolderPicker, EmlReader
 
     monkeypatch.chdir(tmp_path)
     folder = Path("inbox")
@@ -68,9 +68,9 @@ def test_folder_picker_can_select_an_earlier_page_after_an_invalid_answer(tmp_pa
 
 @pytest.mark.parametrize("interruption", [EOFError, KeyboardInterrupt])
 def test_folder_picker_propagates_terminal_interruption(monkeypatch, interruption):
-    from io_core import EmlFolderPicker, EmlReader
+    from phishreport.io import EmlFolderPicker, EmlReader
 
-    monkeypatch.setattr("local_settings.get_setting", lambda key: None)
+    monkeypatch.setattr("phishreport.local_settings.get_setting", lambda key: None)
     terminal = ScriptedTerminal([interruption()])
     picker = EmlFolderPicker(terminal, EmlReader())
 
@@ -79,7 +79,7 @@ def test_folder_picker_propagates_terminal_interruption(monkeypatch, interruptio
 
 
 def test_report_presenter_shortens_only_the_history_preview():
-    from io_core import ReportPresenter
+    from phishreport.io import ReportPresenter
 
     message = "0123456789\n0123456789 0123456789 0123456789 0123456789"
     record = {"channel": "chat", "message": message, "priority": "review", "score": 0}
@@ -96,7 +96,7 @@ def test_report_presenter_shortens_only_the_history_preview():
 
 
 def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, monkeypatch):
-    from io_core import IOManager
+    from phishreport.io import IOManager
 
     monkeypatch.chdir(tmp_path)
     raw = b"From: fictional@example.test\r\n\r\nVerify your account."
@@ -158,7 +158,7 @@ def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, mo
     [("wrong.pdf", b"From: fictional@example.test\r\n\r\nHello"), ("empty.eml", b"")],
 )
 def test_io_manager_rejects_an_invalid_upload_before_exposure_questions(filename, content):
-    from io_core import IOManager
+    from phishreport.io import IOManager
 
     terminal = ScriptedTerminal()
 
@@ -170,7 +170,7 @@ def test_io_manager_rejects_an_invalid_upload_before_exposure_questions(filename
 
 @pytest.mark.parametrize("interruption", [EOFError, KeyboardInterrupt])
 def test_io_manager_propagates_menu_interruption(interruption):
-    from io_core import IOManager
+    from phishreport.io import IOManager
 
     terminal = ScriptedTerminal(["wrong", interruption()])
 

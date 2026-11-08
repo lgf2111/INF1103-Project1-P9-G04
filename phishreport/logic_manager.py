@@ -5,7 +5,7 @@ lives in ``logic_core``; these small adapters preserve existing callers while
 the application can migrate to ``LogicManager`` independently.
 """
 
-from logic_core import LogicManager
+from phishreport.logic import LogicManager
 
 _DEFAULT_MANAGER = LogicManager()
 

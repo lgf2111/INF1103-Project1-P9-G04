@@ -8,9 +8,8 @@ from telegram import Update
 from telegram.error import TelegramError
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 
-from app_cli.data_core import DataManager, JsonReportStorage
-
-from .telegram_io_manager import CHECK_CONNECTION, TelegramIOManager
+from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
+from phishreport.data import DataManager, JsonReportStorage
 
 
 async def _report_polling_error(update, context):

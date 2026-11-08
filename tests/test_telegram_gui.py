@@ -12,9 +12,9 @@ import pytest
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler
 
-from app_cli.data_core import DataManager, JsonReportStorage
-from app_gui.main import main
-from app_gui.telegram_io_manager import CHECK_CONNECTION, TelegramIOManager
+from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
+from phishreport.bot.main import main
+from phishreport.data import DataManager, JsonReportStorage
 
 ALLOWED_CHAT_ID = 12345
 
@@ -156,7 +156,7 @@ def test_normal_launcher_imports_without_pytest_path_or_credentials():
     for name in ("PYTHONPATH", "TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_CHAT_ID"):
         environment.pop(name, None)
     result = subprocess.run(
-        [sys.executable, "-m", "app_gui.main"],
+        [sys.executable, "-m", "phishreport.bot"],
         cwd=Path(__file__).resolve().parents[1],
         env=environment,
         capture_output=True,

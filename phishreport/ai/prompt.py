@@ -2,7 +2,7 @@
 
 import json
 
-from ai_prompts import EXTRACTION_INSTRUCTIONS, FINDINGS_INSTRUCTIONS
+from phishreport.ai.prompts import EXTRACTION_INSTRUCTIONS, FINDINGS_INSTRUCTIONS
 
 from ._diagnostics import failure
 

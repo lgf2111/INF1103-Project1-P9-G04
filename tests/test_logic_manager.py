@@ -4,11 +4,12 @@
 
 from copy import deepcopy
 
-import logic_manager
 import pytest
-from logic_core import LogicManager
-from logic_core.rule_engine import PriorityRuleEngine
-from logic_core.rules import DefaultRule, SuspiciousRule
+
+from phishreport import logic_manager
+from phishreport.logic import LogicManager
+from phishreport.logic.rule_engine import PriorityRuleEngine
+from phishreport.logic.rules import DefaultRule, SuspiciousRule
 
 
 # Response-priority rules use fictional, already validated AI findings.

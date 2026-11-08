@@ -25,20 +25,16 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, call
 
-import ai_manager
-import data_manager
-import io_manager
-import local_settings
-import logic_manager
-import main
 import pytest
-import web_upload
-from ai_core import AIClient, AIManager, GroqClient, groq_client
-from data_core import DataManager, JsonReportStorage, json_storage
-from email_html import html_to_text
-from io_core import IOManager
-from io_core.terminal import ConsoleTerminal
-from logic_core import LogicManager
+
+from phishreport import ai_manager, data_manager, io_manager, local_settings, logic_manager
+from phishreport.ai import AIClient, AIManager, GroqClient, groq_client
+from phishreport.cli import main, web_upload
+from phishreport.data import DataManager, JsonReportStorage, json_storage
+from phishreport.email_html import html_to_text
+from phishreport.io import IOManager
+from phishreport.io.terminal import ConsoleTerminal
+from phishreport.logic import LogicManager
 
 REAL_EMAILS = Path(__file__).resolve().parent / "fixtures"
 
@@ -140,12 +136,12 @@ def test_demo_real_email_pipeline_and_reload(
     demo_transport.assert_called_once()
     before = (tmp_path / "reports.json").read_bytes()
     # A separate interpreter proves reload does not depend on in-memory state.
-    environment = dict(os.environ, PYTHONPATH=str(Path(data_manager.__file__).resolve().parent))
+    environment = dict(os.environ, PYTHONPATH=str(Path(data_manager.__file__).resolve().parents[1]))
     subprocess.run(
         [
             sys.executable,
             "-c",
-            "import data_manager; "
+            "from phishreport import data_manager; "
             "assert data_manager.load(strict=True)[0]['result']['score'] == 60",
         ],
         cwd=tmp_path,
@@ -285,7 +281,7 @@ def test_demo_actual_http_upload_of_real_email(cli, demo_transport, monkeypatch)
 # Manager Contract
 # ============================================================================
 manager_contract_ROOT = Path(__file__).resolve().parents[1]
-manager_contract_APP = manager_contract_ROOT / "app_cli"
+manager_contract_APP = manager_contract_ROOT / "phishreport"
 manager_contract_REQUIRED = ("io_manager", "ai_manager", "logic_manager", "data_manager")
 
 
@@ -295,16 +291,19 @@ def test_manager_contract_required_manager_modules_are_importable(name):
     path = manager_contract_APP / (name + ".py")
     assert path.is_file(), "Required manager module is missing: " + name
     assert not (manager_contract_APP / name / "__init__.py").exists()
-    module = importlib.import_module(name)
+    module = importlib.import_module("phishreport." + name)
     assert Path(module.__file__).resolve() == path.resolve()
 
 
 def test_manager_contract_raw_terminal_io_stays_in_console_adapter():
     """Keep direct terminal interaction inside the I/O layer's console adapter."""
-    console_adapter = manager_contract_APP / "io_core" / "terminal.py"
-    paths = list(manager_contract_APP.rglob("*.py")) + list(
-        (manager_contract_ROOT / "tests").rglob("*.py")
-    )
+    console_adapter = manager_contract_APP / "io" / "terminal.py"
+    # The Telegram launcher reports startup errors on stderr and has no console UI.
+    paths = [
+        path
+        for path in manager_contract_APP.rglob("*.py")
+        if "bot" not in path.relative_to(manager_contract_APP).parts
+    ] + list((manager_contract_ROOT / "tests").rglob("*.py"))
     paths += list(manager_contract_ROOT.glob("*.py"))
     for path in paths:
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
@@ -1574,14 +1573,14 @@ def test_eml_validation_fifo_never_blocks_before_file_validation(tmp_path, repla
     os.mkfifo(fifo)
     # Isolate the timeout so a regression cannot hang the test suite.
     script = (
-        "from pathlib import Path\nimport io_manager\n"
+        "from pathlib import Path\nfrom phishreport import io_manager\n"
         + ("Path.is_file = lambda self: True\n" if replace_after_check else "")
         + "try:\n    io_manager.read_eml_details("
         + repr(str(fifo))
         + ")\n"
         + "except ValueError:\n    pass\nelse:\n    raise AssertionError('FIFO accepted')\n"
     )
-    env = dict(os.environ, PYTHONPATH=str(Path(io_manager.__file__).resolve().parent))
+    env = dict(os.environ, PYTHONPATH=str(Path(io_manager.__file__).resolve().parents[1]))
     subprocess.run(
         [sys.executable, "-c", script], env=env, timeout=5, check=True, capture_output=True
     )
@@ -2953,7 +2952,7 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
     disclosure,
     expected_score,
 ):
-    import web_upload
+    from phishreport.cli import web_upload
 
     raw = (
         b"From: fictional@example.test\r\nSubject: Fictional security notice\r\n"
@@ -3004,7 +3003,7 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
 def test_main_invalid_browser_email_stops_before_ai_or_save(
     cli, main_app_boundary, monkeypatch, content
 ):
-    import web_upload
+    from phishreport.cli import web_upload
 
     monkeypatch.setattr(
         web_upload,
@@ -4010,15 +4009,15 @@ def test_env_loading_actual_cli_reaches_menu_after_configuration_failure(
         env_loading_env_folder.mkdir()
     else:
         env_loading_env_folder.write_bytes(b"PHISHREPORT_TEST_NEW=PRIVATE_CONFIG_SENTINEL\n\xff")
-    app = Path(__file__).resolve().parents[1] / "app_cli"
+    root = Path(__file__).resolve().parents[1]
     environment = os.environ.copy()
     for key in ("DATABASE_URL", "GROQ_API_KEY", "GROQ_FALLBACK_MODEL"):
         environment.pop(key, None)
     environment["LOG_LEVEL"] = "INFO"
     environment["PYTHONIOENCODING"] = "utf-8"
-    environment["PYTHONPATH"] = str(app) + os.pathsep + environment.get("PYTHONPATH", "")
+    environment["PYTHONPATH"] = str(root) + os.pathsep + environment.get("PYTHONPATH", "")
     run = subprocess.run(
-        [sys.executable, str(app / "main.py")],
+        [sys.executable, "-m", "phishreport.cli"],
         input=answers,
         text=True,
         capture_output=True,
@@ -4057,7 +4056,7 @@ def test_runtime_settings_non_object_settings_are_logged_and_recovered(
 ):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".phishreport_config.json").write_text(json.dumps(payload), encoding="utf-8")
-    with caplog.at_level(logging.WARNING, logger="local_settings"):
+    with caplog.at_level(logging.WARNING, logger="phishreport.local_settings"):
         assert local_settings.load_settings() == {}
     assert "Could not read local config" in caplog.text
 
@@ -4065,11 +4064,11 @@ def test_runtime_settings_non_object_settings_are_logged_and_recovered(
 @pytest.mark.parametrize("level", ["BASIC_FORMAT", "_STYLES"])
 def test_runtime_settings_logging_attribute_names_do_not_crash_startup(tmp_path, level):
     """An environment value must be a level, not any attribute of logging."""
-    app = Path(__file__).resolve().parents[1] / "app_cli"
-    environment = dict(os.environ, LOG_LEVEL=level)
+    root = Path(__file__).resolve().parents[1]
+    environment = dict(os.environ, LOG_LEVEL=level, PYTHONPATH=str(root))
     environment.pop("GROQ_API_KEY", None)
     result = subprocess.run(
-        [sys.executable, str(app / "main.py")],
+        [sys.executable, "-m", "phishreport.cli"],
         cwd=tmp_path,
         input="5\n",
         text=True,
@@ -4453,7 +4452,7 @@ def web_upload_request_handler(body):
 def test_web_upload_valid_web_eml_matches_folder_input(tmp_path, monkeypatch):
     from email.message import EmailMessage
 
-    import io_manager
+    from phishreport import io_manager
 
     email = EmailMessage()
     email["From"] = "fictional@example.test"
@@ -4500,7 +4499,7 @@ def test_web_upload_valid_web_eml_matches_folder_input(tmp_path, monkeypatch):
     ],
 )
 def test_web_upload_web_upload_is_eml_only_with_clear_rejection(monkeypatch, filename):
-    import io_manager
+    from phishreport import io_manager
 
     message = "Only .eml email files are supported. Images and attachments are not analysed."
     handler = web_upload_request_handler(web_upload_form(b"Not an email.", filename=filename))
@@ -4602,9 +4601,9 @@ def test_docker_helper_run_preserves_existing_data_and_mounts_its_directory(dock
     assert str(data) + ":/data" in args
     assert str(folder / "emails") + ":/emails:ro" in args
     assert args[args.index("-w") + 1] == "/data"
-    assert args[-2:] == ["python", "/app/app_cli/main.py"]
+    assert args[-3:] == ["python", "-m", "phishreport.cli"]
     assert "127.0.0.1:8000:8000" in args
-    assert not any(":/app_cli/reports.json" in arg for arg in args)
+    assert not any(":/phishreport/reports.json" in arg for arg in args)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")
@@ -4678,7 +4677,7 @@ def test_docker_helper_run_builds_image_when_missing(docker_helper_project):
     result, calls = docker_helper_launch(docker_helper_project, DOCKER_IMAGE_MISSING="1")
     assert result.returncode == 0, result.stderr
     assert ["build", "-t", "phishreport", str(docker_helper_project[0])] in calls
-    assert calls[-1][-2:] == ["python", "/app/app_cli/main.py"]
+    assert calls[-1][-3:] == ["python", "-m", "phishreport.cli"]
 
 
 @pytest.mark.skipif(os.name != "posix", reason="Bash helper checks run on Linux/Docker")

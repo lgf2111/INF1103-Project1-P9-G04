@@ -1,6 +1,6 @@
 """Shared failure diagnostics for AI operations."""
 
-import logging_setup
+from phishreport import logging_setup
 
 logger = logging_setup.get_logger("ai_manager")
 
