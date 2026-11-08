@@ -135,7 +135,7 @@ elif [ "$command" = "telegram" ]; then
     mkdir -p "$DATA_DIR"
     docker run --rm \
         --env-file "$(docker_path "$TELEGRAM_ENV")" \
-        -v "$(docker_path "$DATA_DIR"):/data:ro" \
+        -v "$(docker_path "$DATA_DIR"):/data" \
         "$TELEGRAM_IMAGE"
 
 elif [ "$command" = "shell" ]; then

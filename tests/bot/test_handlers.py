@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 from telegram import Update
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler
+from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler
 
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.main import main
@@ -36,7 +36,7 @@ def test_start_shows_one_connection_button():
 
     update.effective_message.reply_text.assert_awaited_once()
     reply = update.effective_message.reply_text.call_args
-    assert reply.args == ("Welcome to PhishReport.",)
+    assert reply.args[0].startswith("Welcome to PhishReport.")
     ((button,),) = reply.kwargs["reply_markup"].inline_keyboard
     assert button.text == "Check connection"
     assert button.callback_data == CHECK_CONNECTION
@@ -143,12 +143,13 @@ def test_launcher_registers_welcome_and_button_handlers_for_polling(monkeypatch)
 
     (app,) = polling.call_args.args
     polling.assert_called_once_with(app, allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])
-    start, check = app.handlers[0]
+    start, check, text = app.handlers[0]
     assert isinstance(start, CommandHandler)
     assert start.commands == {"start"}
     assert isinstance(check, CallbackQueryHandler)
     assert check.pattern.match(CHECK_CONNECTION)
     assert not check.pattern.match(CHECK_CONNECTION + "\n")
+    assert isinstance(text, MessageHandler)
 
 
 def test_normal_launcher_imports_without_pytest_path_or_credentials():

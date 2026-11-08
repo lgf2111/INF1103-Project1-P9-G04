@@ -6,10 +6,19 @@ import sys
 
 from telegram import Update
 from telegram.error import TelegramError
-from telegram.ext import Application, CallbackQueryHandler, CommandHandler
+from telegram.ext import (
+    Application,
+    CallbackQueryHandler,
+    CommandHandler,
+    MessageHandler,
+    filters,
+)
 
+from phishreport.ai import AIManager
+from phishreport.assessment import AssessmentService
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.data import DataManager, JsonReportStorage
+from phishreport.logic import LogicManager
 
 
 async def _report_polling_error(update, context):
@@ -39,7 +48,11 @@ def main() -> int:
             return 1
 
     history_path = os.environ.get("PHISHREPORT_REPORTS_PATH", "reports.json")
-    manager = TelegramIOManager(DataManager(JsonReportStorage(history_path)), chat_id)
+    manager = TelegramIOManager(
+        DataManager(JsonReportStorage(history_path)),
+        chat_id,
+        assessment=AssessmentService(AIManager(), LogicManager()),
+    )
     # Telegram library diagnostics can contain the token in request URLs.
     logging.getLogger("telegram").setLevel(logging.CRITICAL + 1)
     try:
@@ -47,6 +60,9 @@ def main() -> int:
         application.add_handler(CommandHandler("start", manager.start))
         application.add_handler(
             CallbackQueryHandler(manager.check_connection, pattern=rf"^{CHECK_CONNECTION}\Z")
+        )
+        application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, manager.assess_message)
         )
         application.add_error_handler(_report_polling_error)
         application.run_polling(allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])

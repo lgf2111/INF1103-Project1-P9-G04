@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml/badge.svg)](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml)
 
-PhishReport assesses suspicious emails, SMS and chat messages using the Groq API and rule-based scoring. The CLI provides a response priority and recommended actions, and saves assessments locally as JSON. Telegram is the Phase 2 interface. Its first milestone provides a welcome screen and a read-only connection check.
+PhishReport assesses suspicious emails, SMS and chat messages using the Groq API and rule-based scoring. The CLI provides a response priority and recommended actions, and saves assessments locally as JSON. Telegram is the Phase 2 interface: send the bot a suspicious message in a private chat and it replies with the same priority and recommended actions.
 
 **A LOW-priority result does not guarantee that a message is safe.**
 
@@ -19,7 +19,8 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 | `phishreport/data_manager.py` | Save, load and query JSON reports. |
 | `phishreport/data/` | Report validation and JSON storage. |
 | `phishreport/cli/` | Terminal interface: `main.py` composes the four managers through `PhishReportApp`; `web_upload.py` handles browser-based `.eml` uploads. |
-| `phishreport/bot/` | Telegram interface: launcher and handlers. |
+| `phishreport/assessment.py` | Shared assessment workflow (AI findings, then business rules) used by the CLI and the bot. |
+| `phishreport/bot/` | Telegram interface: launcher, handlers, and chat record and reply formatting. |
 | `phishreport/email_html.py` | Convert HTML email content to safe text. |
 | `phishreport/local_settings.py` | Manage local preferences. |
 | `phishreport/logging_setup.py` | Configure diagnostic logs. |
@@ -119,13 +120,25 @@ stored layouts, each metric (including unclassifiable values), a custom metric
 subclass, an empty history, an unreadable history file, the filter prompts, the printed
 summary and the menu flow. No AI service is needed.
 
-### Telegram connection MVP
+### Telegram bot
 
 The bot opens **PhishReport** on `/start` and shows one **Check connection**
 button. The button acknowledges the tap and checks whether the existing
 DataManager can read local history. Missing or empty history passes. If the
-read fails, the bot asks the user to retry. It sends only the check status and
-leaves history untouched.
+read fails, the bot asks the user to retry.
+
+**Assessing a message:** send any text message to the bot in a private chat. The
+bot builds a chat record, runs the shared `AssessmentService` (AI findings, then the
+rule-based score) and replies with the priority, score, reasons and recommended
+actions. It saves each assessment to the same `reports.json` the CLI uses, so
+**View saved reports** and **Summarize saved reports** in the CLI include them.
+A chat message carries no attachment or interaction details, so nothing is recorded as
+clicked, downloaded or submitted; the score reflects the AI findings only. AI calls
+run on a worker thread so the bot stays responsive, and saves take turns.
+
+Every assessment calls the Groq API with your key. Leaving `TELEGRAM_ALLOWED_CHAT_ID`
+blank lets any private chat that finds the bot use that quota, so set the chat ID if
+the bot is public.
 
 #### Configure and run the bot
 
@@ -152,7 +165,8 @@ bash run.sh telegram
 ```
 
 The helper builds the `telegram` target if needed and mounts
-`.phishreport-data/` read-only at `/data`. The bot checks `/data/reports.json`.
+`.phishreport-data/` at `/data`, where the bot reads and writes `reports.json`.
+It needs `GROQ_API_KEY` in `.env` to assess messages.
 It uses outbound polling with one running instance per token.
 
 For a first run with empty history, the direct commands also work in PowerShell:
@@ -189,8 +203,8 @@ The local launcher reads `reports.json` from the working directory. Set
 
 Add an async method to `TelegramIOManager` in `phishreport/bot/handlers.py`.
 Use the same private-chat check before accessing app data. Register the method
-in `phishreport/bot/main.py` and test it with fake updates in `tests/bot/test_handlers.py`.
-Assessment and report browsing still run through the CLI.
+in `phishreport/bot/main.py` and test it with fake updates in `tests/bot/`.
+Report browsing and summaries still run through the CLI.
 
 ### Offline tests
 

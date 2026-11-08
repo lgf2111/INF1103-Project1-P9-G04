@@ -187,7 +187,7 @@ def test_docker_helper_telegram_mounts_history_read_only(docker_helper_project):
     assert ["build", "--target", "telegram", "-t", "phishreport-telegram", str(folder)] in calls
     data = folder / ".phishreport-data"
     assert calls[-1] == [
-        "run", "--rm", "--env-file", str(config), "-v", str(data) + ":/data:ro",
+        "run", "--rm", "--env-file", str(config), "-v", str(data) + ":/data",
         "phishreport-telegram",
     ]
     assert list(data.iterdir()) == []
