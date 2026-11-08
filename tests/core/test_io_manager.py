@@ -48,7 +48,7 @@ def test_io_manager_ask_yes_no_reprompts_invalid_input(monkeypatch):
     assert result is True
 
 
-@pytest.mark.parametrize("choice", ["1", "2", "3", "4", "5"])
+@pytest.mark.parametrize("choice", ["1", "2", "3", "4", "5", "6"])
 def test_io_manager_main_menu_accepts_valid_choice(monkeypatch, choice):
     monkeypatch.setattr("builtins.input", lambda _: choice)
 
@@ -58,7 +58,7 @@ def test_io_manager_main_menu_accepts_valid_choice(monkeypatch, choice):
 
 
 def test_io_manager_main_menu_reprompts_invalid_choice(monkeypatch):
-    answers = iter(["6", "hello", "1"])
+    answers = iter(["7", "hello", "1"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 

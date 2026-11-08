@@ -178,5 +178,5 @@ def test_io_manager_propagates_menu_interruption(interruption):
     with pytest.raises(interruption):
         IOManager(terminal).main_menu()
 
-    assert terminal.prompts == ["Choose 1-5: ", "Invalid choice. Please choose 1-5: "]
+    assert terminal.prompts == ["Choose 1-6: ", "Invalid choice. Please choose 1-6: "]
     assert terminal.lines[0] == "\n=== PhishReport ==="

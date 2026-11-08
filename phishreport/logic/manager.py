@@ -3,19 +3,28 @@
 from .priority_router import PriorityRouter
 from .response_guidance import ResponseGuidanceBuilder
 from .rule_engine import PriorityRuleEngine
+from .summary import ReportFilter, ReportSummarizer
 from .validator import AssessmentValidator
 
 
 class LogicManager:
     """Coordinate the domain logic collaborators for an AI-enriched record."""
 
-    def __init__(self, validator=None, rule_engine=None, router=None, guidance_builder=None):
+    def __init__(
+        self,
+        validator=None,
+        rule_engine=None,
+        router=None,
+        guidance_builder=None,
+        summarizer=None,
+    ):
         self._validator = validator if validator is not None else AssessmentValidator()
         self._rule_engine = rule_engine if rule_engine is not None else PriorityRuleEngine()
         self._router = router if router is not None else PriorityRouter()
         self._guidance_builder = (
             guidance_builder if guidance_builder is not None else ResponseGuidanceBuilder()
         )
+        self._summarizer = summarizer if summarizer is not None else ReportSummarizer()
 
     def validate(self, record):
         """Validate the input record and the AI findings consumed by scoring."""
@@ -49,3 +58,11 @@ class LogicManager:
         return self._guidance_builder.build(
             record, outcome["score"], outcome["priority"]
         )
+
+    def build_filter(self, priority=None, channel=None, min_score=None):
+        """Return a ReportFilter for the given criteria; raise ValueError if one is invalid."""
+        return ReportFilter(priority=priority, channel=channel, min_score=min_score)
+
+    def summarize(self, records):
+        """Return counts and score statistics for already filtered saved reports."""
+        return self._summarizer.summarize(records)
