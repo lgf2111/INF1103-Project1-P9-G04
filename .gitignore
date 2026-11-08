@@ -33,3 +33,6 @@ emails/
 # Operating-system metadata
 .DS_Store
 Thumbs.db
+
+# Personal notes and references (not shared)
+docs/personal/
