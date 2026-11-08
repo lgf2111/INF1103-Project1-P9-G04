@@ -4,10 +4,17 @@ import asyncio
 from collections.abc import Callable
 
 from telegram import Bot
+from telegram.constants import ParseMode
 
 from phishreport.ai.errors import AIErrorTranslator
-from phishreport.bot.gmail import AccountStore, GmailMailbox, LinkedAccount, MailboxError
-from phishreport.bot.messages import ChatRecordBuilder, ResultFormatter
+from phishreport.bot.gmail import (
+    AccountStore,
+    EmailSource,
+    GmailMailbox,
+    LinkedAccount,
+    MailboxError,
+)
+from phishreport.bot.messages import ChatRecordBuilder, PhishingAlertFormatter
 from phishreport.io.eml import EmlReader
 from phishreport.logging_setup import AppLogging
 
@@ -30,7 +37,7 @@ class EmailMonitor:
         interval: float = POLL_SECONDS,
         mailbox_factory: Callable[[str, str], GmailMailbox] = GmailMailbox,
         reader: EmlReader | None = None,
-        formatter: ResultFormatter | None = None,
+        formatter: PhishingAlertFormatter | None = None,
     ) -> None:
         self._bot = bot
         self._store = store
@@ -40,7 +47,7 @@ class EmailMonitor:
         self._interval = interval
         self._mailbox_factory = mailbox_factory
         self._reader = reader or EmlReader()
-        self._formatter = formatter or ResultFormatter()
+        self._formatter = formatter or PhishingAlertFormatter()
         self._builder = ChatRecordBuilder()
         self._errors = AIErrorTranslator()
 
@@ -117,15 +124,22 @@ class EmailMonitor:
             f"Checked an email: priority {result['priority']}" + (", alert sent." if alert else ".")
         )
         if alert:
+            source = EmailSource(raw)
             await self._send(
                 account.chat_id,
-                f"Possible phishing email from {sender or 'an unknown sender'}\n\n"
-                + self._formatter.format(result),
+                self._formatter.format(
+                    result, sender, source.subject, source.gmail_url(account.address)
+                ),
             )
         return True
 
     async def _send(self, chat_id: int, text: str) -> None:
         try:
-            await self._bot.send_message(chat_id=chat_id, text=text)
+            await self._bot.send_message(
+                chat_id=chat_id,
+                text=text,
+                parse_mode=ParseMode.HTML,
+                disable_web_page_preview=True,
+            )
         except Exception:
             AppLogging.log_failure(logger, "Could not send a Telegram alert")

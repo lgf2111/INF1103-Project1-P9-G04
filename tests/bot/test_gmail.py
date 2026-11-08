@@ -7,14 +7,17 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 from phishreport.assessment import AssessmentService
-from phishreport.bot.gmail import AccountStore, LinkedAccount, MailboxError
+from phishreport.bot.gmail import AccountStore, EmailSource, LinkedAccount, MailboxError
 from phishreport.bot.gmail_handlers import GmailLinkHandlers
 from phishreport.bot.monitor import EmailMonitor
 from phishreport.data import DataManager
 from phishreport.logic import LogicManager
 
 PHISHING = {"suspicious": True, "credential_request": True, "insufficient_context": False}
-RAW = b"From: bank@example.test\r\nSubject: Verify\r\n\r\nVerify your password now."
+RAW = (
+    b"From: bank@example.test\r\nSubject: Verify <now>\r\n"
+    b"Message-ID: <abc123@mail.example.test>\r\n\r\nVerify your password now."
+)
 
 
 class FakeMailbox:
@@ -120,7 +123,10 @@ def test_a_phishing_email_is_saved_and_alerted_and_marked_handled(tmp_path):
     asyncio.run(monitor.poll_once())
 
     sent = bot.send_message.call_args.kwargs
-    assert "Possible phishing email from bank@example.test" in sent["text"]
+    assert "<b>From:</b> bank@example.test" in sent["text"]
+    assert "<b>Subject:</b> Verify &lt;now&gt;" in sent["text"]
+    assert "authuser=a%40gmail.com#search/rfc822msgid%3Aabc123%40mail.example.test" in sent["text"]
+    assert sent["parse_mode"] == "HTML"
     assert sent["chat_id"] == 1
     assert data.save.call_args.args[0]["channel"] == "email"
     assert store.get(1).last_uid == 9
@@ -164,3 +170,30 @@ def test_a_network_failure_keeps_the_account_and_retries(tmp_path):
 
     assert store.get(1) is not None
     bot.send_message.assert_not_awaited()
+
+
+def test_alert_is_html_escaped_and_clipped():
+    from phishreport.bot.messages import PhishingAlertFormatter
+
+    result = {
+        "priority": "HIGH",
+        "score": 90,
+        "reasons": ["<script>x</script> " + "a" * 500],
+        "checklist": [f"step {n}" for n in range(9)],
+    }
+
+    text = PhishingAlertFormatter().format(result, "Evil <e@x.test>", "", None)
+
+    assert "🚨 <b>HIGH risk</b>" in text
+    assert "&lt;script&gt;" in text and "<script>" not in text
+    assert "Evil &lt;e@x.test&gt;" in text
+    assert "5. step 4" in text and "6. step 5" not in text
+    assert "Open the email" not in text
+    assert "..." in text
+
+
+def test_email_source_without_message_id_has_no_link():
+    source = EmailSource(b"Subject: Hi\r\n\r\nBody")
+
+    assert source.subject == "Hi"
+    assert source.gmail_url("a@gmail.com") is None

@@ -6,7 +6,10 @@ import os
 import re
 import tempfile
 from dataclasses import asdict, dataclass
+from email import policy
+from email.parser import BytesParser
 from pathlib import Path
+from urllib.parse import quote
 
 IMAP_HOST = "imap.gmail.com"
 ADDRESS_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -161,3 +164,22 @@ class GmailMailbox:
     @staticmethod
     def is_valid_address(address: str) -> bool:
         return bool(ADDRESS_PATTERN.match(address))
+
+
+class EmailSource:
+    """Read the subject and build a Gmail link to the original message."""
+
+    def __init__(self, raw: bytes) -> None:
+        try:
+            headers = BytesParser(policy=policy.default).parsebytes(raw, headersonly=True)
+            self.subject = " ".join(str(headers.get("Subject") or "").split())
+            self._message_id = str(headers.get("Message-ID") or "").strip().strip("<>")
+        except Exception:  # A malformed header only means no subject or link.
+            self.subject, self._message_id = "", ""
+
+    def gmail_url(self, address: str) -> str | None:
+        """Return a link that opens the message in that Gmail account, if it has an ID."""
+        if not self._message_id:
+            return None
+        query = quote(f"rfc822msgid:{self._message_id}", safe="")
+        return f"https://mail.google.com/mail/?authuser={quote(address, safe='')}#search/{query}"
