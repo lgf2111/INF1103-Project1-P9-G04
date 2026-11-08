@@ -12,6 +12,7 @@ import pytest
 from phishreport.ai import GroqClient, groq_client
 from phishreport.cli import main, web_upload
 from phishreport.data import DataManager
+from phishreport.logging_setup import AppLogging
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -75,7 +76,7 @@ def main_app_boundary(cli, tmp_path, monkeypatch):
     monkeypatch.setattr(cli.io_manager, "display_result", Mock())
     # Reset the central logging so each test configures a fresh file logger in
     # its own tmp_path, and restore the root logger afterwards.
-    main.logging_setup._configured = False
+    AppLogging._configured = False
     root = logging.getLogger()
     saved_handlers = root.handlers[:]
     saved_level = root.level
@@ -85,7 +86,7 @@ def main_app_boundary(cli, tmp_path, monkeypatch):
         handler.close()
     root.handlers = saved_handlers
     root.setLevel(saved_level)
-    main.logging_setup._configured = False
+    AppLogging._configured = False
     for name in ("ai_manager", "data_manager"):
         for handler in list(logging.getLogger(name).handlers):
             handler.close()
@@ -378,7 +379,7 @@ def test_main_menu_continues_after_bad_record_then_saves_next_assessment(
 
 def test_main_configured_logging_writes_sanitised_diagnostics(main_app_boundary, tmp_path, capsys):
     # Default level (no LOG_LEVEL=DEBUG): sanitised, no traceback, no secrets.
-    assert main.logging_setup.setup_logging() is True
+    assert AppLogging.setup() is True
     main_app_boundary.side_effect = TimeoutError("PRIVATE_EXCEPTION")
     with pytest.raises(RuntimeError):
         GroqClient().complete("PRIVATE_PROMPT")
@@ -411,7 +412,7 @@ def test_main_unwritable_log_destination_keeps_menu_available(
 def test_main_failed_log_write_does_not_crash_or_leak(main_app_boundary, monkeypatch, capsys):
     # Even if writing to the log file fails, the AI error must still surface and
     # nothing private may reach the terminal.
-    assert main.logging_setup.setup_logging() is True
+    assert AppLogging.setup() is True
     for handler in logging.getLogger().handlers:
         if hasattr(handler, "stream"):
             stream = Mock(wraps=handler.stream)

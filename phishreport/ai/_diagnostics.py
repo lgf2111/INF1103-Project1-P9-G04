@@ -2,14 +2,14 @@
 
 import logging
 
-from phishreport import logging_setup
+from phishreport.logging_setup import AppLogging
 
 
 class FailureDiagnostics:
     """Log developer-controlled failure reasons and build the public errors."""
 
     def __init__(self, logger: logging.Logger | None = None) -> None:
-        self._logger = logging_setup.get_logger("ai_manager") if logger is None else logger
+        self._logger = AppLogging.get_logger("ai_manager") if logger is None else logger
 
     @property
     def logger(self) -> logging.Logger:
@@ -24,5 +24,5 @@ class FailureDiagnostics:
         reason only (no traceback); with LOG_LEVEL=DEBUG it also captures the full
         traceback to help diagnose failures. The caller decides how to continue.
         """
-        logging_setup.log_failure(self._logger, f"stage={stage} reason={message}")
+        AppLogging.log_failure(self._logger, f"stage={stage} reason={message}")
         return error_type(message)

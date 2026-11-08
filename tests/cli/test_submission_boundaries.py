@@ -9,11 +9,12 @@ import pytest
 
 from phishreport import local_settings as local_settings_module
 from phishreport.ai import AIResponseValidator, groq_client
-from phishreport.cli import main, web_upload
+from phishreport.cli import web_upload
 from phishreport.data import DataManager
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.local_settings import LocalSettings
+from phishreport.logging_setup import AppLogging
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 io_manager = IOManager(ConsoleTerminal())
@@ -94,7 +95,7 @@ def test_submission_boundaries_deep_history_keeps_startup_and_history_menu_usabl
     path = tmp_path / "reports.json"
     path.write_text(submission_boundaries_deep_json(), encoding="utf-8")
     before = path.read_bytes()
-    monkeypatch.setattr(main.logging_setup, "setup_logging", lambda: True)
+    monkeypatch.setattr(AppLogging, "setup", lambda: True)
     choices = iter(["4", "5"])
     monkeypatch.setattr(cli.io_manager, "main_menu", lambda: next(choices))
     cli.app.run()

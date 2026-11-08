@@ -4,14 +4,14 @@
 
 import os
 
-from phishreport import logging_setup
 from phishreport.ai import AIManager
 from phishreport.data import DataManager
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
+from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
 
-logger = logging_setup.get_logger(__name__)
+logger = AppLogging.get_logger(__name__)
 
 
 class AIErrorTranslator:
@@ -107,13 +107,13 @@ class PhishReportApp:
         # RuntimeError: the AI could not complete after its retries (service down,
         # offline, rate limited). Show an actionable message; the AI is never bypassed.
         except RuntimeError as error:
-            logging_setup.log_failure(logger, "Assessment failed after AI retries")
+            AppLogging.log_failure(logger, "Assessment failed after AI retries")
             self._io_manager.show_message(self._error_translator.translate(error))
             return
         # ValueError: bad input or an invalid AI reply - not retryable. KeyError and
         # TypeError would be programming bugs, so let them surface.
         except ValueError as error:
-            logging_setup.log_failure(logger, "Assessment failed")
+            AppLogging.log_failure(logger, "Assessment failed")
             self._io_manager.show_message("Sorry, the check failed: " + str(error))
             return
 
@@ -127,7 +127,7 @@ class PhishReportApp:
         try:
             self._data_manager.save(report)
         except (OSError, ValueError):
-            logging_setup.log_failure(logger, "Local report save failed")
+            AppLogging.log_failure(logger, "Local report save failed")
             self._io_manager.show_message(
                 "Could not save the local report; existing history preserved."
             )
@@ -145,7 +145,7 @@ class PhishReportApp:
             upload = web_upload.BrowserUploadService().receive_upload()
             record = self._io_manager.collect_input_from_upload(upload)
         except (OSError, RuntimeError, ValueError) as error:
-            logging_setup.log_failure(logger, "File upload failed")
+            AppLogging.log_failure(logger, "File upload failed")
             self._io_manager.show_message("Upload failed: " + str(error))
             return
 
@@ -160,7 +160,7 @@ class PhishReportApp:
         try:
             return self._data_manager.load(strict=True)
         except (OSError, ValueError):
-            logging_setup.log_failure(logger, "Reading local report history failed")
+            AppLogging.log_failure(logger, "Reading local report history failed")
             self._io_manager.show_message(
                 "Could not load local report history; existing file preserved."
             )
@@ -181,7 +181,7 @@ class PhishReportApp:
         env_loaded = self._env_loader.load()
         # Load environment settings before logging so LOG_LEVEL is respected.
         # Set LOG_LEVEL=DEBUG to include tracebacks in subsequent failure diagnostics.
-        if not logging_setup.setup_logging():
+        if not AppLogging.setup():
             self._io_manager.show_message("Warning: diagnostic logging is unavailable.")
         if not env_loaded:
             # No raw file/exception details: even DEBUG must not expose credentials.

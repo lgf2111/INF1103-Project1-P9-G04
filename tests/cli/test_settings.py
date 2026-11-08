@@ -14,6 +14,7 @@ from phishreport.cli import main
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.local_settings import LocalSettings
+from phishreport.logging_setup import AppLogging
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 io_manager = IOManager(ConsoleTerminal())
@@ -116,7 +117,7 @@ def env_loading_startup(cli, monkeypatch):
     setup = Mock(return_value=True)
     menu = Mock(return_value="5")
     notice = Mock()
-    monkeypatch.setattr(main.logging_setup, "setup_logging", setup)
+    monkeypatch.setattr(AppLogging, "setup", setup)
     monkeypatch.setattr(cli.app, "load_reports", Mock(return_value=[]))
     monkeypatch.setattr(cli.io_manager, "main_menu", menu)
     monkeypatch.setattr(cli.io_manager, "show_message", notice)

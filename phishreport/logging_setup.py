@@ -18,102 +18,113 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 
-# A NullHandler on the root logger means that if setup_logging() was never
+# A NullHandler on the root logger means that if AppLogging.setup() was never
 # called (e.g. a module used on its own, or in some tests), log records are
 # swallowed instead of falling back to Python's stderr printer. This keeps the
 # CLI clean and secrets off the terminal.
 logging.getLogger().addHandler(logging.NullHandler())
 
-LOG_DIR = "logs"
-LOG_FILE = os.path.join(LOG_DIR, "phishreport.log")
 
-# Keep up to ~1 MB per file and a few old copies, so logs can't fill the disk.
-MAX_BYTES = 1_000_000
-BACKUP_COUNT = 3
+class AppLogging:
+    """Set up and use the application's diagnostic logging.
 
-FORMAT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
-
-_configured = False
-
-
-def _resolve_level():
-    """Read LOG_LEVEL from the environment; default to INFO. Returns a logging level int.
-
-    Unknown values fall back to INFO so a typo never silences logging.
+    Logging is process-wide, so the configuration and the "already set up" flag
+    live on the class. Callers ask for module loggers with get_logger() and
+    report failures with log_failure(); setup() is called once by the CLI.
     """
-    name = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
-    return logging.getLevelNamesMapping().get(name, logging.INFO)
 
+    LOG_DIR = "logs"
+    LOG_FILE = os.path.join(LOG_DIR, "phishreport.log")
 
-def debug_enabled():
-    """Return whether the configured level enables debug detail (DEBUG or lower).
+    # Keep up to ~1 MB per file and a few old copies, so logs can't fill the disk.
+    MAX_BYTES = 1_000_000
+    BACKUP_COUNT = 3
 
-    Callers use this to decide whether to log tracebacks/raw causes (debug) or a
-    sanitised summary (default), so secrets stay out of normal logs.
-    """
-    return _resolve_level() <= logging.DEBUG
+    FORMAT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
 
+    _configured = False
 
-def setup_logging():
-    """Set up app-wide logging to a rotating file in the logs/ folder.
+    @classmethod
+    def level(cls):
+        """Read LOG_LEVEL from the environment; default to INFO. Returns a logging level int.
 
-    Call once, early in main(). Returns True if the file log is active, or False
-    if the logs/ folder or file could not be opened (the app still runs without a
-    file log). Safe to call more than once.
-    """
-    global _configured
-    if _configured:
+        Unknown values fall back to INFO so a typo never silences logging.
+        """
+        name = os.environ.get("LOG_LEVEL", "INFO").strip().upper()
+        return logging.getLevelNamesMapping().get(name, logging.INFO)
+
+    @classmethod
+    def debug_enabled(cls):
+        """Return whether the configured level enables debug detail (DEBUG or lower).
+
+        Callers use this to decide whether to log tracebacks/raw causes (debug) or a
+        sanitised summary (default), so secrets stay out of normal logs.
+        """
+        return cls.level() <= logging.DEBUG
+
+    @classmethod
+    def setup(cls):
+        """Set up app-wide logging to a rotating file in the logs/ folder.
+
+        Call once, early in main(). Returns True if the file log is active, or False
+        if the logs/ folder or file could not be opened (the app still runs without a
+        file log). Safe to call more than once.
+        """
+        if cls._configured:
+            return True
+
+        level = cls.level()
+        root = logging.getLogger()
+        root.setLevel(level)
+
+        try:
+            os.makedirs(cls.LOG_DIR, exist_ok=True)
+            handler = RotatingFileHandler(
+                cls.LOG_FILE,
+                maxBytes=cls.MAX_BYTES,
+                backupCount=cls.BACKUP_COUNT,
+                encoding="utf-8",
+            )
+        except OSError:
+            return False
+
+        handler.setLevel(level)
+        handler.setFormatter(logging.Formatter(cls.FORMAT))
+        root.addHandler(handler)
+
+        logging.getLogger(__name__).info(
+            "=== logging started (level=%s) ===", logging.getLevelName(level)
+        )
+        cls._configured = True
         return True
 
-    level = _resolve_level()
-    root = logging.getLogger()
-    root.setLevel(level)
+    @staticmethod
+    def get_logger(name):
+        """Return a logger for a module. Use AppLogging.get_logger(__name__) at module top.
 
-    try:
-        os.makedirs(LOG_DIR, exist_ok=True)
-        handler = RotatingFileHandler(
-            LOG_FILE, maxBytes=MAX_BYTES, backupCount=BACKUP_COUNT, encoding="utf-8"
-        )
-    except OSError:
-        return False
+        Attaches a NullHandler so that, even if setup() hasn't run and the root
+        logger has no handlers, records are swallowed rather than printed to the
+        terminal by Python's last-resort handler.
+        """
+        module_logger = logging.getLogger(name)
+        if not any(isinstance(h, logging.NullHandler) for h in module_logger.handlers):
+            module_logger.addHandler(logging.NullHandler())
+        return module_logger
 
-    handler.setLevel(level)
-    handler.setFormatter(logging.Formatter(FORMAT))
-    root.addHandler(handler)
+    @classmethod
+    def log_failure(cls, logger, summary):
+        """Log a failure safely by default, with full detail only in debug mode.
 
-    logging.getLogger(__name__).info(
-        "=== logging started (level=%s) ===", logging.getLevelName(level)
-    )
-    _configured = True
-    return True
+        Call this from inside an 'except' block. 'summary' must be a fixed,
+        developer-written message with no secrets or user content.
 
-
-def get_logger(name):
-    """Return a logger for a module. Use get_logger(__name__) at module top.
-
-    Attaches a NullHandler so that, even if setup_logging() hasn't run and the
-    root logger has no handlers, records are swallowed rather than printed to the
-    terminal by Python's last-resort handler.
-    """
-    module_logger = logging.getLogger(name)
-    if not any(isinstance(h, logging.NullHandler) for h in module_logger.handlers):
-        module_logger.addHandler(logging.NullHandler())
-    return module_logger
-
-
-def log_failure(logger, summary):
-    """Log a failure safely by default, with full detail only in debug mode.
-
-    Call this from inside an 'except' block. 'summary' must be a fixed,
-    developer-written message with no secrets or user content.
-
-    - Default (LOG_LEVEL not DEBUG): logs just the summary at WARNING. No
-      traceback and no raw exception text, so API keys and
-      message content never reach the log.
-    - LOG_LEVEL=DEBUG: logs the summary at ERROR with the full traceback
-      (exc_info), so you can see exactly why it failed while debugging.
-    """
-    if debug_enabled():
-        logger.error(summary, exc_info=True)
-    else:
-        logger.warning(summary)
+        - Default (LOG_LEVEL not DEBUG): logs just the summary at WARNING. No
+          traceback and no raw exception text, so API keys and
+          message content never reach the log.
+        - LOG_LEVEL=DEBUG: logs the summary at ERROR with the full traceback
+          (exc_info), so you can see exactly why it failed while debugging.
+        """
+        if cls.debug_enabled():
+            logger.error(summary, exc_info=True)
+        else:
+            logger.warning(summary)

@@ -8,9 +8,9 @@ import json
 import os
 import tempfile
 
-from phishreport import logging_setup
+from phishreport.logging_setup import AppLogging
 
-logger = logging_setup.get_logger(__name__)
+logger = AppLogging.get_logger(__name__)
 
 FILE = ".phishreport_config.json"
 
@@ -51,7 +51,7 @@ class LocalSettings:
         except FileNotFoundError:
             return {}
         except (OSError, ValueError, RecursionError):
-            logging_setup.log_failure(logger, "Could not read local config; using defaults.")
+            AppLogging.log_failure(logger, "Could not read local config; using defaults.")
             if strict:
                 raise
             return {}
@@ -80,7 +80,7 @@ class LocalSettings:
             os.replace(temporary, self._path)
             return True
         except (OSError, ValueError, RecursionError):
-            logging_setup.log_failure(logger, "Could not save local config.")
+            AppLogging.log_failure(logger, "Could not save local config.")
             return False
         finally:
             if temporary is not None:
@@ -89,4 +89,4 @@ class LocalSettings:
                 except FileNotFoundError:
                     pass
                 except OSError:
-                    logging_setup.log_failure(logger, "Could not remove temporary local config.")
+                    AppLogging.log_failure(logger, "Could not remove temporary local config.")
