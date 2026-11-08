@@ -140,7 +140,8 @@ def main_record():
 @pytest.mark.parametrize("invented_contact", [False, True])
 @pytest.mark.parametrize("disclosure, expected_score", [("no", 60), ("otp", 90)])
 def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
-    cli, main_app_boundary,
+    cli,
+    main_app_boundary,
     monkeypatch,
     invented_contact,
     disclosure,
@@ -154,8 +155,8 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
         b'<a href="https://credential.example.test/login">Verify account</a>'
     )
     monkeypatch.setattr(
-        web_upload,
-        "start_and_wait_for_upload",
+        web_upload.BrowserUploadService,
+        "receive_upload",
         Mock(
             return_value={
                 "filename": "fictional.eml",
@@ -198,8 +199,8 @@ def test_main_invalid_browser_email_stops_before_ai_or_save(
 ):
 
     monkeypatch.setattr(
-        web_upload,
-        "start_and_wait_for_upload",
+        web_upload.BrowserUploadService,
+        "receive_upload",
         Mock(
             return_value={
                 "filename": "fictional.eml",
@@ -215,7 +216,8 @@ def test_main_invalid_browser_email_stops_before_ai_or_save(
 
 @pytest.mark.parametrize("invented_contact", [False, True])
 def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
-    cli, main_app_boundary,
+    cli,
+    main_app_boundary,
     monkeypatch,
     tmp_path,
     invented_contact,
@@ -269,7 +271,8 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
 
 @pytest.mark.parametrize("failure", ["input", "timeout", "http", "incomplete", "json", "schema"])
 def test_main_failed_assessment_never_reaches_logic_storage_or_success_display(
-    cli, main_app_boundary,
+    cli,
+    main_app_boundary,
     monkeypatch,
     failure,
 ):
@@ -344,7 +347,8 @@ def test_main_successful_assessment_reaches_real_logic_and_storage(
 
 
 def test_main_menu_continues_after_bad_record_then_saves_next_assessment(
-    cli, main_app_boundary,
+    cli,
+    main_app_boundary,
     monkeypatch,
     tmp_path,
 ):
@@ -426,7 +430,8 @@ def test_main_failed_log_write_does_not_crash_or_leak(main_app_boundary, monkeyp
 
 @pytest.mark.parametrize("failure", ["missing-findings", "detail-type", "invented-contact"])
 def test_main_combined_validation_failure_stops_before_logic_and_storage(
-    cli, main_app_boundary,
+    cli,
+    main_app_boundary,
     monkeypatch,
     failure,
 ):

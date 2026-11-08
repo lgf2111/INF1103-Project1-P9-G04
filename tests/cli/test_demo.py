@@ -87,9 +87,9 @@ def test_demo_real_email_pipeline_and_reload(
         cli.app.check_message(io_manager.collect_input_from_folder())
     else:
         monkeypatch.setattr(
-            web_upload,
-            "start_and_wait_for_upload",
-            lambda: {
+            web_upload.BrowserUploadService,
+            "receive_upload",
+            lambda self: {
                 "filename": name,
                 "content": path.read_bytes(),
             },
@@ -206,8 +206,8 @@ def test_demo_actual_http_upload_of_real_email(cli, demo_transport, monkeypatch)
     servers, errors = [], []
     original = web_upload._UploadServer
 
-    def make_server(address):
-        server = original(address)
+    def make_server(address, parser):
+        server = original(address, parser)
         servers.append(server)
         ready.set()
         return server

@@ -79,57 +79,63 @@ _DONE_PAGE = (
     "</div></body></html>"
 ).encode()
 
-def parse_upload(content_type, body):
-    """Return filename and original content bytes from one bounded multipart upload.
 
-    Require a single .eml file field and valid framing; raise ValueError for
-    rejected headers, structure or size. Email decoding belongs to the I/O
-    layer after upload, so accepted bytes are not rewritten here.
-    """
-    if len(body) > MAX_REQUEST_BYTES:
-        raise ValueError(SIZE_ERROR)
-    if not isinstance(content_type, str) or "\r" in content_type or "\n" in content_type:
-        raise ValueError("Invalid upload content type.")
-    message = BytesHeaderParser(policy=policy.default).parsebytes(
-        b"Content-Type: " + content_type.encode("ascii") + b"\r\n\r\n"
-    )
-    boundary = message.get_boundary()
-    if message.get_content_type() != "multipart/form-data" or not boundary:
-        raise ValueError("Expected a multipart file upload.")
-    # Delimit only complete boundary lines. Do not MIME-parse the file itself:
-    # message/rfc822 files otherwise become nested message objects and lose the
-    # original-byte contract. The common email parser handles them afterwards.
-    if len(boundary) > 70 or "\r" in boundary or "\n" in boundary:
-        raise ValueError("Invalid upload boundary.")
-    delimiters = list(
-        re.finditer(
-            rb"(?:\A|\r\n)--" + re.escape(boundary.encode("ascii")) + rb"(--)?[ \t]*(?:\r\n|\Z)",
-            body,
+class UploadParser:
+    """Validate one bounded multipart request and extract its .eml file."""
+
+    def parse(self, content_type, body):
+        """Return filename and original content bytes from one bounded multipart upload.
+
+        Require a single .eml file field and valid framing; raise ValueError for
+        rejected headers, structure or size. Email decoding belongs to the I/O
+        layer after upload, so accepted bytes are not rewritten here.
+        """
+        if len(body) > MAX_REQUEST_BYTES:
+            raise ValueError(SIZE_ERROR)
+        if not isinstance(content_type, str) or "\r" in content_type or "\n" in content_type:
+            raise ValueError("Invalid upload content type.")
+        message = BytesHeaderParser(policy=policy.default).parsebytes(
+            b"Content-Type: " + content_type.encode("ascii") + b"\r\n\r\n"
         )
-    )
-    if len(delimiters) != 2 or delimiters[0].group(1) or not delimiters[1].group(1):
-        raise ValueError("Upload exactly one file.")
-    raw_part = body[delimiters[0].end() : delimiters[1].start()]
-    headers, separator, content = raw_part.partition(b"\r\n\r\n")
-    if not separator:
-        raise ValueError("Invalid file upload headers.")
-    part = BytesHeaderParser(policy=policy.default).parsebytes(headers + b"\r\n\r\n")
-    if (
-        part.defects
-        or part.get_content_disposition() != "form-data"
-        or part.get_param("name", header="content-disposition") != "file"
-    ):
-        raise ValueError("Invalid file upload field.")
-    if part.get("Content-Transfer-Encoding", "binary").lower() not in ("binary", "8bit"):
-        raise ValueError("Unsupported upload encoding.")
-    filename = part.get_filename()
-    if not filename or not filename.lower().endswith(".eml"):
-        raise ValueError(UPLOAD_TYPE_MESSAGE)
-    if not content:
-        raise ValueError("Email file is empty.")
-    if len(content) > MAX_UPLOAD_BYTES:
-        raise ValueError(SIZE_ERROR)
-    return {"filename": filename, "content": content}
+        boundary = message.get_boundary()
+        if message.get_content_type() != "multipart/form-data" or not boundary:
+            raise ValueError("Expected a multipart file upload.")
+        # Delimit only complete boundary lines. Do not MIME-parse the file itself:
+        # message/rfc822 files otherwise become nested message objects and lose the
+        # original-byte contract. The common email parser handles them afterwards.
+        if len(boundary) > 70 or "\r" in boundary or "\n" in boundary:
+            raise ValueError("Invalid upload boundary.")
+        delimiters = list(
+            re.finditer(
+                rb"(?:\A|\r\n)--"
+                + re.escape(boundary.encode("ascii"))
+                + rb"(--)?[ \t]*(?:\r\n|\Z)",
+                body,
+            )
+        )
+        if len(delimiters) != 2 or delimiters[0].group(1) or not delimiters[1].group(1):
+            raise ValueError("Upload exactly one file.")
+        raw_part = body[delimiters[0].end() : delimiters[1].start()]
+        headers, separator, content = raw_part.partition(b"\r\n\r\n")
+        if not separator:
+            raise ValueError("Invalid file upload headers.")
+        part = BytesHeaderParser(policy=policy.default).parsebytes(headers + b"\r\n\r\n")
+        if (
+            part.defects
+            or part.get_content_disposition() != "form-data"
+            or part.get_param("name", header="content-disposition") != "file"
+        ):
+            raise ValueError("Invalid file upload field.")
+        if part.get("Content-Transfer-Encoding", "binary").lower() not in ("binary", "8bit"):
+            raise ValueError("Unsupported upload encoding.")
+        filename = part.get_filename()
+        if not filename or not filename.lower().endswith(".eml"):
+            raise ValueError(UPLOAD_TYPE_MESSAGE)
+        if not content:
+            raise ValueError("Email file is empty.")
+        if len(content) > MAX_UPLOAD_BYTES:
+            raise ValueError(SIZE_ERROR)
+        return {"filename": filename, "content": content}
 
 
 class _UploadRequestHandler(http.server.BaseHTTPRequestHandler):
@@ -151,7 +157,7 @@ class _UploadRequestHandler(http.server.BaseHTTPRequestHandler):
             body = self.rfile.read(length)
             if len(body) != length:
                 raise ValueError("Incomplete upload.")
-            upload = parse_upload(self.headers.get("Content-Type"), body)
+            upload = self.server.parser.parse(self.headers.get("Content-Type"), body)
         except ValueError as error:
             self.send_error(413 if str(error) == SIZE_ERROR else 400, str(error))
             return
@@ -175,8 +181,9 @@ class _UploadRequestHandler(http.server.BaseHTTPRequestHandler):
 class _UploadServer(http.server.HTTPServer):
     """Own the accepted file for a single upload session."""
 
-    def __init__(self, address):
+    def __init__(self, address, parser):
         self._upload = None
+        self.parser = parser
         super().__init__(address, _UploadRequestHandler)
 
     def accept_upload(self, upload):
@@ -189,13 +196,22 @@ class _UploadServer(http.server.HTTPServer):
         return self._upload
 
 
-def start_and_wait_for_upload():
-    """Block until one valid upload arrives, then return its filename/content dict.
+class BrowserUploadService:
+    """Run one browser upload session: serve the form, parse and return the email."""
 
-    Release the socket on exit, including cancellation. Configuration and
-    server errors propagate to the application upload flow.
-    """
-    if type(PORT) is not int or not 0 <= PORT <= 65535:
-        raise ValueError("UPLOAD_PORT must be an integer from 0 to 65535.")
-    with _UploadServer((BIND_HOST, PORT)) as server:
-        return server.wait_for_upload()
+    def __init__(self, host=None, port=None, parser=None, server_factory=None):
+        self._host = BIND_HOST if host is None else host
+        self._port = PORT if port is None else port
+        self._parser = parser or UploadParser()
+        self._server_factory = server_factory or _UploadServer
+
+    def receive_upload(self):
+        """Block until one valid upload arrives, then return its filename/content dict.
+
+        Release the socket on exit, including cancellation. Configuration and
+        server errors propagate to the application upload flow.
+        """
+        if type(self._port) is not int or not 0 <= self._port <= 65535:
+            raise ValueError("UPLOAD_PORT must be an integer from 0 to 65535.")
+        with self._server_factory((self._host, self._port), self._parser) as server:
+            return server.wait_for_upload()
