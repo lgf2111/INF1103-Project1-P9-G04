@@ -9,12 +9,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from phishreport import io_manager
 from phishreport.ai import AIManager
 from phishreport.email_html import html_to_text
+from phishreport.io import IOManager, eml
+from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logic import LogicManager
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
+io_manager = IOManager(ConsoleTerminal())
 
 
 # ============================================================================
@@ -239,7 +241,7 @@ def test_io_manager_read_eml_details_extracts_email_content(tmp_path):
         encoding="utf-8",
     )
 
-    sender, message = io_manager.read_eml_details(email_file)
+    sender, message = io_manager.eml_reader.read_path(email_file)
 
     assert sender == "Microsoft Updates <update@micr0soft.com>"
 
@@ -263,7 +265,7 @@ def test_io_manager_read_eml_details_rejects_empty_message(tmp_path):
     )
 
     with pytest.raises(ValueError, match="No readable email message"):
-        io_manager.read_eml_details(empty_email)
+        io_manager.eml_reader.read_path(empty_email)
 
 
 def test_io_manager_collect_input_from_folder_with_follow_up_questions(monkeypatch, tmp_path):
@@ -298,7 +300,7 @@ def test_io_manager_collect_input_from_folder_with_follow_up_questions(monkeypat
 
     monkeypatch.setattr("builtins.input", fake_input)
 
-    picker = io_manager.default_io_manager.folder_picker
+    picker = io_manager.folder_picker
     monkeypatch.setattr(picker, "get_eml_folder", lambda: str(tmp_path))
     monkeypatch.setattr(picker, "choose_eml_file", lambda folder: email_file)
     record = io_manager.collect_input_from_folder()
@@ -364,7 +366,7 @@ def test_io_manager_read_eml_details_rejects_deeply_nested_mime(tmp_path):
     )
 
     with pytest.raises(ValueError, match="deeply nested|nesting is too deep"):
-        io_manager.read_eml_details(nested_email)
+        io_manager.eml_reader.read_path(nested_email)
 
 
 def test_io_manager_read_eml_details_rejects_too_many_mime_parts(tmp_path):
@@ -399,7 +401,7 @@ def test_io_manager_read_eml_details_rejects_too_many_mime_parts(tmp_path):
     )
 
     with pytest.raises(ValueError, match="too many MIME parts"):
-        io_manager.read_eml_details(email_file)
+        io_manager.eml_reader.read_path(email_file)
 
 
 def test_io_manager_read_eml_details_rejects_excessive_mime_depth(tmp_path):
@@ -447,10 +449,10 @@ def test_io_manager_read_eml_details_rejects_excessive_mime_depth(tmp_path):
     parsed_email = BytesParser(policy=policy.default).parsebytes(email_file.read_bytes())
 
     with pytest.raises(ValueError, match="nesting is too deep"):
-        io_manager.validate_mime_limits(parsed_email)
+        eml.validate_mime_limits(parsed_email)
 
     with pytest.raises(ValueError, match="nesting is too deep"):
-        io_manager.read_eml_details(email_file)
+        io_manager.eml_reader.read_path(email_file)
 
 
 def test_io_manager_read_eml_details_accepts_exactly_100_mime_parts(tmp_path):
@@ -481,7 +483,7 @@ def test_io_manager_read_eml_details_accepts_exactly_100_mime_parts(tmp_path):
     # Write exact CRLF bytes to avoid Windows newline conversion.
     email_file.write_bytes(("\r\n".join(lines) + "\r\n").encode("utf-8"))
 
-    sender, message = io_manager.read_eml_details(email_file)
+    sender, message = io_manager.eml_reader.read_path(email_file)
 
     assert sender == "sender@example.com"
     assert "Subject: MIME Boundary Test" in message
@@ -528,7 +530,7 @@ def test_io_manager_read_eml_details_accepts_exactly_32_mime_depth(tmp_path):
     # Use write_bytes to preserve CRLF on Windows.
     email_file.write_bytes(("\r\n".join(lines) + "\r\n").encode("utf-8"))
 
-    sender, message = io_manager.read_eml_details(email_file)
+    sender, message = io_manager.eml_reader.read_path(email_file)
 
     assert sender == "sender@example.com"
     assert message == (
@@ -549,15 +551,15 @@ def test_io_manager_read_eml_details_accepts_exactly_2_mib(tmp_path):
     )
 
     # Calculate how many bytes are needed to reach 2 MiB.
-    padding_size = io_manager.MAX_EML_BYTES - len(email_content)
+    padding_size = eml.MAX_EML_BYTES - len(email_content)
 
     # Add trailing whitespace without changing the actual message.
     email_file.write_bytes(email_content + b" " * padding_size)
 
     # Confirm the file is exactly 2 MiB.
-    assert email_file.stat().st_size == io_manager.MAX_EML_BYTES
+    assert email_file.stat().st_size == eml.MAX_EML_BYTES
 
-    sender, message = io_manager.read_eml_details(email_file)
+    sender, message = io_manager.eml_reader.read_path(email_file)
 
     assert sender == "sender@example.com"
     assert message == ("Subject: File Size Boundary Test\n\nThis is a valid email.")
@@ -576,7 +578,7 @@ def test_io_manager_read_eml_details_rejects_over_2_mib(tmp_path):
     )
 
     # Create a file that exceeds 2 MiB by exactly 1 byte.
-    target_size = io_manager.MAX_EML_BYTES + 1
+    target_size = eml.MAX_EML_BYTES + 1
     padding_size = target_size - len(email_content)
 
     email_file.write_bytes(email_content + b" " * padding_size)
@@ -586,7 +588,7 @@ def test_io_manager_read_eml_details_rejects_over_2_mib(tmp_path):
 
     # The importer must reject the oversized email.
     with pytest.raises(ValueError, match="size limit"):
-        io_manager.read_eml_details(email_file)
+        io_manager.eml_reader.read_path(email_file)
 
 
 def test_io_manager_read_eml_details_rejects_message_over_50000_chars(tmp_path):
@@ -602,11 +604,11 @@ def test_io_manager_read_eml_details_rejects_message_over_50000_chars(tmp_path):
     email_file.write_bytes(email_content)
 
     # Confirm the raw file is within the 2 MiB limit.
-    assert email_file.stat().st_size < io_manager.MAX_EML_BYTES
+    assert email_file.stat().st_size < eml.MAX_EML_BYTES
 
     # The decoded message contains 50,001 characters.
     with pytest.raises(ValueError, match="message length limit"):
-        io_manager.read_eml_details(email_file)
+        io_manager.eml_reader.read_path(email_file)
 
 
 def test_io_manager_read_eml_details_accepts_exactly_50000_chars(tmp_path):
@@ -618,7 +620,7 @@ def test_io_manager_read_eml_details_accepts_exactly_50000_chars(tmp_path):
     prefix = f"Subject: {subject}\n\n"
 
     # Fill the remaining space with 'A' characters.
-    body = "A" * (io_manager.MAX_MESSAGE_CHARS - len(prefix))
+    body = "A" * (eml.MAX_MESSAGE_CHARS - len(prefix))
 
     email_content = (
         "From: sender@example.com\r\n"
@@ -632,12 +634,12 @@ def test_io_manager_read_eml_details_accepts_exactly_50000_chars(tmp_path):
     email_file.write_bytes(email_content.encode("utf-8"))
 
     # The raw email must remain below the 2 MiB limit.
-    assert email_file.stat().st_size < io_manager.MAX_EML_BYTES
+    assert email_file.stat().st_size < eml.MAX_EML_BYTES
 
-    sender, message = io_manager.read_eml_details(email_file)
+    sender, message = io_manager.eml_reader.read_path(email_file)
 
     assert sender == "sender@example.com"
-    assert len(message) == io_manager.MAX_MESSAGE_CHARS
+    assert len(message) == eml.MAX_MESSAGE_CHARS
     assert message == prefix + body
 
 
@@ -655,7 +657,7 @@ def test_io_manager_read_eml_details_rejects_duplicate_from_header(tmp_path):
     )
 
     with pytest.raises(ValueError, match="Duplicate From header"):
-        io_manager.read_eml_details(email_file)
+        io_manager.eml_reader.read_path(email_file)
 
 
 def test_io_manager_read_eml_details_rejects_duplicate_subject_header(tmp_path):
@@ -672,7 +674,7 @@ def test_io_manager_read_eml_details_rejects_duplicate_subject_header(tmp_path):
     )
 
     with pytest.raises(ValueError, match="Duplicate Subject header"):
-        io_manager.read_eml_details(email_file)
+        io_manager.eml_reader.read_path(email_file)
 
 
 def test_io_manager_read_eml_details_rejects_missing_mime_boundary(tmp_path):
@@ -692,7 +694,7 @@ def test_io_manager_read_eml_details_rejects_missing_mime_boundary(tmp_path):
 
     # The closing MIME boundary (--section--) is missing.
     with pytest.raises(ValueError, match="Malformed MIME structure"):
-        io_manager.read_eml_details(email_file)
+        io_manager.eml_reader.read_path(email_file)
 
 
 def test_io_manager_read_eml_details_rejects_missing_header_body_separator(tmp_path):
@@ -708,7 +710,7 @@ def test_io_manager_read_eml_details_rejects_missing_header_body_separator(tmp_p
 
     # There is no blank line between the headers and body.
     with pytest.raises(ValueError, match="Malformed MIME structure"):
-        io_manager.read_eml_details(email_file)
+        io_manager.eml_reader.read_path(email_file)
 
 
 def test_io_manager_read_eml_details_rejects_invalid_base64(tmp_path):
@@ -725,7 +727,7 @@ def test_io_manager_read_eml_details_rejects_invalid_base64(tmp_path):
     )
 
     with pytest.raises(ValueError, match="Invalid Base64"):
-        io_manager.read_eml_details(email_file)
+        io_manager.eml_reader.read_path(email_file)
 
 
 def test_io_manager_read_eml_details_rejects_invalid_base64_padding(tmp_path):
@@ -743,7 +745,7 @@ def test_io_manager_read_eml_details_rejects_invalid_base64_padding(tmp_path):
 
     # Base64 content is missing its required padding.
     with pytest.raises(ValueError, match="Invalid Base64"):
-        io_manager.read_eml_details(email_file)
+        io_manager.eml_reader.read_path(email_file)
 
 
 def test_io_manager_collect_input_from_folder_without_link_or_file(monkeypatch, tmp_path):
@@ -770,7 +772,7 @@ def test_io_manager_collect_input_from_folder_without_link_or_file(monkeypatch, 
         lambda _: next(answers),
     )
 
-    picker = io_manager.default_io_manager.folder_picker
+    picker = io_manager.folder_picker
     monkeypatch.setattr(picker, "get_eml_folder", lambda: str(tmp_path))
     monkeypatch.setattr(picker, "choose_eml_file", lambda folder: email_file)
     result = io_manager.collect_input_from_folder()
@@ -790,7 +792,7 @@ def test_io_manager_collect_input_from_folder_without_link_or_file(monkeypatch, 
 
 
 def test_io_manager_collect_input_from_folder_cancel_skips_follow_up_questions(monkeypatch):
-    picker = io_manager.default_io_manager.folder_picker
+    picker = io_manager.folder_picker
     monkeypatch.setattr(picker, "get_eml_from_folder", lambda: None)
 
     def unexpected_input(prompt):
@@ -976,7 +978,7 @@ def test_html_email_html_only_keeps_visible_text_and_different_link_target():
         '<p>Account notice</p><a href="https://credential.example.test/login?a=1&amp;b=2">'
         "https://legitimate.example.test</a><p>Reply with a password</p>"
     )
-    sender, message = io_manager.read_eml_bytes(raw)
+    sender, message = io_manager.eml_reader.read_bytes(raw)
     assert sender == "fictional@example.test"
     assert "Subject: Fictional request" in message
     assert "https://credential.example.test/login?a=1&b=2" in message
@@ -992,7 +994,7 @@ def test_html_email_alternatives_retain_conflicting_html_instead_of_selecting_be
         b"--x\r\nContent-Type: text/html\r\n\r\n"
         b'<a href="https://credential.example.test">Enter password and OTP</a>\r\n--x--\r\n'
     )
-    message = io_manager.read_eml_bytes(raw)[1]
+    message = io_manager.eml_reader.read_bytes(raw)[1]
     assert "A routine notice." in message
     assert "Enter password and OTP" in message
     assert "https://credential.example.test" in message
@@ -1006,7 +1008,7 @@ def test_html_email_related_images_do_not_block_html_or_get_decoded_as_text():
         b"--x\r\nContent-Type: image/png\r\nContent-ID: <logo>\r\n\r\n\xff\x00\r\n"
         b"--x--\r\n"
     )
-    message = io_manager.read_eml_bytes(raw)[1]
+    message = io_manager.eml_reader.read_bytes(raw)[1]
     assert "Account alert" in message and "Fictional notice" in message
     assert "cid:logo" not in message
 
@@ -1033,7 +1035,7 @@ def test_html_email_html_resources_and_scripts_are_never_requested_or_executed(m
 @pytest.mark.parametrize("html", ["<script>only script</script>", "<p> </p>", "<img src='cid:x'>"])
 def test_html_email_html_without_usable_content_is_rejected(html):
     with pytest.raises(ValueError, match="no usable"):
-        io_manager.read_eml_bytes(html_email_email(html))
+        io_manager.eml_reader.read_bytes(html_email_email(html))
 
 
 def test_html_email_html_output_limits_include_attribute_expansion():
@@ -1042,13 +1044,13 @@ def test_html_email_html_output_limits_include_attribute_expansion():
 
 
 def test_html_email_forged_sender_is_preserved_as_untrusted_text_not_repaired():
-    sender, message = io_manager.read_eml_bytes(b"From: a@@example.test\r\n\r\nHello")
+    sender, message = io_manager.eml_reader.read_bytes(b"From: a@@example.test\r\n\r\nHello")
     assert sender == "a@@example.test"
     assert message == "Hello"
 
 
 def test_html_email_raw_utf8_headers_are_decoded_without_surrogates():
-    sender, message = io_manager.read_eml_bytes(
+    sender, message = io_manager.eml_reader.read_bytes(
         "From: Caf\u00e9 <fictional@example.test>\r\nSubject: Caf\u00e9\r\n\r\nHello".encode()
     )
     assert sender == "Caf\u00e9 <fictional@example.test>"
@@ -1065,9 +1067,9 @@ def test_html_email_browser_and_folder_email_imports_produce_identical_records(
     path = tmp_path / "fictional.eml"
     path.write_bytes(raw)
     monkeypatch.setattr(
-        io_manager.default_io_manager.folder_picker,
+        io_manager.folder_picker,
         "get_eml_from_folder",
-        lambda: io_manager.read_eml_details(path),
+        lambda: io_manager.eml_reader.read_path(path),
     )
     answers = iter(
         ["yes", "https://credential.example.test", "yes", "invoice.pdf", "yes", "yes", "otp"] * 2
@@ -1103,8 +1105,8 @@ def test_html_email_tracked_real_email_samples_are_readable(filename):
     from pathlib import Path
 
     path = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / filename
-    sender, message = io_manager.read_eml_details(path)
-    assert sender and message and len(message) <= io_manager.MAX_MESSAGE_CHARS
+    sender, message = io_manager.eml_reader.read_path(path)
+    assert sender and message and len(message) <= eml.MAX_MESSAGE_CHARS
     assert "[HTML body]" in message
 
 
@@ -1115,7 +1117,7 @@ def test_html_email_empty_plain_alternative_does_not_block_real_email_body(filen
     from pathlib import Path
 
     raw = (Path(__file__).resolve().parents[2] / "tests" / "fixtures" / filename).read_bytes()
-    expected = io_manager.read_eml_body(BytesParser(policy=policy.default).parsebytes(raw))
+    expected = eml.read_eml_body(BytesParser(policy=policy.default).parsebytes(raw))
     # Keep the original real message intact inside a MIME wrapper containing
     # an empty alternative. No invented phishing text or live provider is used.
     wrapped = (
@@ -1124,7 +1126,7 @@ def test_html_email_empty_plain_alternative_does_not_block_real_email_body(filen
         b"--real-empty-alternative\r\n" + raw + b"\r\n--real-empty-alternative--\r\n"
     )
     # MIME nesting can normalize CRLF to LF; message content must be unchanged.
-    actual = io_manager.read_eml_bytes(wrapped)[1]
+    actual = io_manager.eml_reader.read_bytes(wrapped)[1]
     assert actual.replace("\r\n", "\n") == expected.replace("\r\n", "\n")
 
 
@@ -1136,7 +1138,7 @@ def test_html_email_inline_image_under_mixed_does_not_block_readable_html():
     email.add_attachment(
         b"IMAGE_BYTES", maintype="image", subtype="png", filename="logo.png", disposition="inline"
     )
-    message = io_manager.read_eml_bytes(email.as_bytes())[1]
+    message = io_manager.eml_reader.read_bytes(email.as_bytes())[1]
     assert "A readable notice." in message
     assert "IMAGE_BYTES" not in message
 
@@ -1147,12 +1149,12 @@ def test_html_email_empty_html_alternative_does_not_block_valid_plain_text():
     email = EmailMessage()
     email.set_content("A valid plain-text message.")
     email.add_alternative("<html><body></body></html>", subtype="html")
-    assert io_manager.read_eml_bytes(email.as_bytes())[1] == "A valid plain-text message."
+    assert io_manager.eml_reader.read_bytes(email.as_bytes())[1] == "A valid plain-text message."
 
 
 def test_html_email_html_whitespace_does_not_count_as_final_message_text():
     raw = b"Content-Type: text/html; charset=utf-8\r\n\r\n<p>" + b" " * 51000 + b"Hello</p>"
-    assert io_manager.read_eml_bytes(raw)[1] == "[HTML body]\nHello"
+    assert io_manager.eml_reader.read_bytes(raw)[1] == "[HTML body]\nHello"
     assert html_to_text("<p>  Hello  </p><p>  world  </p>", 11) == "Hello\nworld"
     with pytest.raises(ValueError, match="length limit"):
         html_to_text("<p>Hello</p><p>world</p>", 10)
@@ -1178,7 +1180,7 @@ def test_eml_validation_malformed_import_is_rejected_by_parser(tmp_path, raw):
     bad = tmp_path / "bad.eml"
     bad.write_bytes(raw)
     with pytest.raises(ValueError):
-        io_manager.read_eml_details(bad)
+        io_manager.eml_reader.read_path(bad)
 
 
 def eml_validation_multipart(*parts):
@@ -1197,7 +1199,7 @@ def test_eml_validation_all_inline_plain_text_reaches_canonical_message(tmp_path
             b"Content-Type: text/plain\r\n\r\nReply with your password and OTP",
         )
     )
-    assert io_manager.read_eml_details(email)[1] == ("Hello\n\nReply with your password and OTP")
+    assert io_manager.eml_reader.read_path(email)[1] == "Hello\n\nReply with your password and OTP"
 
 
 @pytest.mark.parametrize(
@@ -1213,7 +1215,7 @@ def test_eml_validation_unsupported_inline_body_is_rejected_not_partially_assess
     email = tmp_path / "unsupported.eml"
     email.write_bytes(raw)
     with pytest.raises(ValueError, match="Unsupported"):
-        io_manager.read_eml_details(email)
+        io_manager.eml_reader.read_path(email)
 
 
 def test_eml_validation_explicit_attachment_is_not_an_inline_body(tmp_path):
@@ -1225,7 +1227,7 @@ def test_eml_validation_explicit_attachment_is_not_an_inline_body(tmp_path):
             b"Content-Disposition: attachment; filename=test.bin\r\n\r\nDATA",
         )
     )
-    assert io_manager.read_eml_details(email)[1] == "Hello"
+    assert io_manager.eml_reader.read_path(email)[1] == "Hello"
 
 
 @pytest.mark.parametrize("content_type", ["text/plain", "text/html"])
@@ -1241,7 +1243,7 @@ def test_eml_validation_inline_filename_does_not_hide_body_content(tmp_path, con
             ).encode(),
         )
     )
-    assert "Reply with your password" in io_manager.read_eml_details(email)[1]
+    assert "Reply with your password" in io_manager.eml_reader.read_path(email)[1]
 
 
 @pytest.mark.parametrize(
@@ -1265,7 +1267,7 @@ def test_eml_validation_inline_filename_does_not_hide_body_content(tmp_path, con
 def test_eml_validation_valid_decoding_preserves_characters(tmp_path, raw, expected):
     email = tmp_path / "valid.eml"
     email.write_bytes(raw)
-    assert io_manager.read_eml_details(email)[1] == expected
+    assert io_manager.eml_reader.read_path(email)[1] == expected
 
 
 @pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO requires POSIX")
@@ -1275,14 +1277,14 @@ def test_eml_validation_fifo_never_blocks_before_file_validation(tmp_path, repla
     os.mkfifo(fifo)
     # Isolate the timeout so a regression cannot hang the test suite.
     script = (
-        "from pathlib import Path\nfrom phishreport import io_manager\n"
+        "from pathlib import Path\nfrom phishreport.io import EmlReader\n"
         + ("Path.is_file = lambda self: True\n" if replace_after_check else "")
-        + "try:\n    io_manager.read_eml_details("
+        + "try:\n    EmlReader().read_path("
         + repr(str(fifo))
         + ")\n"
         + "except ValueError:\n    pass\nelse:\n    raise AssertionError('FIFO accepted')\n"
     )
-    env = dict(os.environ, PYTHONPATH=str(Path(io_manager.__file__).resolve().parents[1]))
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[2]))
     subprocess.run(
         [sys.executable, "-c", script], env=env, timeout=5, check=True, capture_output=True
     )

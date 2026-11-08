@@ -8,10 +8,12 @@ from unittest.mock import Mock
 
 import pytest
 
-from phishreport import io_manager
 from phishreport.cli import web_upload
+from phishreport.io import IOManager
+from phishreport.io.terminal import ConsoleTerminal
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
+io_manager = IOManager(ConsoleTerminal())
 
 
 # ============================================================================
@@ -246,9 +248,9 @@ def test_web_upload_valid_web_eml_matches_folder_input(tmp_path, monkeypatch):
     answers = iter(["no", "no", "no"] * 2)
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     monkeypatch.setattr(
-        io_manager.default_io_manager.folder_picker,
+        io_manager.folder_picker,
         "get_eml_from_folder",
-        lambda: io_manager.read_eml_details(path),
+        lambda: io_manager.eml_reader.read_path(path),
     )
     folder = io_manager.collect_input_from_folder()
     browser = io_manager.collect_input_from_upload(handler.server.accept_upload.call_args.args[0])

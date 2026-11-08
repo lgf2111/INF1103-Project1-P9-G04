@@ -10,10 +10,13 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
-from phishreport import io_manager, local_settings
+from phishreport import local_settings
 from phishreport.cli import main
+from phishreport.io import IOManager
+from phishreport.io.terminal import ConsoleTerminal
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
+io_manager = IOManager(ConsoleTerminal())
 
 
 # ============================================================================
@@ -230,7 +233,7 @@ def test_runtime_settings_invalid_saved_folder_reprompts_without_crashing(
     settings = tmp_path / ".phishreport_config.json"
     settings.write_text(json.dumps({"eml_folder": saved_folder}), encoding="utf-8")
     monkeypatch.setattr("builtins.input", lambda _: str(tmp_path))
-    assert io_manager.get_eml_folder() == str(tmp_path)
+    assert io_manager.folder_picker.get_eml_folder() == str(tmp_path)
     assert json.loads(settings.read_text())["eml_folder"] == str(tmp_path)
 
 
@@ -274,19 +277,19 @@ def test_runtime_settings_email_picker_rejects_unusable_numeric_choices(
     (folder / source.name).write_bytes(source.read_bytes())
     answers = iter([invalid_choice, "c"])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
-    assert io_manager.choose_eml_file(folder) is None
+    assert io_manager.folder_picker.choose_eml_file(folder) is None
 
 
 def test_runtime_settings_unreadable_email_folder_returns_safely_to_menu(monkeypatch, capsys):
     folder = Path(__file__).resolve().parents[2] / "emails"
-    picker = io_manager.default_io_manager.folder_picker
+    picker = io_manager.folder_picker
     monkeypatch.setattr(picker, "get_eml_folder", lambda: folder)
 
     def cannot_list(_folder):
         raise PermissionError("PRIVATE_PATH")
 
     monkeypatch.setattr(picker, "list_eml_files", cannot_list)
-    assert io_manager.get_eml_from_folder() is None
+    assert io_manager.folder_picker.get_eml_from_folder() is None
     output = capsys.readouterr().out
     assert "Unable to list" in output
     assert "PRIVATE_PATH" not in output

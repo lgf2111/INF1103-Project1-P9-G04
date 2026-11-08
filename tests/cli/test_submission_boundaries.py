@@ -7,11 +7,14 @@ from unittest.mock import Mock
 
 import pytest
 
-from phishreport import data_manager, io_manager, local_settings
+from phishreport import data_manager, local_settings
 from phishreport.ai import AIResponseValidator, groq_client
 from phishreport.cli import main, web_upload
+from phishreport.io import IOManager
+from phishreport.io.terminal import ConsoleTerminal
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
+io_manager = IOManager(ConsoleTerminal())
 
 
 # ============================================================================
@@ -135,7 +138,7 @@ def test_submission_boundaries_folder_can_be_used_when_preference_cannot_be_save
     path = tmp_path / ".phishreport_config.json"
     path.write_text("{broken", encoding="utf-8")
     monkeypatch.setattr("builtins.input", lambda _: str(tmp_path))
-    assert io_manager.get_eml_folder() == str(tmp_path)
+    assert io_manager.folder_picker.get_eml_folder() == str(tmp_path)
     text = capsys.readouterr().out
     assert "Could not save" in text
     assert "Saved. You won't" not in text

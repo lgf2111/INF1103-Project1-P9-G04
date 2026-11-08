@@ -11,14 +11,16 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
-from phishreport import io_manager
 from phishreport.ai import AIClient, AIResponseValidator, GroqClient, groq_client
 from phishreport.ai.prompt import build_prompt
 from phishreport.ai.validator import FINDING_KEYS, REQUIRED_KEYS
+from phishreport.io import IOManager
+from phishreport.io.terminal import ConsoleTerminal
 
 validator = AIResponseValidator()
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
+io_manager = IOManager(ConsoleTerminal())
 
 
 # ============================================================================
@@ -625,7 +627,7 @@ def test_ai_manager_call_api_preserves_valid_prompt_whitespace(ai_manager_provid
 def test_ai_manager_combined_prompt_retains_extraction_instructions():
     """Keep each input intact and request all occurrences in three JSON lists."""
     # Preserve the original record so prompt construction cannot change its data.
-    message = io_manager.read_eml_details(REAL_EMAILS / "sample-1.eml")[1]
+    message = io_manager.eml_reader.read_path(REAL_EMAILS / "sample-1.eml")[1]
     record = {"message": message}
     original = record.copy()
     prompt = build_prompt(record)
