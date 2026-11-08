@@ -157,7 +157,7 @@ def test_normal_launcher_imports_without_pytest_path_or_credentials():
         environment.pop(name, None)
     result = subprocess.run(
         [sys.executable, "-m", "phishreport.bot"],
-        cwd=Path(__file__).resolve().parents[1],
+        cwd=Path(__file__).resolve().parents[2],
         env=environment,
         capture_output=True,
         text=True,
