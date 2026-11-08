@@ -575,56 +575,41 @@ def test_data_core_exports_storage_and_validator_contracts():
     assert package.JsonReportStorage is json_storage.JsonReportStorage
 
 
-def test_adapter_and_class_share_mixed_history_and_query(tmp_path, monkeypatch):
-    adapter = import_module("phishreport.data_manager")
+def test_class_shares_mixed_history_and_query(tmp_path):
     path = tmp_path / "custom.json"
-    monkeypatch.setattr(adapter, "FILE", path)
     backend = json_storage(path)
     history = [v1_report(), summary_report(), {}, {"unknown": "保留"}]
     backend.write_records(history)
     subject = manager(backend)
-    adapter.save(v2_report())
-    expected = [*history, v2_report()]
-    assert adapter.load(strict=True) == subject.load(strict=True) == expected
     subject.save(v2_report())
-    expected.append(v2_report())
-    assert adapter.load() == subject.load() == expected
-    assert adapter.query(lambda record: record.get("schema_version") == 2) == [
-        v2_report(), v2_report()
-    ]
+    expected = [*history, v2_report()]
+    assert subject.load(strict=True) == expected
+    assert subject.query(lambda record: record.get("schema_version") == 2) == [v2_report()]
 
 
-def test_adapter_uses_current_file_and_directory_on_each_call(tmp_path, monkeypatch):
-    adapter = import_module("phishreport.data_manager")
+def test_default_storage_uses_current_directory(tmp_path, monkeypatch):
     first = tmp_path / "first"
     second = tmp_path / "second"
     first.mkdir()
     second.mkdir()
     monkeypatch.chdir(first)
-    monkeypatch.setattr(adapter, "FILE", "one.json")
-    adapter.save(v2_report())
-    monkeypatch.setattr(adapter, "FILE", "two.json")
-    assert adapter.load(strict=True) == []
-    adapter.save(v2_report())
+    manager().save(v2_report())
+    assert manager().load(strict=True) == [v2_report()]
     monkeypatch.chdir(second)
-    assert adapter.query(lambda record: True) == []
-    adapter.save(v2_report())
-    for path in (first / "one.json", first / "two.json", second / "two.json"):
-        assert json_storage(path).read_records() == [v2_report()]
-    assert not (second / "one.json").exists()
+    assert manager().query(lambda record: True) == []
+    assert json_storage(first / "reports.json").read_records() == [v2_report()]
+    assert not (second / "reports.json").exists()
 
 
 @pytest.mark.parametrize("content", [b'{broken', b'[{"score":true}]'])
-def test_adapter_and_class_error_parity_preserves_history(tmp_path, monkeypatch, content):
-    adapter = import_module("phishreport.data_manager")
+def test_class_error_handling_preserves_history(tmp_path, content):
     path = tmp_path / "reports.json"
-    monkeypatch.setattr(adapter, "FILE", path)
     path.write_bytes(content)
-    for subject in (adapter, manager(json_storage(path))):
-        assert subject.load() == []
-        assert subject.query(lambda record: True) == []
-        with pytest.raises(ValueError):
-            subject.load(strict=True)
-        with pytest.raises(ValueError):
-            subject.save(v2_report())
-        assert path.read_bytes() == content
+    subject = manager(json_storage(path))
+    assert subject.load() == []
+    assert subject.query(lambda record: True) == []
+    with pytest.raises(ValueError):
+        subject.load(strict=True)
+    with pytest.raises(ValueError):
+        subject.save(v2_report())
+    assert path.read_bytes() == content

@@ -11,10 +11,11 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
-from phishreport import data_manager, local_settings
+import phishreport
+from phishreport import local_settings
 from phishreport.ai import groq_client
 from phishreport.cli import web_upload
-from phishreport.data import json_storage
+from phishreport.data import DataManager, json_storage
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
 
@@ -97,7 +98,7 @@ def test_demo_real_email_pipeline_and_reload(
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         cli.app.upload_file()
 
-    records = data_manager.load(strict=True)
+    records = DataManager().load(strict=True)
     assert len(records) == 1
     assert records[0]["message"] == message
     assert records[0]["result"]["score"] == 60
@@ -107,13 +108,13 @@ def test_demo_real_email_pipeline_and_reload(
     demo_transport.assert_called_once()
     before = (tmp_path / "reports.json").read_bytes()
     # A separate interpreter proves reload does not depend on in-memory state.
-    environment = dict(os.environ, PYTHONPATH=str(Path(data_manager.__file__).resolve().parents[1]))
+    environment = dict(os.environ, PYTHONPATH=str(Path(phishreport.__file__).resolve().parents[1]))
     subprocess.run(
         [
             sys.executable,
             "-c",
-            "from phishreport import data_manager; "
-            "assert data_manager.load(strict=True)[0]['result']['score'] == 60",
+            "from phishreport.data import DataManager; "
+            "assert DataManager().load(strict=True)[0]['result']['score'] == 60",
         ],
         cwd=tmp_path,
         env=environment,
@@ -158,7 +159,7 @@ def test_demo_exposure_and_uncertainty(cli, demo_transport, monkeypatch, changes
             }
         )
     )
-    result = data_manager.load(strict=True)[0]["result"]
+    result = DataManager().load(strict=True)[0]["result"]
     assert result["score"] == score
     assert result["reasons"] and result["checklist"]
     demo_transport.assert_called_once()
@@ -189,7 +190,7 @@ def test_demo_failed_ai_differs_from_failed_save(cli, demo_transport, monkeypatc
         )
     )
     output = capsys.readouterr().out
-    assert data_manager.load() == []
+    assert DataManager().load() == []
     assert "Private transport detail" not in output
     if failure == "save":
         assert "Could not save" in output and "Rule-based score: 60" in output
@@ -242,7 +243,7 @@ def test_demo_actual_http_upload_of_real_email(cli, demo_transport, monkeypatch)
         connection.close()
     worker.join(5)
     assert not worker.is_alive() and not errors
-    saved = data_manager.load(strict=True)[0]
+    saved = DataManager().load(strict=True)[0]
     assert saved["result"]["score"] == 60
     assert saved["message"] == io_manager.eml_reader.read_bytes(raw)[1]
     assert servers[0].socket.fileno() == -1

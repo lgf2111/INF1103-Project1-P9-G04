@@ -7,9 +7,10 @@ from unittest.mock import Mock
 
 import pytest
 
-from phishreport import data_manager, local_settings
+from phishreport import local_settings
 from phishreport.ai import AIResponseValidator, groq_client
 from phishreport.cli import main, web_upload
+from phishreport.data import DataManager
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
 
@@ -71,9 +72,9 @@ def test_submission_boundaries_invalid_history_is_preserved_and_cannot_be_append
     path = tmp_path / "reports.json"
     path.write_text(payload, encoding="utf-8")
     before = path.read_bytes()
-    assert data_manager.load() == []
+    assert DataManager().load() == []
     with pytest.raises(ValueError):
-        data_manager.load(strict=True)
+        DataManager().load(strict=True)
     report = {
         "schema_version": 2,
         "channel": "email",
@@ -81,7 +82,7 @@ def test_submission_boundaries_invalid_history_is_preserved_and_cannot_be_append
         "result": {"score": 10, "priority": "LOW", "reasons": [], "checklist": []},
     }
     with pytest.raises(ValueError):
-        data_manager.save(report)
+        DataManager().save(report)
     assert path.read_bytes() == before
 
 

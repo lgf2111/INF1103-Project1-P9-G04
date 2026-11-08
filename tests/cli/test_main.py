@@ -9,9 +9,9 @@ from unittest.mock import MagicMock, Mock, call
 
 import pytest
 
-from phishreport import data_manager
 from phishreport.ai import GroqClient, groq_client
 from phishreport.cli import main, web_upload
+from phishreport.data import DataManager
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -172,7 +172,7 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     cli.app.upload_file()
     assert main_app_boundary.call_count == 1
-    records = data_manager.load()
+    records = DataManager().load()
     if invented_contact:
         assert records == []
         cli.io_manager.display_result.assert_not_called()
@@ -210,7 +210,7 @@ def test_main_invalid_browser_email_stops_before_ai_or_save(
     cli.app.upload_file()
     main_app_boundary.assert_not_called()
     cli.io_manager.display_result.assert_not_called()
-    assert data_manager.load() == []
+    assert DataManager().load() == []
 
 
 @pytest.mark.parametrize("invented_contact", [False, True])
@@ -256,7 +256,7 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
     assert main_app_boundary.call_count == 1
     prompt = json.loads(main_app_boundary.call_args.args[0].data)["messages"][0]["content"]
     assert str(good) not in prompt
-    records = data_manager.load()
+    records = DataManager().load()
     if invented_contact:
         assert records == []
         cli.io_manager.display_result.assert_not_called()
@@ -325,7 +325,7 @@ def test_main_successful_assessment_reaches_real_logic_and_storage(
 
     cli.app.check_message()
 
-    saved = data_manager.load()
+    saved = DataManager().load()
     assert saved == [
         {
             "schema_version": 2,
@@ -364,7 +364,7 @@ def test_main_menu_continues_after_bad_record_then_saves_next_assessment(
     cli.app.run()
 
     assert cli.io_manager.main_menu.call_count == 3
-    assert len(data_manager.load()) == 1
+    assert len(DataManager().load()) == 1
     cli.io_manager.display_result.assert_called_once()
     assert main_app_boundary.call_count == 1
     log = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
@@ -504,7 +504,7 @@ def test_main_combined_caller_uses_ai_findings_for_the_same_unexposed_input(
         cli.app.check_message()
         assert cli.io_manager.display_result.call_args.args[0]["score"] == expected
     assert main_app_boundary.call_count == 2  # two records, one request each
-    assert len(data_manager.load()) == 2
+    assert len(DataManager().load()) == 2
 
 
 def test_main_configured_storage_logging_uses_application_file(
@@ -532,7 +532,7 @@ def test_main_recovered_timeout_saves_and_displays_only_one_assessment(
     cli.app.check_message()
 
     assert main_app_boundary.call_count == 2
-    saved = data_manager.load()
+    saved = DataManager().load()
     assert len(saved) == 1
     assert saved[0] == {
         "schema_version": 2,
@@ -556,7 +556,7 @@ def test_main_timeout_fallback_reaches_real_logic_and_saves_once(
 
     assert main_app_boundary.call_count == 2
     assert json.loads(main_app_boundary.call_args.args[0].data)["model"] == "fictional/faster"
-    saved = data_manager.load()
+    saved = DataManager().load()
     assert saved == [
         {
             "schema_version": 2,
