@@ -28,6 +28,7 @@ from phishreport.logic import LogicManager
 COMMANDS = [
     BotCommand("start", "Welcome and connection check"),
     BotCommand("linkgmail", "Link Gmail to watch for phishing emails"),
+    BotCommand("checkmail", "Check all unread emails for phishing now"),
     BotCommand("unlinkgmail", "Unlink Gmail and delete the saved password"),
 ]
 
@@ -40,7 +41,8 @@ def startup_guide(username: str) -> str:
         "  2. Send /start, or paste any suspicious message to get an assessment.\n"
         "  3. Send /linkgmail to watch your Gmail. It needs a Google app password:\n"
         "     https://myaccount.google.com/apppasswords (2-Step Verification must be on).\n"
-        "  4. After linking, new emails are checked every minute and you get a\n"
+        "  4. Send /checkmail any time to check all unread emails right away.\n"
+        "  5. After linking, new emails are checked every minute and you get a\n"
         "     Telegram message if one looks like phishing. Use /unlinkgmail to stop.\n"
         "Press Ctrl+C to stop the bot.\n"
     )
@@ -83,6 +85,7 @@ def main() -> int:
     async def start_monitor(application: Application) -> None:
         await application.bot.set_my_commands(COMMANDS)
         monitor = EmailMonitor(application.bot, store, assessment, data_manager, manager.save_lock)
+        application.bot_data["monitor"] = monitor
         application.bot_data["monitor_task"] = asyncio.create_task(monitor.run())
         print(startup_guide(application.bot.username), flush=True)
 
@@ -103,6 +106,7 @@ def main() -> int:
         )
         application.add_handler(CommandHandler("start", manager.start))
         application.add_handler(CommandHandler("linkgmail", gmail.link))
+        application.add_handler(CommandHandler("checkmail", gmail.check))
         application.add_handler(CommandHandler("unlinkgmail", gmail.unlink))
         application.add_handler(
             CallbackQueryHandler(manager.check_connection, pattern=rf"^{CHECK_CONNECTION}\Z")

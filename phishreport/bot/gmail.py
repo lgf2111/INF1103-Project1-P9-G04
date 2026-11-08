@@ -161,6 +161,27 @@ class GmailMailbox:
         finally:
             self._close(connection)
 
+    def unread(self, limit: int = 20) -> list[tuple[int, bytes]]:
+        """Return the newest `limit` unread (uid, raw message) pairs, oldest first."""
+        connection = self._connect()
+        try:
+            status, data = connection.uid("SEARCH", "UNSEEN")
+            uids = sorted(self._uids(data))[-limit:] if status == "OK" else []
+            return self._fetch(connection, uids)
+        except (OSError, imaplib.IMAP4.error) as error:
+            raise MailboxError("Could not read the Gmail inbox.") from error
+        finally:
+            self._close(connection)
+
+    @staticmethod
+    def _fetch(connection, uids: list[int]) -> list[tuple[int, bytes]]:
+        messages = []
+        for uid in uids:
+            status, parts = connection.uid("FETCH", str(uid), "(BODY.PEEK[])")
+            raw = next((p[1] for p in parts if isinstance(p, tuple) and status == "OK"), b"")
+            messages.append((uid, raw))
+        return messages
+
     @staticmethod
     def is_valid_address(address: str) -> bool:
         return bool(ADDRESS_PATTERN.match(address))

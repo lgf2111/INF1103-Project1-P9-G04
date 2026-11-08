@@ -58,7 +58,8 @@ class TelegramIOManager:
         )
         await message.reply_text(
             "Welcome to PhishReport. Send me a suspicious message and I will assess it.\n\n"
-            "Use /linkgmail to have me watch your Gmail and warn you about phishing emails.",
+            "Use /linkgmail to have me watch your Gmail and warn you about phishing emails, "
+            "or /checkmail to check your unread emails now.",
             reply_markup=keyboard,
         )
 

@@ -29,6 +29,11 @@ class FakeMailbox:
             raise self.error
         return self.newest
 
+    def unread(self, limit):
+        if self.error:
+            raise self.error
+        return self.emails
+
     def new_since(self, last_uid):
         self.asked.append(last_uid)
         if self.error:
@@ -197,3 +202,63 @@ def test_email_source_without_message_id_has_no_link():
 
     assert source.subject == "Hi"
     assert source.gmail_url("a@gmail.com") is None
+
+
+def test_checkmail_assesses_unread_mail_and_summarises(tmp_path):
+    monitor, store, bot, data = monitor_for(tmp_path, FakeMailbox([(9, RAW), (11, RAW)]))
+
+    reply = asyncio.run(monitor.check_unread(1))
+
+    assert reply == "Checked 2 unread email(s): 2 flagged, 0 looked fine."
+    assert bot.send_message.await_count == 2
+    assert store.get(1).last_uid == 11
+
+
+def test_checkmail_with_nothing_unread_or_nothing_linked(tmp_path):
+    monitor, _, _, _ = monitor_for(tmp_path, FakeMailbox([]))
+
+    assert asyncio.run(monitor.check_unread(1)) == "No unread emails to check."
+    assert "linkgmail" in asyncio.run(monitor.check_unread(999))
+
+
+def test_checkmail_command_replies_with_the_summary(tmp_path):
+    monitor, _, _, _ = monitor_for(tmp_path, FakeMailbox([]))
+    handlers = GmailLinkHandlers(AccountStore(tmp_path / "g.json"), lambda u: True)
+    up = update()
+    context = SimpleNamespace(application=SimpleNamespace(bot_data={"monitor": monitor}))
+
+    asyncio.run(handlers.check(up, context))
+
+    assert up.effective_message.reply_text.call_args.args[0] == "No unread emails to check."
+
+
+def test_one_unexpected_error_skips_that_email_not_the_rest(tmp_path):
+    monitor, store, bot, _ = monitor_for(tmp_path, FakeMailbox([(9, RAW), (10, RAW)]))
+    calls = iter([KeyError("boom"), PHISHING])
+
+    def assess(record):
+        outcome = next(calls)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    monitor._assessment = AssessmentService(Mock(assess=assess), LogicManager())
+
+    asyncio.run(monitor.poll_once())
+
+    assert bot.send_message.await_count == 1
+    assert store.get(1).last_uid == 10
+
+
+def test_polling_a_healthy_inbox_prints_no_failure(tmp_path, capsys):
+    monitor, _, _, _ = monitor_for(tmp_path, FakeMailbox([]))
+    monitor._interval = 0
+
+    async def two_cycles():
+        task = asyncio.create_task(monitor.run())
+        await asyncio.sleep(0.05)
+        task.cancel()
+
+    asyncio.run(two_cycles())
+
+    assert "failed" not in capsys.readouterr().out

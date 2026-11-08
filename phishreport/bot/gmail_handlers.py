@@ -84,3 +84,16 @@ class GmailLinkHandlers:
             if removed
             else "No Gmail account is linked to this chat."
         )
+
+    async def check(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Assess all unread emails right now instead of waiting for the next cycle."""
+        message = update.effective_message
+        chat = update.effective_chat
+        if not self._is_allowed(update) or message is None or chat is None:
+            return
+        monitor = context.application.bot_data.get("monitor")
+        if monitor is None:
+            await message.reply_text("The email checker is not running yet. Try again shortly.")
+            return
+        await message.reply_text("Checking your unread emails...")
+        await message.reply_text(await monitor.check_unread(chat.id))
