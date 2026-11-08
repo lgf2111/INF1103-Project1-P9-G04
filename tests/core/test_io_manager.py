@@ -9,9 +9,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from phishreport import io_manager, logic_manager
+from phishreport import io_manager
 from phishreport.ai import AIManager
 from phishreport.email_html import html_to_text
+from phishreport.logic import LogicManager
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -900,7 +901,7 @@ def test_io_display_display_result_keeps_safety_wording(capsys):
         "insufficient_context": False,
         "details": details,
     }
-    io_manager.display_result(logic_manager.evaluate(record))
+    io_manager.display_result(LogicManager().evaluate(record))
     # Updated assertion to match the new LOW priority checklist
     assert "Remain cautious." in capsys.readouterr().out
 

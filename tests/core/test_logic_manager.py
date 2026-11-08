@@ -1,4 +1,4 @@
-# Offline tests for logic_manager.
+# Offline tests for the Logic Manager.
 # Uses fake AI answers (no real API), so it runs anywhere, including Docker.
 # Run with:  pytest
 
@@ -6,10 +6,11 @@ from copy import deepcopy
 
 import pytest
 
-from phishreport import logic_manager
 from phishreport.logic import LogicManager
 from phishreport.logic.rule_engine import PriorityRuleEngine
 from phishreport.logic.rules import DefaultRule, SuspiciousRule
+
+manager = LogicManager()
 
 
 # Response-priority rules use fictional, already validated AI findings.
@@ -134,9 +135,9 @@ def test_response_priority_scenarios(changes, expected_score, expected_priority)
     record = _assessment_record(**deepcopy(changes))
     original = deepcopy(record)
 
-    assert logic_manager.score(record) == expected_score
-    assert type(logic_manager.score(record)) is int
-    assert logic_manager.route(record) == {
+    assert manager.score(record) == expected_score
+    assert type(manager.score(record)) is int
+    assert manager.route(record) == {
         "score": expected_score,
         "priority": expected_priority,
     }
@@ -194,16 +195,14 @@ def test_contact_link_and_file_presence_do_not_increase_response_priority():
         "phone_numbers": ["12345678"],
         "ip_addresses": ["192.0.2.10"],
     }
-    assert logic_manager.score(record) == 10
-    assert logic_manager.route(record) == {"score": 10, "priority": "LOW"}
+    assert manager.score(record) == 10
+    assert manager.route(record) == {"score": 10, "priority": "LOW"}
 
 
-@pytest.fixture(
-    params=["instance", "compatibility"], ids=["manager-instance", "compatibility-facade"]
-)
-def logic_target(request):
-    """Exercise the same public contract on a fresh manager and the legacy facade."""
-    return LogicManager() if request.param == "instance" else logic_manager
+@pytest.fixture
+def logic_target():
+    """Return a fresh manager so each test exercises the public contract in isolation."""
+    return LogicManager()
 
 
 @pytest.mark.parametrize(
@@ -300,7 +299,7 @@ def test_response_priority_rejects_invalid_inputs(changes, operation):
     record = _assessment_record(**deepcopy(changes))
     original = deepcopy(record)
     with pytest.raises(ValueError):
-        getattr(logic_manager, operation)(record)
+        getattr(manager, operation)(record)
     assert record == original
 
 
@@ -309,7 +308,7 @@ def test_disclosure_still_requires_an_ai_assessment(operation):
     record = _assessment_record(submitted_category="password")
     del record["ai"]
     with pytest.raises(ValueError):
-        getattr(logic_manager, operation)(record)
+        getattr(manager, operation)(record)
 
 
 @pytest.mark.parametrize(
@@ -332,7 +331,7 @@ def test_evaluate_uses_ai_response_priority_without_mutation(
 ):
     record = _assessment_record(**deepcopy(changes))
     original = deepcopy(record)
-    result = logic_manager.evaluate(record)
+    result = manager.evaluate(record)
     assert result["score"] == expected_score
     assert result["priority"] == expected_priority
     assert result["reasons"] and all(isinstance(r, str) for r in result["reasons"])
@@ -342,7 +341,7 @@ def test_evaluate_uses_ai_response_priority_without_mutation(
 
 @pytest.mark.parametrize("category, guidance", [("password", "password"), ("otp", "one-time code")])
 def test_evaluate_addresses_disclosure_despite_negative_ai(category, guidance):
-    result = logic_manager.evaluate(_assessment_record(submitted_category=category))
+    result = manager.evaluate(_assessment_record(submitted_category=category))
     assert result["priority"] == "HIGH"
     assert any(guidance in reason.lower() for reason in result["reasons"])
     assert any(guidance in step.lower() for step in result["checklist"])
@@ -350,7 +349,7 @@ def test_evaluate_addresses_disclosure_despite_negative_ai(category, guidance):
 
 def test_evaluate_uncertainty_and_low_priority_do_not_claim_safety():
     for findings in ({}, {"insufficient_context": True}):
-        result = logic_manager.evaluate(_assessment_record(findings=findings))
+        result = manager.evaluate(_assessment_record(findings=findings))
         text = " ".join(result["reasons"] + result["checklist"]).lower()
         assert "safe" not in text
         assert any("verify" in step.lower() for step in result["checklist"])
@@ -361,7 +360,7 @@ def test_evaluate_uncertainty_and_low_priority_do_not_claim_safety():
 @pytest.mark.parametrize("action, guidance", [("clicked", "link"), ("downloaded", "file")])
 def test_evaluate_guidance_matches_reported_interaction(action, guidance):
     record = _assessment_record(**{action: True}, findings={"suspicious": True})
-    result = logic_manager.evaluate(record)
+    result = manager.evaluate(record)
     assert any(guidance in step.lower() for step in result["checklist"])
     assert not any(
         "change" in step.lower() and "password" in step.lower() for step in result["checklist"]

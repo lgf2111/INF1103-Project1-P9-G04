@@ -1,37 +1,9 @@
-"""Compatibility interface for the class-based Logic Manager package.
+"""Logic Manager: applies business rules to AI-enriched records.
 
-The application currently imports this module-level interface. Domain logic
-lives in ``logic_core``; these small adapters preserve existing callers while
-the application can migrate to ``LogicManager`` independently.
+The class lives in ``phishreport.logic``; this module is the Logic Manager's
+named entry point alongside the other three managers.
 """
 
 from phishreport.logic import LogicManager
 
-_DEFAULT_MANAGER = LogicManager()
-
-
-def score(record):
-    """Return a validated record's response-priority score."""
-    return _DEFAULT_MANAGER.score(record)
-
-
-def _priority(value):
-    """Return the priority corresponding to a calculated score."""
-    return _DEFAULT_MANAGER.priority_for(value)
-
-
-def route(record):
-    """Return a score and priority while preserving the historical patch point."""
-    value = score(record)
-    return {"score": value, "priority": _priority(value)}
-
-
-def evaluate(record):
-    """Return guidance while preserving the historical routing patch point."""
-    outcome = route(record)
-    return _DEFAULT_MANAGER.build_evaluation(record, outcome)
-
-
-def _validate_record(record):
-    """Validate required input fields without requiring AI findings."""
-    _DEFAULT_MANAGER.validate_record(record)
+__all__ = ["LogicManager"]
