@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml/badge.svg)](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml)
 
-PhishReport assesses suspicious emails, SMS and chat messages using the Groq API and rule-based scoring. The CLI provides a response priority and recommended actions, and saves assessments locally as JSON. Telegram is the Phase 2 interface: send the bot a suspicious message in a private chat and it replies with the same priority and recommended actions.
+PhishReport assesses suspicious emails, SMS and chat messages using the Groq API and rule-based scoring. The CLI provides a response priority and recommended actions, and saves assessments locally as JSON. Telegram is the Phase 2 interface: send the bot a suspicious message in a private chat and it replies with the same priority and recommended actions. It can also watch a linked Gmail inbox and message you when a new email looks like phishing.
 
 **A LOW-priority result does not guarantee that a message is safe.**
 
@@ -20,7 +20,7 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 | `phishreport/data/` | Report validation and JSON storage. |
 | `phishreport/cli/` | Terminal interface: `main.py` composes the four managers through `PhishReportApp`; `web_upload.py` handles browser-based `.eml` uploads. |
 | `phishreport/assessment.py` | Shared assessment workflow (AI findings, then business rules) used by the CLI and the bot. |
-| `phishreport/bot/` | Telegram interface: launcher, handlers, and chat record and reply formatting. |
+| `phishreport/bot/` | Telegram interface: launcher, handlers, chat record and reply formatting, and the Gmail link and background email monitor (`gmail.py`, `gmail_handlers.py`, `monitor.py`). |
 | `phishreport/email_html.py` | Convert HTML email content to safe text. |
 | `phishreport/local_settings.py` | Manage local preferences. |
 | `phishreport/logging_setup.py` | Configure diagnostic logs. |
@@ -140,6 +140,52 @@ Every assessment calls the Groq API with your key. Leaving `TELEGRAM_ALLOWED_CHA
 blank lets any private chat that finds the bot use that quota, so set the chat ID if
 the bot is public.
 
+#### Gmail phishing monitor
+
+Link a Gmail account from the bot's private chat and PhishReport checks new mail in the
+background and messages you when an email looks like phishing.
+
+| Command | What it does |
+| --- | --- |
+| `/linkgmail you@gmail.com <app password>` | Checks the login, deletes your message so the password is not left in the chat, and starts watching the inbox. Send it with no arguments for the setup steps. |
+| `/checkmail` | Checks your newest 20 unread emails right now and replies with a summary. |
+| `/unlinkgmail` | Stops watching and deletes the saved app password. |
+
+**How it works**
+
+- Gmail is read over IMAP in read-only mode, so reading never marks mail as read.
+- Every 60 seconds the monitor fetches mail that arrived after linking, runs each email
+  through the shared `AssessmentService` and saves the report to `reports.json`. Read
+  state is ignored; the newest message number it has handled is stored, so no email is
+  checked twice by the background check. `/checkmail` is the way to re-check an email.
+- An email scored **MEDIUM** or **HIGH** triggers a Telegram message with the sender,
+  subject, score, why it was flagged, what to do, and a link that opens the email in Gmail
+  (the link needs you to be signed in to that Gmail account).
+- A temporary AI failure keeps the email for the next cycle. A rejected login unlinks the
+  account and tells you. One email that fails unexpectedly is skipped, not retried forever.
+- The terminal running the bot prints `[email] ...` progress lines (counts, priorities and
+  failure types only, never email text or the password).
+- The AI sees the email text only. Links and attachments are not extracted, so there is no
+  rule-based boost for them.
+
+**Get an app password.** Gmail needs a Google app password, not your normal password:
+
+1. Turn on 2-Step Verification, with a phone prompt or authenticator app. A security key
+   or passkey alone is not enough.
+2. Create an app password at <https://myaccount.google.com/apppasswords>.
+3. Send `/linkgmail you@gmail.com abcd efgh ijkl mnop` to the bot.
+
+If Google says "The setting you are looking for is not available for your account", check
+that 2-Step Verification is on, Advanced Protection is off, and the account is not a school
+or work account whose admin blocks app passwords (use a personal Gmail instead).
+
+**Security.** The app password must be stored to keep polling. It is saved in
+`.phishreport-data/gmail_accounts.json` (set `PHISHREPORT_GMAIL_PATH` to move it) with
+owner-only permissions, is never logged, and is excluded from Git. Telegram may keep your
+`/linkgmail` message on its servers even after the bot deletes it, so revoke the app
+password when you are done testing. Each chat links its own account; set
+`TELEGRAM_ALLOWED_CHAT_ID` if the bot is public.
+
 #### Configure and run the bot
 
 Create a bot with [BotFather](https://t.me/BotFather). By default the bot
@@ -167,7 +213,9 @@ bash run.sh telegram
 The helper builds the `telegram` target if needed and mounts
 `.phishreport-data/` at `/data`, where the bot reads and writes `reports.json`.
 It needs `GROQ_API_KEY` in `.env` to assess messages.
-It uses outbound polling with one running instance per token.
+It uses outbound polling with one running instance per token. When the bot is ready, the
+terminal prints your bot's username and the next steps (`/start`, `/linkgmail`,
+`/checkmail`). Press Ctrl+C to stop it.
 
 For a first run with empty history, the direct commands also work in PowerShell:
 

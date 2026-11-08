@@ -1,5 +1,7 @@
 """Build assessment records from chat text and format results as chat replies."""
 
+from html import escape
+
 from phishreport.io.presenter import ReportPresenter
 
 MAX_REPLY_CHARS = 4000  # Telegram rejects messages longer than 4096 characters.
@@ -58,3 +60,42 @@ class ResultFormatter:
         if len(text) > MAX_REPLY_CHARS:
             text = text[: MAX_REPLY_CHARS - 3] + "..."
         return f"{text}\n\n{self.FOOTER}"
+
+
+class PhishingAlertFormatter:
+    """Format a flagged email as a Telegram HTML message (parse_mode="HTML")."""
+
+    BADGES = {"HIGH": "🚨 <b>HIGH risk</b>", "MEDIUM": "⚠️ <b>MEDIUM risk</b>"}
+    MAX_LINE = 300
+    MAX_STEPS = 5
+
+    def _clip(self, text: str) -> str:
+        text = " ".join(str(text).split())
+        return escape(text if len(text) <= self.MAX_LINE else text[: self.MAX_LINE - 3] + "...")
+
+    def format(
+        self, result: dict, sender: str | None, subject: str = "", source_url: str | None = None
+    ) -> str:
+        priority = result.get("priority", "")
+        lines = [
+            f"{self.BADGES.get(priority, '⚠️ <b>Possible phishing</b>')} · possible phishing email",
+            "",
+            f"<b>From:</b> {self._clip(sender or 'Unknown sender')}",
+        ]
+        if subject:
+            lines.append(f"<b>Subject:</b> {self._clip(subject)}")
+        lines.append(f"<b>Score:</b> {escape(str(result.get('score', 'n/a')))}/100")
+        if result.get("reasons"):
+            lines += ["", "<b>Why it was flagged</b>"]
+            lines += [f"• {self._clip(reason)}" for reason in result["reasons"]]
+        steps = result.get("checklist", [])[: self.MAX_STEPS]
+        if steps:
+            lines += ["", "<b>What to do</b>"]
+            lines += [f"{number}. {self._clip(step)}" for number, step in enumerate(steps, 1)]
+        if source_url:
+            lines += [
+                "",
+                f'📧 <a href="{escape(source_url, quote=True)}">Open the email in Gmail</a>',
+            ]
+        lines += ["", "<i>Do not click links or reply. A low score never guarantees safety.</i>"]
+        return "\n".join(lines)
