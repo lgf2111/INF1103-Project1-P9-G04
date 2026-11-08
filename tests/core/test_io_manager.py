@@ -449,7 +449,7 @@ def test_io_manager_read_eml_details_rejects_excessive_mime_depth(tmp_path):
     parsed_email = BytesParser(policy=policy.default).parsebytes(email_file.read_bytes())
 
     with pytest.raises(ValueError, match="nesting is too deep"):
-        eml.validate_mime_limits(parsed_email)
+        eml.MimeLimitChecker().validate(parsed_email)
 
     with pytest.raises(ValueError, match="nesting is too deep"):
         io_manager.eml_reader.read_path(email_file)
@@ -1117,7 +1117,7 @@ def test_html_email_empty_plain_alternative_does_not_block_real_email_body(filen
     from pathlib import Path
 
     raw = (Path(__file__).resolve().parents[2] / "tests" / "fixtures" / filename).read_bytes()
-    expected = eml.read_eml_body(BytesParser(policy=policy.default).parsebytes(raw))
+    expected = eml.EmlDecoder().read_body(BytesParser(policy=policy.default).parsebytes(raw))
     # Keep the original real message intact inside a MIME wrapper containing
     # an empty alternative. No invented phishing text or live provider is used.
     wrapped = (
