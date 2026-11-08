@@ -18,7 +18,7 @@ from email.header import decode_header
 from email.parser import BytesParser
 from pathlib import Path
 
-from phishreport.email_html import html_to_text
+from phishreport.email_html import EmailTextExtractor
 
 MAX_EML_BYTES = 2 * 1024 * 1024
 MAX_MIME_PARTS = 100
@@ -223,7 +223,7 @@ class EmlDecoder:
                 continue
             if part.get_content_type() == "text/html":
                 had_html = True
-                converted = html_to_text(decoded, self.max_chars, allow_empty=True)
+                converted = EmailTextExtractor(self.max_chars, allow_empty=True).extract(decoded)
                 if not converted:
                     continue  # Empty markup must not block another usable representation.
                 decoded = "[HTML body]\n" + converted

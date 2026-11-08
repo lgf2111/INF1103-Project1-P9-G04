@@ -10,7 +10,7 @@ from types import SimpleNamespace
 import pytest
 
 from phishreport.ai import AIManager
-from phishreport.email_html import html_to_text
+from phishreport.email_html import EmailTextExtractor
 from phishreport.io import IOManager, eml
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logic import LogicManager
@@ -1020,11 +1020,10 @@ def test_html_email_html_resources_and_scripts_are_never_requested_or_executed(m
         pytest.fail("HTML conversion must never fetch a resource")
 
     monkeypatch.setattr(urllib.request, "urlopen", no_network)
-    text = html_to_text(
+    text = EmailTextExtractor(50000).extract(
         "<head><style>BAD_STYLE</style></head><script>BAD_SCRIPT</script>"
         '<p>Readable &amp; safe</p><img src="https://tracking.example.test/pixel" '
-        'alt="Alert"><form action="https://credential.example.test">Password</form>',
-        50000,
+        'alt="Alert"><form action="https://credential.example.test">Password</form>'
     )
     assert "BAD_STYLE" not in text and "BAD_SCRIPT" not in text
     assert "Readable & safe" in text and "Password" in text
@@ -1040,7 +1039,7 @@ def test_html_email_html_without_usable_content_is_rejected(html):
 
 def test_html_email_html_output_limits_include_attribute_expansion():
     with pytest.raises(ValueError, match="length limit"):
-        html_to_text('<a href="' + "a" * 50000 + '">x</a>', 50000)
+        EmailTextExtractor(50000).extract('<a href="' + "a" * 50000 + '">x</a>')
 
 
 def test_html_email_forged_sender_is_preserved_as_untrusted_text_not_repaired():
@@ -1155,9 +1154,9 @@ def test_html_email_empty_html_alternative_does_not_block_valid_plain_text():
 def test_html_email_html_whitespace_does_not_count_as_final_message_text():
     raw = b"Content-Type: text/html; charset=utf-8\r\n\r\n<p>" + b" " * 51000 + b"Hello</p>"
     assert io_manager.eml_reader.read_bytes(raw)[1] == "[HTML body]\nHello"
-    assert html_to_text("<p>  Hello  </p><p>  world  </p>", 11) == "Hello\nworld"
+    assert EmailTextExtractor(11).extract("<p>  Hello  </p><p>  world  </p>") == "Hello\nworld"
     with pytest.raises(ValueError, match="length limit"):
-        html_to_text("<p>Hello</p><p>world</p>", 10)
+        EmailTextExtractor(10).extract("<p>Hello</p><p>world</p>")
 
 
 # ============================================================================
