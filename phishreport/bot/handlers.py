@@ -38,7 +38,12 @@ class TelegramIOManager:
         # Reports are saved by read-modify-write, so overlapping saves must take turns.
         self._save_lock = asyncio.Lock()
 
-    def _is_allowed(self, update: Update) -> bool:
+    @property
+    def save_lock(self) -> asyncio.Lock:
+        """Lock shared with other writers of the report history."""
+        return self._save_lock
+
+    def is_allowed(self, update: Update) -> bool:
         chat = update.effective_chat
         if chat is None or chat.type != ChatType.PRIVATE:
             return False
@@ -46,20 +51,21 @@ class TelegramIOManager:
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
-        if not self._is_allowed(update) or message is None:
+        if not self.is_allowed(update) or message is None:
             return
         keyboard = InlineKeyboardMarkup(
             [[InlineKeyboardButton("Check connection", callback_data=CHECK_CONNECTION)]]
         )
         await message.reply_text(
-            "Welcome to PhishReport. Send me a suspicious message and I will assess it.",
+            "Welcome to PhishReport. Send me a suspicious message and I will assess it.\n\n"
+            "Use /linkgmail to have me watch your Gmail and warn you about phishing emails.",
             reply_markup=keyboard,
         )
 
     async def check_connection(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         query = update.callback_query
         message = update.effective_message
-        if not self._is_allowed(update) or query is None or message is None:
+        if not self.is_allowed(update) or query is None or message is None:
             return
 
         await query.answer()
@@ -73,7 +79,7 @@ class TelegramIOManager:
     async def assess_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Assess the text of a private chat message and reply with the outcome."""
         message = update.effective_message
-        if not self._is_allowed(update) or message is None or not message.text:
+        if not self.is_allowed(update) or message is None or not message.text:
             return
         if self._assessment is None:
             await message.reply_text("Message assessment is not available right now.")

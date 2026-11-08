@@ -1,10 +1,11 @@
 """Start the PhishReport bot using outbound Telegram polling."""
 
+import asyncio
 import logging
 import os
 import sys
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.error import TelegramError
 from telegram.ext import (
     Application,
@@ -16,9 +17,33 @@ from telegram.ext import (
 
 from phishreport.ai import AIManager
 from phishreport.assessment import AssessmentService
+from phishreport.bot.gmail import AccountStore
+from phishreport.bot.gmail_handlers import GmailLinkHandlers
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
+from phishreport.bot.monitor import EmailMonitor
 from phishreport.data import DataManager, JsonReportStorage
+from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
+
+COMMANDS = [
+    BotCommand("start", "Welcome and connection check"),
+    BotCommand("linkgmail", "Link Gmail to watch for phishing emails"),
+    BotCommand("unlinkgmail", "Unlink Gmail and delete the saved password"),
+]
+
+
+def startup_guide(username: str) -> str:
+    """Tell whoever started the bot what to do next."""
+    return (
+        "\nPhishReport bot is running.\n"
+        f"  1. Open Telegram and message @{username} (https://t.me/{username}).\n"
+        "  2. Send /start, or paste any suspicious message to get an assessment.\n"
+        "  3. Send /linkgmail to watch your Gmail. It needs a Google app password:\n"
+        "     https://myaccount.google.com/apppasswords (2-Step Verification must be on).\n"
+        "  4. After linking, new emails are checked every minute and you get a\n"
+        "     Telegram message if one looks like phishing. Use /unlinkgmail to stop.\n"
+        "Press Ctrl+C to stop the bot.\n"
+    )
 
 
 async def _report_polling_error(update, context):
@@ -48,16 +73,37 @@ def main() -> int:
             return 1
 
     history_path = os.environ.get("PHISHREPORT_REPORTS_PATH", "reports.json")
-    manager = TelegramIOManager(
-        DataManager(JsonReportStorage(history_path)),
-        chat_id,
-        assessment=AssessmentService(AIManager(), LogicManager()),
-    )
+    data_manager = DataManager(JsonReportStorage(history_path))
+    assessment = AssessmentService(AIManager(), LogicManager())
+    manager = TelegramIOManager(data_manager, chat_id, assessment=assessment)
+    store = AccountStore(os.environ.get("PHISHREPORT_GMAIL_PATH", "gmail_accounts.json"))
+    gmail = GmailLinkHandlers(store, manager.is_allowed)
+    AppLogging.setup()
+
+    async def start_monitor(application: Application) -> None:
+        await application.bot.set_my_commands(COMMANDS)
+        monitor = EmailMonitor(application.bot, store, assessment, data_manager, manager.save_lock)
+        application.bot_data["monitor_task"] = asyncio.create_task(monitor.run())
+        print(startup_guide(application.bot.username), flush=True)
+
+    async def stop_monitor(application: Application) -> None:
+        task = application.bot_data.get("monitor_task")
+        if task is not None:
+            task.cancel()
+
     # Telegram library diagnostics can contain the token in request URLs.
     logging.getLogger("telegram").setLevel(logging.CRITICAL + 1)
     try:
-        application = Application.builder().token(token).build()
+        application = (
+            Application.builder()
+            .token(token)
+            .post_init(start_monitor)
+            .post_shutdown(stop_monitor)
+            .build()
+        )
         application.add_handler(CommandHandler("start", manager.start))
+        application.add_handler(CommandHandler("linkgmail", gmail.link))
+        application.add_handler(CommandHandler("unlinkgmail", gmail.unlink))
         application.add_handler(
             CallbackQueryHandler(manager.check_connection, pattern=rf"^{CHECK_CONNECTION}\Z")
         )

@@ -14,7 +14,9 @@ RUN uv pip install --system --no-cache -r requirements.txt
 COPY . .
 
 FROM base AS telegram
-ENV PHISHREPORT_REPORTS_PATH=/data/reports.json
+ENV PHISHREPORT_REPORTS_PATH=/data/reports.json \
+    PHISHREPORT_GMAIL_PATH=/data/gmail_accounts.json \
+    PYTHONUNBUFFERED=1
 CMD ["python", "-m", "phishreport.bot"]
 
 FROM base AS cli

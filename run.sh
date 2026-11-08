@@ -133,6 +133,11 @@ elif [ "$command" = "telegram" ]; then
         docker build --target telegram -t "$TELEGRAM_IMAGE" "$(docker_path "$PROJECT_DIR")"
     fi
     mkdir -p "$DATA_DIR"
+    echo "Starting the Telegram bot (Ctrl+C to stop)."
+    echo "Once it says it is running, follow the steps it prints, then in Telegram:"
+    echo "  /start        welcome and connection check"
+    echo "  /linkgmail    watch your Gmail for phishing (needs a Google app password)"
+    echo "Linked Gmail details are kept in $DATA_DIR/gmail_accounts.json (keep it private)."
     docker run --rm \
         --env-file "$(docker_path "$TELEGRAM_ENV")" \
         -v "$(docker_path "$DATA_DIR"):/data" \

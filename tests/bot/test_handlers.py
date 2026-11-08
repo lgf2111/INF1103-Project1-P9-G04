@@ -143,9 +143,11 @@ def test_launcher_registers_welcome_and_button_handlers_for_polling(monkeypatch)
 
     (app,) = polling.call_args.args
     polling.assert_called_once_with(app, allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])
-    start, check, text = app.handlers[0]
+    start, link, unlink, check, text = app.handlers[0]
     assert isinstance(start, CommandHandler)
     assert start.commands == {"start"}
+    assert link.commands == {"linkgmail"}
+    assert unlink.commands == {"unlinkgmail"}
     assert isinstance(check, CallbackQueryHandler)
     assert check.pattern.match(CHECK_CONNECTION)
     assert not check.pattern.match(CHECK_CONNECTION + "\n")
