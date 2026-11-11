@@ -50,8 +50,10 @@ class ReportValidator:
             if set(record) == REPORT_FIELDS:
                 return self._validate_summary(record)
             return self._validate_legacy(record)
-        if type(record["schema_version"]) is not int or record["schema_version"] not in (1, 2):
+        if type(record["schema_version"]) is not int or record["schema_version"] not in (1, 2, 3):
             raise ValueError("Unsupported report version.")
+        if record["schema_version"] == 3:
+            return self._validate_v3(record)
         if record["schema_version"] == 2:
             return self._validate_v2(record)
         return self._validate_v1(record)
