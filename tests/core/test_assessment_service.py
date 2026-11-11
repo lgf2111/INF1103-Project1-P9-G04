@@ -187,3 +187,118 @@ def test_assess_with_findings_propagates_logic_errors_without_input_mutation():
     assert raised.value is error
     assert record == before
     ai_manager.assess.assert_called_once_with(record)
+
+
+@pytest.mark.parametrize(
+    ("answers", "score", "priority"),
+    [
+        ({}, 60, "MEDIUM"),
+        ({"clicked": True}, 80, "HIGH"),
+        ({"downloaded": True}, 80, "HIGH"),
+        ({"submitted_category": "password"}, 90, "HIGH"),
+        ({"submitted_category": "otp"}, 90, "HIGH"),
+    ],
+)
+def test_rescore_uses_explicit_findings_and_current_exposure_without_ai(
+    answers, score, priority
+):
+    service, ai_manager = _service()
+    record = {**RECORD, **answers, "ai": {**FINDINGS, "suspicious": False}}
+    before = deepcopy(record)
+
+    result = service.rescore(record, FINDINGS)
+
+    assert (result["score"], result["priority"]) == (score, priority)
+    assert record == before
+    ai_manager.assess.assert_not_called()
+
+
+def test_rescore_reuses_snapshot_across_answer_changes_with_only_one_ai_call():
+    service, ai_manager = _service()
+    snapshot = service.assess_with_findings(RECORD)
+    before = deepcopy(snapshot)
+    answers_and_scores = [
+        ({"clicked": True}, 80),
+        ({"downloaded": True}, 80),
+        ({"submitted_category": "password"}, 90),
+        ({"submitted_category": "otp"}, 90),
+        ({}, 60),
+    ]
+
+    for answers, score in answers_and_scores:
+        result = service.rescore({**RECORD, **answers}, snapshot.findings)
+        assert result["score"] == score
+        result["reasons"].clear()
+
+    assert snapshot == before
+    ai_manager.assess.assert_called_once_with(RECORD)
+
+
+def test_rescore_isolates_inputs_and_result_from_mutating_logic():
+    record = {**RECORD, "context": {"tags": ["original"]}}
+    findings = {**FINDINGS, "details": {"clues": ["urgent"]}}
+    record_before, findings_before = deepcopy(record), deepcopy(findings)
+    ai_manager = Mock()
+    logic_manager = Mock()
+    collaborator_data = {}
+
+    def evaluate(working_record):
+        working_record["context"]["tags"].append("logic mutation")
+        working_record["ai"]["details"]["clues"].append("logic mutation")
+        collaborator_data.update(working_record)
+        return collaborator_data
+
+    logic_manager.evaluate.side_effect = evaluate
+    service = AssessmentService(ai_manager, logic_manager)
+
+    result = service.rescore(record, findings)
+    collaborator_data["context"]["tags"].append("later mutation")
+    result["ai"]["details"]["clues"].append("result mutation")
+
+    assert result["context"]["tags"] == ["original", "logic mutation"]
+    assert collaborator_data["ai"]["details"]["clues"] == ["urgent", "logic mutation"]
+    assert record == record_before
+    assert findings == findings_before
+    ai_manager.assess.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("record", "findings", "message"),
+    [
+        ({**RECORD, "clicked": "yes"}, FINDINGS, "clicked must be true or false"),
+        ({**RECORD, "message": ""}, FINDINGS, "message must be non-empty text"),
+        (RECORD, {**FINDINGS, "suspicious": "yes"}, "AI finding must be true or false"),
+    ],
+)
+def test_rescore_propagates_validation_errors_without_ai(record, findings, message):
+    service, ai_manager = _service()
+
+    with pytest.raises(ValueError, match=message):
+        service.rescore(record, findings)
+
+    ai_manager.assess.assert_not_called()
+
+
+@pytest.mark.parametrize("error", [ValueError("bad logic"), RuntimeError("failed logic")])
+def test_rescore_propagates_logic_failure_without_ai_or_input_mutation(error):
+    record = {**RECORD, "context": {"tags": ["original"]}}
+    findings = {**FINDINGS, "details": {"clues": ["urgent"]}}
+    record_before, findings_before = deepcopy(record), deepcopy(findings)
+    ai_manager = Mock()
+    logic_manager = Mock()
+
+    def fail(working_record):
+        working_record["context"]["tags"].clear()
+        working_record["ai"]["details"]["clues"].clear()
+        raise error
+
+    logic_manager.evaluate.side_effect = fail
+    service = AssessmentService(ai_manager, logic_manager)
+
+    with pytest.raises(type(error)) as raised:
+        service.rescore(record, findings)
+
+    assert raised.value is error
+    assert record == record_before
+    assert findings == findings_before
+    ai_manager.assess.assert_not_called()

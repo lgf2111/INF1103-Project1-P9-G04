@@ -49,6 +49,16 @@ class AssessmentService:
         result = self._logic_manager.evaluate(enriched_record)
         return AssessmentSnapshot(findings=findings, result=deepcopy(result))
 
+    def rescore(self, record: dict, findings: dict) -> dict:
+        """Evaluate current exposure with retained findings and no AI call.
+
+        Explicit findings replace any record findings. Working inputs and the
+        returned result are independent copies; logic errors propagate unchanged.
+        """
+        enriched_record = deepcopy(record)
+        enriched_record["ai"] = deepcopy(findings)
+        return deepcopy(self._logic_manager.evaluate(enriched_record))
+
     @staticmethod
     def build_report(record: dict, result: dict) -> dict:
         """Return the version-2 report that keeps the message and its assessment."""
