@@ -84,3 +84,25 @@ class ExposureSession:
         self.exposure = candidate
         self.result = result
         return returned_result
+
+    def complete(self, assessment: AssessmentService) -> dict:
+        """Freeze the current answers/result into a v3 report without I/O.
+
+        Async callback callers must serialize this operation with self.lock.
+        Stage independent report/return copies before changing lifecycle state;
+        failures leave the session unchanged. Replays return the cached report
+        even after expiry, supporting later storage retries without re-scoring.
+        Completion alone does not mark the report as saved.
+        """
+        if self.completed:
+            return deepcopy(self.report)
+        if time.monotonic() >= self.expires_at:
+            raise ValueError("Exposure session has expired")
+
+        report = deepcopy(assessment.build_exposure_report(
+            deepcopy(self.record), deepcopy(self.result), deepcopy(self.exposure)
+        ))
+        returned_report = deepcopy(report)
+        self.report = report
+        self.completed = True
+        return returned_report

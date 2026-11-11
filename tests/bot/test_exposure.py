@@ -10,6 +10,7 @@ import pytest
 
 from phishreport.assessment import AssessmentService, AssessmentSnapshot
 from phishreport.bot.messages import ChatRecordBuilder
+from phishreport.data.validator import ReportValidator
 from phishreport.logic import LogicManager
 
 
@@ -52,6 +53,181 @@ def pending(exposure_module):
         record, snapshot, chat_id=101, user_id=202, message_id=303
     )
     return session, service, ai, record, snapshot
+
+
+@pytest.mark.parametrize(
+    ("actions", "answers", "score", "priority"),
+    [
+        ([], (None, None, None, False), 60, "MEDIUM"),
+        (["neither", "no_disclosure"], (False, False, None, True), 60, "MEDIUM"),
+        (["clicked"], (True, False, None, False), 80, "HIGH"),
+        (["downloaded"], (False, True, None, False), 80, "HIGH"),
+        (["password"], (None, None, "password", True), 90, "HIGH"),
+        (["otp"], (None, None, "otp", True), 90, "HIGH"),
+    ],
+)
+def test_complete_preserves_answers_and_current_result_without_rescoring(
+    pending, monkeypatch, actions, answers, score, priority
+):
+    session, service, ai, _, _ = pending
+    for action in actions:
+        session.apply_answer(action, service)
+    before = dict(session.__dict__)
+    # Completion must only package the current assessment, with no new AI/logic work.
+    monkeypatch.setattr(service, "rescore", Mock(side_effect=AssertionError("re-score")))
+    monkeypatch.setattr(service, "assess", Mock(side_effect=AssertionError("assess")))
+    monkeypatch.setattr(service, "assess_with_findings", Mock(side_effect=AssertionError("AI")))
+
+    report = session.complete(service)
+
+    assert ReportValidator().validate_new(report) == report
+    assert report["schema_version"] == 3
+    assert tuple(report["exposure"].values()) == answers
+    assert (report["result"]["score"], report["result"]["priority"]) == (score, priority)
+    assert report["message"] == session.record["message"]
+    assert report["sender"] == "Sender"
+    assert (report["has_link"], report["link"]) == (True, "https://example.test")
+    assert (report["has_file"], report["file_name"]) == (True, "invoice.pdf")
+    assert session.completed is True
+    assert session.saved is False
+    assert session.report == report
+    assert session.report is not report
+    assert all(session.__dict__[key] is value for key, value in before.items()
+               if key not in ("report", "completed"))
+    ai.assess.assert_called_once()
+    with pytest.raises(ValueError):
+        session.apply_answer("clicked", service)
+
+
+@pytest.mark.parametrize("saved", [False, True])
+def test_complete_replays_frozen_report_after_expiry_without_rebuilding(
+    pending, exposure_module, monkeypatch, saved
+):
+    session, service, ai, _, _ = pending
+    session.apply_answer("clicked", service)
+    expected = session.complete(service)
+    stored = session.report
+    session.saved = saved
+    session.record["message"] = "changed later"
+    session.exposure["clicked"] = False
+    session.result["score"] = 0
+    monkeypatch.setattr(exposure_module.time, "monotonic", Mock(
+        side_effect=AssertionError("completed report must not expire")
+    ))
+    assessment = Mock()
+    assessment.build_exposure_report.side_effect = AssertionError("rebuild")
+    assessment.rescore.side_effect = AssertionError("re-score")
+    assessment.assess.side_effect = AssertionError("AI")
+
+    first = session.complete(assessment)
+    assert first == expected
+    first["result"]["reasons"].append("caller mutation")
+    first["exposure"]["clicked"] = False
+    second = session.complete(assessment)
+    assert second == expected
+    assert second is not first
+    assert session.report is stored
+    assert session.report == expected
+    assert session.saved is saved
+    ai.assess.assert_called_once()
+
+
+@pytest.mark.parametrize("offset", [0, 0.001])
+def test_complete_rejects_first_completion_at_or_after_expiry_atomically(
+    pending, exposure_module, monkeypatch, offset
+):
+    session, _, _, _, _ = pending
+    before = dict(session.__dict__)
+    monkeypatch.setattr(exposure_module.time, "monotonic", lambda: session.expires_at + offset)
+    assessment = Mock()
+    with pytest.raises(ValueError, match="expired"):
+        session.complete(assessment)
+    assert all(session.__dict__[key] is value for key, value in before.items())
+    assessment.build_exposure_report.assert_not_called()
+
+
+def test_complete_accepts_immediately_before_expiry(pending, exposure_module, monkeypatch):
+    session, service, _, _, _ = pending
+    monkeypatch.setattr(exposure_module.time, "monotonic", lambda: session.expires_at - 0.001)
+    assert session.complete(service)["result"]["score"] == 60
+    assert session.completed is True
+
+
+@pytest.mark.parametrize("stage", range(1, 6))
+def test_complete_copy_failure_leaves_all_state_values_and_identities_intact(
+    pending, exposure_module, monkeypatch, stage
+):
+    session, service, _, _, _ = pending
+    before = deepcopy(session.__dict__, {id(session.lock): session.lock})
+    identities = dict(session.__dict__)
+    error = RuntimeError("copy failed")
+    copies = 0
+
+    def copy_until_failure(value):
+        nonlocal copies
+        copies += 1
+        if copies == stage:
+            raise error
+        return deepcopy(value)
+
+    monkeypatch.setattr(exposure_module, "deepcopy", copy_until_failure)
+    with pytest.raises(RuntimeError) as raised:
+        session.complete(service)
+    assert raised.value is error
+    assert session.__dict__ == before
+    assert all(session.__dict__[key] is value for key, value in identities.items())
+
+
+@pytest.mark.parametrize("raises", [False, True])
+def test_complete_isolates_mutating_builder_inputs_output_and_return(pending, raises):
+    session, _, _, record, snapshot = pending
+    before = deepcopy((session.__dict__, record, snapshot), {id(session.lock): session.lock})
+    identities = dict(session.__dict__)
+    error = RuntimeError("builder failed")
+    retained = {}
+
+    def build(working_record, working_result, working_exposure):
+        retained.update(record=working_record, result=working_result, exposure=working_exposure)
+        working_record["metadata"]["labels"].append("builder")
+        working_result["reasons"].append("builder")
+        working_exposure["clicked"] = True
+        if raises:
+            raise error
+        return retained
+
+    assessment = Mock()
+    assessment.build_exposure_report.side_effect = build
+    if raises:
+        with pytest.raises(RuntimeError) as raised:
+            session.complete(assessment)
+        assert raised.value is error
+        assert (session.__dict__, record, snapshot) == before
+        assert all(session.__dict__[key] is value for key, value in identities.items())
+    else:
+        returned = session.complete(assessment)
+        frozen = deepcopy(session.report)
+        retained["record"]["metadata"]["labels"].append("later builder")
+        returned["result"]["reasons"].append("caller")
+        assert session.report == frozen
+        assert returned["record"]["metadata"]["labels"] == ["original", "builder"]
+        assert retained["result"]["reasons"] == frozen["result"]["reasons"]
+        assert (session.record, session.result, session.exposure, record, snapshot) == (
+            before[0]["record"], before[0]["result"], before[0]["exposure"], before[1], before[2]
+        )
+
+
+def test_complete_replay_copy_failure_preserves_completed_report(
+    pending, exposure_module, monkeypatch
+):
+    session, service, _, _, _ = pending
+    session.complete(service)
+    before = dict(session.__dict__)
+    error = RuntimeError("replay copy failed")
+    monkeypatch.setattr(exposure_module, "deepcopy", Mock(side_effect=error))
+    with pytest.raises(RuntimeError) as raised:
+        session.complete(service)
+    assert raised.value is error
+    assert all(session.__dict__[key] is value for key, value in before.items())
 
 
 @pytest.mark.parametrize(
