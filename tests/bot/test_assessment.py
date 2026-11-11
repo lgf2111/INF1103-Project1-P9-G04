@@ -186,6 +186,90 @@ def test_chat_record_builder_makes_a_record_the_logic_manager_accepts():
     )
 
 
+@pytest.mark.parametrize(
+    "text, expected_link",
+    [
+        ("Visit http://example.test/reset", "http://example.test/reset"),
+        ("Open https://example.test/a?token=abc&next=%2Fhome.",
+         "https://example.test/a?token=abc&next=%2Fhome"),
+        ("Use www.example.test/login?code=123!", "www.example.test/login?code=123"),
+        ("See (https://example.test/wiki/Example_(topic)).",
+         "https://example.test/wiki/Example_(topic)"),
+        ("See https://example.test/a_(b_(c)).", "https://example.test/a_(b_(c))"),
+        ("First www.first.test/a, then https://second.test/b", "www.first.test/a"),
+        ('Open <HTTPS://Example.test/Path?q=One>; now', "HTTPS://Example.test/Path?q=One"),
+        ("See [https://example.test/path?q=a,b#section].", "https://example.test/path?q=a,b#section"),
+        ("See https://example.test/list[0].", "https://example.test/list[0]"),
+        ("See {https://example.test/{item}}.", "https://example.test/{item}"),
+        ("Email user@www.example.test or user@example.test", None),
+        ("Email user@sub.www.example.com", None),
+        ("Email john.www.example.com@example.net", None),
+        ("prefixhttps://example.test is ordinary text", None),
+        ("An ordinary message without a link", None),
+        ("", None),
+    ],
+)
+def test_chat_record_builder_extracts_first_url_without_changing_source(text, expected_link):
+    record = ChatRecordBuilder().build(text, sender=" Original Sender ")
+
+    assert record["link"] == expected_link
+    assert record["has_link"] is (expected_link is not None)
+    assert record["message"] == text
+    assert record["sender"] == " Original Sender "
+    if text:
+        LogicManager().validate_record(record)
+
+
+@pytest.mark.parametrize(
+    "filename",
+    ["invoice.pdf", "letter.doc", "letter.docx", "sheet.xls", "sheet.xlsx",
+     "archive.zip", "app.apk", "setup.exe", "photo.jpg", "photo.jpeg",
+     "photo.png", "animation.gif", "scan.webp"],
+)
+def test_chat_record_builder_recognizes_supported_filenames(filename):
+    record = ChatRecordBuilder().build(f'Please open "{filename}".')
+
+    assert record["has_file"] is True
+    assert record["file_name"] == filename
+
+
+@pytest.mark.parametrize(
+    "text, has_file, filename",
+    [
+        ("Open Invoice-2026.PDF, then second.zip.", True, "Invoice-2026.PDF"),
+        ("Please see the attached file.", True, None),
+        ("I attached a document for review.", True, None),
+        ("See the attachment below.", True, None),
+        ("Email invoice.pdf@example.test", False, None),
+        ("Email user@example.pdf", False, None),
+        ("Visit https://example.pdf/invoice.pdf?name=setup.exe", False, None),
+        ("Visit www.example.pdf/download", False, None),
+        ("Visit https://example.test/file.pdf then open real.docx.", True, "real.docx"),
+        ("The filename is script.unknown and no file was provided.", False, None),
+        ("I feel attached to this project.", False, None),
+        ("Please file a report.", False, None),
+        ("Look at photo.jpg.example or invoice.pdfx", False, None),
+    ],
+)
+def test_chat_record_builder_distinguishes_files_from_email_and_url(text, has_file, filename):
+    record = ChatRecordBuilder().build(text)
+
+    assert record["has_file"] is has_file
+    assert record["file_name"] == filename
+
+
+def test_chat_record_builder_never_infers_exposure_from_message_claims():
+    record = ChatRecordBuilder().build(
+        "I clicked https://example.test, downloaded invoice.pdf and submitted my password and OTP."
+    )
+
+    assert record["clicked"] is False
+    assert record["downloaded"] is False
+    assert record["submitted_category"] is None
+    service = AssessmentService(Mock(**{"assess.return_value": FINDINGS}), LogicManager())
+    assert service.assess(record)["score"] == 60
+
+
 def test_buffer_terminal_collects_output_and_cannot_prompt():
     terminal = BufferTerminal()
 
