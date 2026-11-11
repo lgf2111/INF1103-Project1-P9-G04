@@ -66,7 +66,7 @@ jobs:
 
       - name: Run offline tests inside the Telegram image
         # Run unprivileged so the POSIX permission tests exercise real failures.
-        # /tmp holds runtime writes; the image's PYTHONPATH=/app supplies imports.
+        # /tmp holds runtime writes; /app is the test root for shared conftest fixtures.
         run: >-
           docker run --rm --network none --user 65534:65534 --workdir /tmp
-          phishreport-telegram python -m pytest /app/tests -p no:cacheprovider
+          phishreport-telegram python -m pytest --rootdir=/app /app/tests -p no:cacheprovider
