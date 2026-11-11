@@ -12,11 +12,75 @@ import pytest
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler
 
+from phishreport.assessment import AssessmentSnapshot
+from phishreport.bot.exposure import ExposureSession
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.main import main
+from phishreport.bot.messages import ChatRecordBuilder, ResultFormatter
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
 
 ALLOWED_CHAT_ID = 12345
+
+
+def test_constructor_tracking_starts_empty_and_isolated_per_manager():
+    first = TelegramIOManager(Mock(spec=DataManager))
+    second = TelegramIOManager(Mock(spec=DataManager))
+
+    assert first._sessions == second._sessions == {}
+    assert first._source_sessions == second._source_sessions == {}
+    assert first._session_limit == second._session_limit == 1000
+    assert first._sessions is not second._sessions
+    assert first._source_sessions is not second._source_sessions
+    assert first.save_lock is first._save_lock
+    assert isinstance(first.save_lock, asyncio.Lock)
+    assert first.save_lock is not second.save_lock
+    assert not first.save_lock.locked()
+
+
+def test_constructor_tracking_maps_keep_distinct_source_identities():
+    manager = TelegramIOManager(Mock(spec=DataManager))
+    sibling = TelegramIOManager(Mock(spec=DataManager))
+    snapshot = AssessmentSnapshot(findings={}, result={"score": 0})
+    identities = [(10, 20, 30), (10, 20, 31), (11, 20, 30), (10, 21, 30)]
+    sessions = []
+    # Populate the caches directly; handler routing is a later checkpoint.
+    for chat_id, user_id, message_id in identities:
+        session = ExposureSession(
+            {"message": "Identical text"}, snapshot,
+            chat_id=chat_id, user_id=user_id, message_id=message_id,
+        )
+        sessions.append(session)
+        manager._sessions[session.token] = session
+        manager._source_sessions[(chat_id, user_id, message_id)] = session.token
+
+    assert len(manager._sessions) == len(manager._source_sessions) == 4
+    for identity, session in zip(identities, sessions, strict=True):
+        assert manager._sessions[manager._source_sessions[identity]] is session
+    assert sibling._sessions == sibling._source_sessions == {}
+
+
+@pytest.mark.parametrize("with_assessment", [False, True])
+def test_constructor_tracking_retains_collaborators_without_calling_them(with_assessment):
+    storage = Mock(spec=DataManager)
+    assessment = Mock() if with_assessment else None
+    builder = Mock(spec=ChatRecordBuilder)
+    formatter = Mock(spec=ResultFormatter)
+    translator = Mock()
+
+    manager = TelegramIOManager(
+        storage, ALLOWED_CHAT_ID, assessment, builder, formatter, translator
+    )
+
+    assert manager._data_manager is storage
+    assert manager._allowed_chat_id == ALLOWED_CHAT_ID
+    assert manager._assessment is assessment
+    assert manager._record_builder is builder
+    assert manager._formatter is formatter
+    assert manager._error_translator is translator
+    assert manager._sessions == manager._source_sessions == {}
+    for collaborator in (storage, assessment, builder, formatter, translator):
+        if collaborator is not None:
+            assert collaborator.mock_calls == []
 
 
 def fake_update(chat_id=ALLOWED_CHAT_ID, chat_type="private", *, has_chat=True):

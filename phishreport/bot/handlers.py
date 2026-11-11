@@ -7,6 +7,7 @@ from telegram.constants import ChatType
 from telegram.ext import ContextTypes
 
 from phishreport.ai.errors import AIErrorTranslator
+from phishreport.bot.exposure import ExposureSession
 from phishreport.bot.messages import ChatRecordBuilder, ResultFormatter
 from phishreport.data import DataManager
 
@@ -37,6 +38,10 @@ class TelegramIOManager:
         self._error_translator = error_translator or AIErrorTranslator()
         # Reports are saved by read-modify-write, so overlapping saves must take turns.
         self._save_lock = asyncio.Lock()
+        # Keep exposure sessions by token and source (chat, user, message) identity.
+        self._sessions: dict[str, ExposureSession] = {}
+        self._source_sessions: dict[tuple[int, int, int], str] = {}
+        self._session_limit = 1000
 
     @property
     def save_lock(self) -> asyncio.Lock:
