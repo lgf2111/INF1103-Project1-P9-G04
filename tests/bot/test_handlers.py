@@ -14,7 +14,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Mess
 
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.main import main
-from phishreport.data import DataManager, JsonReportStorage
+from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
 
 ALLOWED_CHAT_ID = 12345
 
@@ -120,6 +120,54 @@ def test_without_allowed_chat_any_private_chat_is_served_but_not_groups():
     group = fake_update(chat_id=67890, chat_type="group")
     asyncio.run(manager.start(group, None))
     group.effective_message.reply_text.assert_not_called()
+
+
+@pytest.mark.parametrize("backend", [None, "json", "sqlite"], ids=["default", "json", "sqlite"])
+def test_launcher_selects_storage_without_changing_other_history(tmp_path, monkeypatch, backend):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:offline-token")
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_ID", "")
+    monkeypatch.delenv("PHISHREPORT_STORAGE", raising=False)
+    monkeypatch.setenv("PHISHREPORT_REPORTS_PATH", str(tmp_path / "history.json"))
+    monkeypatch.setattr("phishreport.bot.main.AppLogging.setup", lambda: True)
+    if backend is not None:
+        monkeypatch.setenv("PHISHREPORT_STORAGE", backend)
+
+    def report(message):
+        return {
+            "schema_version": 2,
+            "channel": "chat",
+            "message": message,
+            "result": {"score": 10, "priority": "LOW", "reasons": [], "checklist": []},
+        }
+
+    json_storage = JsonReportStorage(tmp_path / "history.json")
+    json_storage.write_records([report("JSON history")])
+    original_json = (tmp_path / "history.json").read_bytes()
+    if backend == "sqlite":
+        selected = SqliteReportStorage(tmp_path / "history.sqlite3")
+        existing = report("SQLite history")
+        selected.write_records([existing])
+    else:
+        selected = json_storage
+        existing = report("JSON history")
+
+    with patch.object(Application, "run_polling", autospec=True) as polling:
+        assert main() == 0
+    (application,) = polling.call_args.args
+    check = next(
+        handler for handler in application.handlers[0]
+        if isinstance(handler, CallbackQueryHandler)
+    )
+    manager = check.callback.__self__
+    assert manager._data_manager.load(strict=True) == [existing]
+    added = report("New report")
+    manager._data_manager.save(added)
+    assert selected.read_records() == [existing, added]
+    if backend == "sqlite":
+        assert (tmp_path / "history.json").read_bytes() == original_json
+    else:
+        assert not (tmp_path / "history.sqlite3").exists()
 
 
 def test_launcher_accepts_blank_allowed_chat_and_rejects_bad_values(monkeypatch):
