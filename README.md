@@ -411,16 +411,19 @@ credentials or external network access:
 
 ```bash
 docker build --target telegram -t phishreport-telegram .
-docker run --rm --network none phishreport-telegram python -m pytest
+docker run --rm --network none --user 65534:65534 --workdir /tmp phishreport-telegram python -m pytest /app/tests -p no:cacheprovider
 ```
 
 To see both backend parameter IDs and exercise the storage-specific failures:
 
 ```text
 python -m pytest -v tests/core/test_data_core.py tests/core/test_sqlite_storage.py tests/core/test_storage_factory.py tests/core/test_storage_migration.py
-docker run --rm --network none phishreport-telegram python -m pytest -v tests/core/test_data_core.py tests/core/test_sqlite_storage.py tests/core/test_storage_factory.py tests/core/test_storage_migration.py
+docker run --rm --network none --user 65534:65534 --workdir /tmp phishreport-telegram python -m pytest -v /app/tests/core/test_data_core.py /app/tests/core/test_sqlite_storage.py /app/tests/core/test_storage_factory.py /app/tests/core/test_storage_migration.py -p no:cacheprovider
 ```
 
+CI runs the full container suite as UID/GID `65534:65534` from `/tmp`, so its
+temporary files are writable and permission tests execute without root access.
+The image supplies `PYTHONPATH=/app` for package imports.
 The shared fixture runs against `JsonReportStorage` and `SqliteReportStorage`.
 Rollback tests fail an insert or commit and then read the original history.
 Genuine directory-permission checks require POSIX permissions and an unprivileged
