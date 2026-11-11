@@ -88,6 +88,82 @@ class SqliteReportStorage(ReportStorage):
                         ) from cleanup_error
                     primary_error.add_note(f"SQLite connection cleanup failed: {cleanup_error}")
 
+    def write_records(self, records: list[dict]) -> None:
+        """Pre-serialize report objects, then replace them in one transaction.
+
+        Invalid inputs never open the database. Existing schemas must match the
+        read contract; insert and commit failures roll back the complete write.
+        New paths receive an empty table before replacement begins, so a failed
+        first replacement leaves readable empty history for subsequent retries.
+        """
+        if not isinstance(records, list):
+            raise ValueError("Report history must be a list.")
+        if any(not isinstance(record, dict) for record in records):
+            raise ValueError("Stored reports must be objects.")
+        payloads = [
+            json.dumps(record, ensure_ascii=False, allow_nan=False) for record in records
+        ]
+        # SQLite TEXT requires UTF-8; check encoding before opening any files.
+        for payload in payloads:
+            payload.encode("utf-8")
+
+        existed = self._path.exists()
+        connection = None
+        primary_error = None
+        try:
+            connection = self._connect()
+            if not existed:
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS records("
+                    "position INTEGER PRIMARY KEY, payload TEXT)"
+                )
+            connection.execute("BEGIN IMMEDIATE")
+            table = connection.execute(
+                "SELECT type FROM sqlite_master WHERE name = 'records'"
+            ).fetchone()
+            columns = connection.execute("PRAGMA table_xinfo(records)").fetchall()
+            if table != ("table",) or [
+                (column[1], column[2].upper(), column[5], column[6]) for column in columns
+            ] != [("position", "INTEGER", 1, 0), ("payload", "TEXT", 0, 0)]:
+                raise ValueError("SQLite report history has an incompatible schema.")
+            indexes = connection.execute("PRAGMA index_list(records)").fetchall()
+            if any(index[3] == "pk" for index in indexes):
+                raise ValueError("SQLite report positions must be integer rowid keys.")
+            connection.execute("DELETE FROM records")
+            for position, payload in enumerate(payloads):
+                connection.execute(
+                    "INSERT INTO records(position, payload) VALUES (?, ?)",
+                    (position, payload),
+                )
+            connection.execute("COMMIT")
+        except BaseException as error:
+            primary_error = error
+            if isinstance(error, sqlite3.Error):
+                primary_code = getattr(error, "sqlite_errorcode", 0) & 0xFF
+                if primary_code in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):
+                    primary_error = ValueError(f"Malformed SQLite database: {self._path}")
+                else:
+                    primary_error = OSError(f"Cannot write SQLite database: {self._path}")
+            if connection is not None:
+                try:
+                    if connection.in_transaction:
+                        connection.execute("ROLLBACK")
+                except sqlite3.Error as cleanup_error:
+                    primary_error.add_note(f"SQLite rollback cleanup failed: {cleanup_error}")
+            if primary_error is not error:
+                raise primary_error from error
+            raise
+        finally:
+            if connection is not None:
+                try:
+                    connection.close()
+                except sqlite3.Error as cleanup_error:
+                    if primary_error is None:
+                        raise OSError(
+                            f"Cannot close SQLite database: {self._path}"
+                        ) from cleanup_error
+                    primary_error.add_note(f"SQLite connection cleanup failed: {cleanup_error}")
+
     def _connect(self, *, readonly: bool = False) -> sqlite3.Connection:
         """Open a configured connection; the caller must close it on success.
 

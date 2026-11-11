@@ -1,5 +1,6 @@
 """Connection lifecycle contracts for the incremental SQLite backend."""
 
+import os
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -393,3 +394,246 @@ def test_close_failure_preserves_primary_configuration_error(
     assert any(str(cleanup_failure) in note for note in failure.__notes__)
     with pytest.raises(sqlite3.ProgrammingError):
         connection.cursor()
+
+
+def test_write_replaces_in_order_and_preserves_nested_unicode_values(tmp_path):
+    path = tmp_path / "reports.sqlite3"
+    storage = SqliteReportStorage(path)
+    records = [{"nested": [None, True, {"text": "café 雪 ' ?"}]}, {"old": 2}]
+    assert storage.write_records(records) is None
+    records[0]["nested"].append("changed")
+    assert storage.read_records() == [
+        {"nested": [None, True, {"text": "café 雪 ' ?"}]}, {"old": 2}
+    ]
+    storage.write_records([{"replacement": 3}])
+    assert storage.read_records() == [{"replacement": 3}]
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute("SELECT position FROM records").fetchall() == [(0,)]
+    storage.write_records([])
+    assert storage.read_records() == []
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize(
+    "records,error_type",
+    [(None, ValueError), ({}, ValueError), ([1], ValueError),
+     ([{"bad": object()}], TypeError), ([{"bad": float("nan")}], ValueError)],
+)
+def test_write_invalid_input_preserves_files_before_connection(
+    tmp_path, existing, records, error_type
+):
+    path = tmp_path / "reports.sqlite3"
+    if existing:
+        _seed_records(path, [(5, '{"old":true}')])
+    before = {item.name: item.read_bytes() for item in tmp_path.iterdir()}
+    with pytest.raises(error_type):
+        SqliteReportStorage(path).write_records(records)
+    assert {item.name: item.read_bytes() for item in tmp_path.iterdir()} == before
+
+
+@pytest.mark.parametrize(
+    "schema",
+    ["CREATE TABLE other(value)",
+     "CREATE VIEW records AS SELECT 1 AS position, '{}' AS payload",
+     "CREATE TABLE records(position INT PRIMARY KEY, payload TEXT)",
+     "CREATE TABLE records(position INTEGER PRIMARY KEY DESC, payload TEXT)",
+     "CREATE TABLE records(position INTEGER PRIMARY KEY, payload TEXT, extra TEXT)",
+     "CREATE TABLE records(position INTEGER PRIMARY KEY, payload BLOB)"],
+)
+def test_write_rejects_existing_incompatible_schema(tmp_path, schema):
+    path = tmp_path / "reports.sqlite3"
+    _seed_records(path, schema=schema)
+    with pytest.raises(ValueError):
+        SqliteReportStorage(path).write_records([{"new": True}])
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute(
+            "SELECT sql FROM sqlite_master WHERE name IN ('records', 'other')"
+        ).fetchone() == (schema,)
+
+
+def test_write_trigger_abort_rolls_back_all_rows_and_allows_later_write(tmp_path):
+    path = tmp_path / "reports.sqlite3"
+    _seed_records(path, [(7, '{"old":true}')])
+    with closing(sqlite3.connect(path)) as connection:
+        connection.execute("CREATE INDEX payload_index ON records(payload)")
+        connection.execute(
+            "CREATE TRIGGER reject_later BEFORE INSERT ON records WHEN NEW.position = 1 "
+            "BEGIN SELECT RAISE(ABORT, 'reject later insert'); END"
+        )
+        connection.commit()
+    storage = SqliteReportStorage(path)
+    with pytest.raises(OSError) as error:
+        storage.write_records([{"first": True}, {"second": True}])
+    assert isinstance(error.value.__cause__, sqlite3.IntegrityError)
+    assert storage.read_records() == [{"old": True}]
+    storage.write_records([{"later": True}])
+    assert storage.read_records() == [{"later": True}]
+    with closing(sqlite3.connect(path)) as connection:
+        assert connection.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('index', 'trigger') ORDER BY name"
+        ).fetchall() == [("payload_index",), ("reject_later",)]
+
+
+@pytest.mark.parametrize("stage", ["INSERT", "COMMIT"])
+@pytest.mark.parametrize("cancel", [False, True])
+@pytest.mark.parametrize("cleanup_fails", [False, True])
+def test_write_failure_rolls_back_closes_and_preserves_primary(
+    tmp_path, monkeypatch, stage, cancel, cleanup_fails
+):
+    path = tmp_path / "reports.sqlite3"
+    _seed_records(path, [(8, '{"old":true}')])
+    failure = KeyboardInterrupt() if cancel else sqlite3.OperationalError("injected IO")
+    if not cancel:
+        failure.sqlite_errorcode = sqlite3.SQLITE_IOERR
+
+    class FailingConnection(sqlite3.Connection):
+        def execute(self, sql, *args, **kwargs):
+            if sql.startswith(stage):
+                raise failure
+            result = super().execute(sql, *args, **kwargs)
+            if cleanup_fails and sql == "ROLLBACK":
+                raise sqlite3.OperationalError("rollback cleanup failed")
+            return result
+
+        def close(self):
+            super().close()
+            if cleanup_fails:
+                raise sqlite3.OperationalError("close cleanup failed")
+
+    connection = sqlite3.connect(path, isolation_level=None, factory=FailingConnection)
+    storage = SqliteReportStorage(path)
+    monkeypatch.setattr(storage, "_connect", lambda: connection)
+    with pytest.raises(KeyboardInterrupt if cancel else OSError) as error:
+        storage.write_records([{"new": True}])
+    assert (error.value if cancel else error.value.__cause__) is failure
+    if cleanup_fails:
+        assert any("rollback cleanup failed" in note for note in error.value.__notes__)
+        assert any("close cleanup failed" in note for note in error.value.__notes__)
+    with pytest.raises(sqlite3.ProgrammingError):
+        connection.cursor()
+    assert SqliteReportStorage(path).read_records() == [{"old": True}]
+
+
+def test_write_missing_parent_is_oserror_and_corrupt_database_is_valueerror(tmp_path):
+    missing = tmp_path / "missing" / "reports.sqlite3"
+    with pytest.raises(OSError) as error:
+        SqliteReportStorage(missing).write_records([])
+    assert isinstance(error.value.__cause__, sqlite3.Error)
+    assert not missing.parent.exists()
+    path = tmp_path / "corrupt.sqlite3"
+    path.write_bytes(b"not a database" * 100)
+    with pytest.raises(ValueError) as error:
+        SqliteReportStorage(path).write_records([])
+    assert isinstance(error.value.__cause__, sqlite3.Error)
+    assert path.read_bytes() == b"not a database" * 100
+
+
+def test_write_empty_new_database_closes_connection_after_commit(tmp_path, monkeypatch):
+    path = tmp_path / "reports.sqlite3"
+    storage = SqliteReportStorage(path)
+    connect = storage._connect
+    opened = []
+
+    def capture_connection():
+        connection = connect()
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(storage, "_connect", capture_connection)
+    storage.write_records([])
+    assert len(opened) == 1
+    with pytest.raises(sqlite3.ProgrammingError):
+        opened[0].cursor()
+    assert SqliteReportStorage(path).read_records() == []
+
+
+@pytest.mark.parametrize(
+    "code,expected",
+    [(sqlite3.SQLITE_CORRUPT | (1 << 8), ValueError),
+     (sqlite3.SQLITE_NOTADB, ValueError), (sqlite3.SQLITE_BUSY, OSError)],
+)
+def test_write_database_error_codes_preserve_cause(tmp_path, monkeypatch, code, expected):
+    path = tmp_path / "reports.sqlite3"
+    _seed_records(path, [(1, '{"old":true}')])
+    failure = sqlite3.DatabaseError("injected transaction failure")
+    failure.sqlite_errorcode = code
+
+    class FailingConnection(sqlite3.Connection):
+        def execute(self, sql, *args, **kwargs):
+            if sql == "DELETE FROM records":
+                raise failure
+            return super().execute(sql, *args, **kwargs)
+
+    connection = sqlite3.connect(path, isolation_level=None, factory=FailingConnection)
+    storage = SqliteReportStorage(path)
+    monkeypatch.setattr(storage, "_connect", lambda: connection)
+    with pytest.raises(expected) as error:
+        storage.write_records([])
+    assert error.value.__cause__ is failure
+    assert SqliteReportStorage(path).read_records() == [{"old": True}]
+
+
+def test_write_close_error_after_success_reports_oserror_with_committed_rows(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "reports.sqlite3"
+    _seed_records(path)
+    failure = sqlite3.OperationalError("close failed")
+
+    class CloseFailingConnection(sqlite3.Connection):
+        def close(self):
+            super().close()
+            raise failure
+
+    connection = sqlite3.connect(path, isolation_level=None, factory=CloseFailingConnection)
+    storage = SqliteReportStorage(path)
+    monkeypatch.setattr(storage, "_connect", lambda: connection)
+    with pytest.raises(OSError) as error:
+        storage.write_records([{"committed": True}])
+    assert error.value.__cause__ is failure
+    assert SqliteReportStorage(path).read_records() == [{"committed": True}]
+
+
+def test_failed_first_write_leaves_readable_empty_history_and_allows_retry(
+    tmp_path, monkeypatch
+):
+    path = tmp_path / "reports.sqlite3"
+    original_connect = sqlite3.connect
+
+    class FailingInsertConnection(sqlite3.Connection):
+        def execute(self, sql, *args, **kwargs):
+            if sql.startswith("INSERT"):
+                raise sqlite3.OperationalError("first write failed")
+            return super().execute(sql, *args, **kwargs)
+
+    def connect(*args, **kwargs):
+        return original_connect(*args, **kwargs, factory=FailingInsertConnection)
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    with pytest.raises(OSError):
+        SqliteReportStorage(path).write_records([{"first": True}])
+    monkeypatch.undo()
+    storage = SqliteReportStorage(path)
+    assert storage.read_records() == []
+    storage.write_records([{"retry": True}])
+    assert storage.read_records() == [{"retry": True}]
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX directory permissions required")
+@pytest.mark.parametrize("existing", [False, True])
+def test_write_readonly_directory_raises_oserror(tmp_path, existing):
+    if os.geteuid() == 0:
+        pytest.skip("root bypasses POSIX directory write permissions")
+    directory = tmp_path / "readonly"
+    directory.mkdir()
+    path = directory / "reports.sqlite3"
+    if existing:
+        _seed_records(path, [(0, '{"old":true}')])
+    before = {item.name: item.read_bytes() for item in directory.iterdir()}
+    directory.chmod(0o500)
+    try:
+        with pytest.raises(OSError):
+            SqliteReportStorage(path).write_records([])
+        assert {item.name: item.read_bytes() for item in directory.iterdir()} == before
+    finally:
+        directory.chmod(0o700)

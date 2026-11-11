@@ -5,6 +5,8 @@ from importlib import import_module
 
 import pytest
 
+from phishreport.data import JsonReportStorage, SqliteReportStorage
+
 
 def validator():
     """Resolve the new API at test time so missing implementation fails tests."""
@@ -193,23 +195,10 @@ def json_storage(path):
     return import_module("phishreport.data.json_storage").JsonReportStorage(path)
 
 
-@pytest.fixture(params=["json", "memory"])
+@pytest.fixture(params=[JsonReportStorage, SqliteReportStorage], ids=["json", "sqlite"])
 def storage(request, tmp_path):
-    contract = import_module("phishreport.data.storage").ReportStorage
-
-    class MemoryStorage(contract):
-        def __init__(self):
-            self.records = []
-
-        def read_records(self):
-            return deepcopy(self.records)
-
-        def write_records(self, records):
-            self.records = deepcopy(records)
-
-    if request.param == "memory":
-        return MemoryStorage()
-    return json_storage(tmp_path / "reports.json")
+    suffix = ".json" if request.param is JsonReportStorage else ".sqlite3"
+    return request.param(tmp_path / ("reports" + suffix))
 
 
 def test_storage_contract_round_trip_replacement_and_order(storage):
