@@ -34,3 +34,5 @@ emails/
 # Operating-system metadata
 .DS_Store
 Thumbs.db
+docs/concepts_brief.md
+.vscode/
