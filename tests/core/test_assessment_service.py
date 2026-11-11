@@ -1,5 +1,6 @@
 """The shared assessment workflow used by the CLI and the Telegram bot."""
 
+from copy import deepcopy
 from unittest.mock import Mock
 
 import pytest
@@ -70,3 +71,119 @@ def test_build_report_keeps_the_message_and_its_assessment():
         "message": RECORD["message"],
         "result": result,
     }
+
+
+def test_assess_with_findings_retains_findings_and_scores_with_one_ai_call():
+    service, ai_manager = _service()
+
+    snapshot = service.assess_with_findings(RECORD)
+
+    assert snapshot.findings == FINDINGS
+    assert (snapshot.result["score"], snapshot.result["priority"]) == (60, "MEDIUM")
+    ai_manager.assess.assert_called_once_with(RECORD)
+
+
+def test_assess_with_findings_isolates_nested_findings_and_result():
+    findings = {**FINDINGS, "details": {"clues": ["urgent"]}}
+    result = {"score": 60, "priority": "MEDIUM", "reasons": [{"text": "urgent"}]}
+    ai_manager = Mock()
+    ai_manager.assess.return_value = findings
+    logic_manager = Mock()
+    logic_manager.evaluate.return_value = result
+    service = AssessmentService(ai_manager, logic_manager)
+
+    snapshot = service.assess_with_findings(RECORD)
+    findings["details"]["clues"].append("external mutation")
+    result["reasons"][0]["text"] = "external mutation"
+
+    assert snapshot.findings["details"]["clues"] == ["urgent"]
+    assert snapshot.result["reasons"] == [{"text": "urgent"}]
+    snapshot.findings["details"]["clues"].append("snapshot mutation")
+    snapshot.result["reasons"][0]["text"] = "snapshot mutation"
+    assert findings["details"]["clues"] == ["urgent", "external mutation"]
+    assert result["reasons"] == [{"text": "external mutation"}]
+
+
+def test_assess_with_findings_protects_input_and_findings_from_collaborator_mutations():
+    record = {**RECORD, "context": {"tags": ["original"]}}
+    before = deepcopy(record)
+    findings = {**FINDINGS, "details": {"clues": ["urgent"]}}
+    ai_manager = Mock()
+
+    def assess(working_record):
+        working_record["context"]["tags"].append("AI mutation")
+        return findings
+
+    ai_manager.assess.side_effect = assess
+    logic_manager = Mock()
+
+    def evaluate(working_record):
+        assert working_record["context"]["tags"] == ["original"]
+        working_record["context"]["tags"].append("logic mutation")
+        working_record["ai"]["details"]["clues"].append("logic mutation")
+        return {"score": 60, "priority": "MEDIUM"}
+
+    logic_manager.evaluate.side_effect = evaluate
+
+    snapshot = AssessmentService(ai_manager, logic_manager).assess_with_findings(record)
+
+    assert record == before
+    assert snapshot.findings["details"]["clues"] == ["urgent"]
+    assert findings["details"]["clues"] == ["urgent"]
+
+
+def test_assess_with_findings_keeps_sequential_assessments_independent():
+    service, ai_manager = _service()
+
+    first = service.assess_with_findings(RECORD)
+    second = service.assess_with_findings(RECORD)
+    first.findings["suspicious"] = False
+    first.result["reasons"].clear()
+
+    assert second.findings == FINDINGS
+    assert second.result["reasons"]
+    assert ai_manager.assess.call_count == 2
+
+
+@pytest.mark.parametrize("error", [RuntimeError("timed out"), ValueError("bad reply")])
+def test_assess_with_findings_propagates_ai_errors_without_logic_or_input_mutation(error):
+    record = {**RECORD, "context": {"tags": ["original"]}}
+    before = deepcopy(record)
+    ai_manager = Mock()
+
+    def fail(working_record):
+        working_record["context"]["tags"].clear()
+        raise error
+
+    ai_manager.assess.side_effect = fail
+    logic_manager = Mock()
+    service = AssessmentService(ai_manager, logic_manager)
+
+    with pytest.raises(type(error)) as raised:
+        service.assess_with_findings(record)
+
+    assert raised.value is error
+    assert record == before
+    logic_manager.evaluate.assert_not_called()
+
+
+def test_assess_with_findings_propagates_logic_errors_without_input_mutation():
+    record = {**RECORD, "context": {"tags": ["original"]}}
+    before = deepcopy(record)
+    service, ai_manager = _service()
+    error = ValueError("invalid record")
+    logic_manager = Mock()
+
+    def fail(working_record):
+        working_record["context"]["tags"].clear()
+        raise error
+
+    logic_manager.evaluate.side_effect = fail
+    service = AssessmentService(ai_manager, logic_manager)
+
+    with pytest.raises(ValueError) as raised:
+        service.assess_with_findings(record)
+
+    assert raised.value is error
+    assert record == before
+    ai_manager.assess.assert_called_once_with(record)
