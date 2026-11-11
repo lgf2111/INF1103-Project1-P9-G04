@@ -14,6 +14,7 @@ RUN uv pip install --system --no-cache -r requirements.txt
 COPY . .
 
 FROM base AS telegram
+RUN mkdir -p /data
 ENV PHISHREPORT_REPORTS_PATH=/data/reports.json \
     PHISHREPORT_GMAIL_PATH=/data/gmail_accounts.json \
     PYTHONUNBUFFERED=1
