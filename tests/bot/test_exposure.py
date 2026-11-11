@@ -4,10 +4,13 @@ import asyncio
 import importlib
 import re
 from copy import deepcopy
+from unittest.mock import Mock
 
 import pytest
 
-from phishreport.assessment import AssessmentSnapshot
+from phishreport.assessment import AssessmentService, AssessmentSnapshot
+from phishreport.bot.messages import ChatRecordBuilder
+from phishreport.logic import LogicManager
 
 
 @pytest.fixture
@@ -30,6 +33,191 @@ def inputs():
         result={"score": 60, "reasons": [{"labels": ["original"]}]},
     )
     return record, snapshot
+
+
+@pytest.fixture
+def pending(exposure_module):
+    record = ChatRecordBuilder().build(
+        "Verify your password at https://example.test. See invoice.pdf.", sender="Sender"
+    )
+    record["metadata"] = {"labels": ["original"]}
+    ai = Mock()
+    ai.assess.return_value = {
+        "suspicious": True, "credential_request": True, "insufficient_context": False,
+        "details": {"labels": ["original"]},
+    }
+    service = AssessmentService(ai, LogicManager())
+    snapshot = service.assess_with_findings(record)
+    session = exposure_module.ExposureSession(
+        record, snapshot, chat_id=101, user_id=202, message_id=303
+    )
+    return session, service, ai, record, snapshot
+
+
+@pytest.mark.parametrize(
+    ("action", "clicked", "downloaded", "category", "answered", "score", "priority"),
+    [
+        ("clicked", True, False, None, False, 80, "HIGH"),
+        ("downloaded", False, True, None, False, 80, "HIGH"),
+        ("both", True, True, None, False, 80, "HIGH"),
+        ("neither", False, False, None, False, 60, "MEDIUM"),
+        ("password", None, None, "password", True, 90, "HIGH"),
+        ("otp", None, None, "otp", True, 90, "HIGH"),
+        ("no_disclosure", None, None, None, True, 60, "MEDIUM"),
+    ],
+)
+def test_apply_answer_projects_confirmed_answers_and_scores_without_io(
+    pending, action, clicked, downloaded, category, answered, score, priority
+):
+    session, service, ai, record, snapshot = pending
+    before = deepcopy((session.record, session.findings, record, snapshot))
+    identities = (session.record, session.findings, session.lock)
+    # No storage or Telegram collaborator is supplied: answering only re-scores.
+    result = session.apply_answer(action, service)
+
+    assert session.exposure == {
+        "clicked": clicked, "downloaded": downloaded,
+        "submitted_category": category, "disclosure_answered": answered,
+    }
+    assert (result["score"], result["priority"]) == (score, priority)
+    assert result == session.result
+    assert (session.record, session.findings, record, snapshot) == before
+    assert all(a is b for a, b in zip(
+        identities, (session.record, session.findings, session.lock), strict=True
+    ))
+    assert (session.completed, session.saved, session.report) == (False, False, None)
+    ai.assess.assert_called_once()
+
+
+def test_apply_answer_preserves_other_group_and_reverts_without_another_ai_call(pending):
+    session, service, ai, _, _ = pending
+    for action, answers, score in [
+        ("password", (None, None, "password", True), 90),
+        ("both", (True, True, "password", True), 90),
+        ("downloaded", (False, True, "password", True), 90),
+        ("otp", (False, True, "otp", True), 90),
+        ("no_disclosure", (False, True, None, True), 80),
+        ("clicked", (True, False, None, True), 80),
+        ("neither", (False, False, None, True), 60),
+        ("neither", (False, False, None, True), 60),
+    ]:
+        assert session.apply_answer(action, service)["score"] == score
+        assert tuple(session.exposure.values()) == answers
+        assert not session.saved
+    ai.assess.assert_called_once()
+
+
+@pytest.mark.parametrize("action", ["", "Clicked", " clicked", "finish", None, True, 1, [], {}])
+def test_apply_answer_rejects_invalid_actions_before_collaborators(pending, action):
+    session, _, _, _, _ = pending
+    assessment = Mock()
+    before = deepcopy(session.__dict__, {id(session.lock): session.lock})
+
+    with pytest.raises(ValueError):
+        session.apply_answer(action, assessment)
+
+    assert session.__dict__ == before
+    assessment.assert_not_called()
+    assessment.rescore.assert_not_called()
+    assessment.assess.assert_not_called()
+
+
+@pytest.mark.parametrize("state", ["completed", "saved", "boundary", "expired"])
+def test_apply_answer_rejects_closed_or_expired_sessions(
+    pending, exposure_module, monkeypatch, state
+):
+    session, _, _, _, _ = pending
+    if state in ("completed", "saved"):
+        setattr(session, state, True)
+    tick = session.expires_at + (1 if state == "expired" else 0)
+    if state in ("completed", "saved"):
+        tick = session.created_at
+    monkeypatch.setattr(exposure_module.time, "monotonic", lambda: tick)
+    assessment = Mock()
+    before = deepcopy(session.__dict__, {id(session.lock): session.lock})
+
+    with pytest.raises(ValueError):
+        session.apply_answer("clicked", assessment)
+
+    assert session.__dict__ == before
+    assessment.rescore.assert_not_called()
+
+
+def test_apply_answer_accepts_immediately_before_expiry(pending, exposure_module, monkeypatch):
+    session, service, _, _, _ = pending
+    monkeypatch.setattr(exposure_module.time, "monotonic", lambda: session.expires_at - 0.001)
+    assert session.apply_answer("clicked", service)["score"] == 80
+
+
+@pytest.mark.parametrize("failure", ["rescore", "stored_copy", "returned_copy"])
+def test_apply_answer_stages_all_results_before_mutating_state(pending, failure):
+    session, _, _, record, snapshot = pending
+    before = deepcopy((session.__dict__, record, snapshot), {id(session.lock): session.lock})
+    identities = dict(session.__dict__)
+    error = RuntimeError("re-score failed")
+    copies = 0
+
+    class Uncopyable:
+        def __deepcopy__(self, memo):
+            nonlocal copies
+            copies += 1
+            if failure == "stored_copy" or copies == 2:
+                raise error
+            return self
+
+    def rescore(working_record, working_findings):
+        working_record["metadata"]["labels"].clear()
+        working_findings["details"]["labels"].clear()
+        if failure == "rescore":
+            raise error
+        return {"nested": Uncopyable()}
+
+    assessment = Mock()
+    assessment.rescore.side_effect = rescore
+    with pytest.raises(RuntimeError) as raised:
+        session.apply_answer("password", assessment)
+
+    assert raised.value is error
+    assert (session.__dict__, record, snapshot) == before
+    assert all(session.__dict__[key] is value for key, value in identities.items())
+
+
+def test_apply_answer_isolates_collaborator_result_and_returned_payload(pending):
+    session, _, _, record, snapshot = pending
+    before = deepcopy((session.record, session.findings, record, snapshot))
+    retained = {}
+
+    def rescore(working_record, working_findings):
+        retained.update(record=working_record, findings=working_findings)
+        return retained
+
+    assessment = Mock()
+    assessment.rescore.side_effect = rescore
+    result = session.apply_answer("clicked", assessment)
+    stored_before = deepcopy(session.result)
+    retained["record"]["metadata"]["labels"].append("collaborator")
+    result["findings"]["details"]["labels"].append("caller")
+
+    assert session.result == stored_before
+    assert result["record"]["metadata"]["labels"] == ["original"]
+    assert retained["findings"]["details"]["labels"] == ["original"]
+    assert (session.record, session.findings, record, snapshot) == before
+    assert session.exposure["clicked"] is True
+    assessment.assess.assert_not_called()
+
+
+def test_apply_answer_scores_unknown_groups_without_stale_record_exposure(pending):
+    session, service, ai, _, _ = pending
+    session.record.update(clicked=True, downloaded=True, submitted_category="password")
+    original = deepcopy(session.record)
+
+    assert session.apply_answer("no_disclosure", service)["score"] == 60
+    assert session.exposure == {
+        "clicked": None, "downloaded": None,
+        "submitted_category": None, "disclosure_answered": True,
+    }
+    assert session.record == original
+    ai.assess.assert_called_once()
 
 
 @pytest.mark.parametrize("direction", ["caller-to-session", "session-to-caller"])
