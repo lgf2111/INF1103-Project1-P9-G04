@@ -21,7 +21,8 @@ from phishreport.bot.gmail import AccountStore
 from phishreport.bot.gmail_handlers import GmailLinkHandlers
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.monitor import EmailMonitor
-from phishreport.data import DataManager, JsonReportStorage
+from phishreport.data import DataManager
+from phishreport.data.factory import create_report_storage
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
 
@@ -74,8 +75,7 @@ def main() -> int:
             )
             return 1
 
-    history_path = os.environ.get("PHISHREPORT_REPORTS_PATH", "reports.json")
-    data_manager = DataManager(JsonReportStorage(history_path))
+    data_manager = DataManager(create_report_storage())
     assessment = AssessmentService(AIManager(), LogicManager())
     manager = TelegramIOManager(data_manager, chat_id, assessment=assessment)
     store = AccountStore(os.environ.get("PHISHREPORT_GMAIL_PATH", "gmail_accounts.json"))
