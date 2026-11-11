@@ -73,6 +73,108 @@ def test_build_report_keeps_the_message_and_its_assessment():
     }
 
 
+@pytest.mark.parametrize(
+    ("clicked", "downloaded", "category", "answered"),
+    [
+        (None, None, None, False),
+        (False, False, None, True),
+        (True, None, None, False),
+        (None, True, None, False),
+        (False, True, "password", True),
+        (True, False, "otp", True),
+    ],
+)
+def test_build_exposure_report_preserves_exact_v3_shape_and_nullable_answers(
+    clicked, downloaded, category, answered
+):
+    record = {**RECORD, "ai": FINDINGS, "extra": "discard"}
+    result = {"score": 60, "priority": "MEDIUM", "reasons": [], "checklist": []}
+    exposure = {
+        "clicked": clicked,
+        "downloaded": downloaded,
+        "submitted_category": category,
+        "disclosure_answered": answered,
+        "ai": FINDINGS,
+        "extra": "discard",
+    }
+
+    report = AssessmentService.build_exposure_report(record, result, exposure)
+
+    assert report == {
+        "schema_version": 3,
+        "channel": "chat",
+        "message": RECORD["message"],
+        "result": result,
+        "sender": None,
+        "has_link": False,
+        "link": None,
+        "has_file": False,
+        "file_name": None,
+        "exposure": {
+            "clicked": clicked,
+            "downloaded": downloaded,
+            "submitted_category": category,
+            "disclosure_answered": answered,
+        },
+    }
+
+
+@pytest.mark.parametrize("file_name", ["invoice.pdf", None])
+def test_build_exposure_report_preserves_source_text_and_metadata(file_name):
+    record = {
+        **RECORD,
+        "message": "  Open https://example.test/a?x=1\nAttachment mentioned.  ",
+        "sender": "Original Sender",
+        "has_link": True,
+        "link": "https://example.test/a?x=1",
+        "has_file": True,
+        "file_name": file_name,
+    }
+    exposure = {
+        "clicked": None,
+        "downloaded": None,
+        "submitted_category": None,
+        "disclosure_answered": False,
+    }
+
+    report = AssessmentService.build_exposure_report(record, {}, exposure)
+
+    for field in ("message", "sender", "has_link", "link", "has_file", "file_name"):
+        assert report[field] == record[field]
+
+
+def test_build_exposure_report_only_constructs_and_isolates_nested_inputs():
+    # Deliberately unvalidated nested values exercise copying without introducing
+    # schema/type validation, which belongs to ReportValidator.
+    record = {**RECORD, "sender": {"labels": ["original"]}}
+    result = {"reasons": [{"text": "urgent"}]}
+    exposure = {
+        "clicked": {"values": [True]},
+        "downloaded": None,
+        "submitted_category": None,
+        "disclosure_answered": False,
+    }
+    before = deepcopy((record, result, exposure))
+    ai_manager, logic_manager = Mock(), Mock()
+    service = AssessmentService(ai_manager, logic_manager)
+
+    report = service.build_exposure_report(record, result, exposure)
+
+    assert (record, result, exposure) == before
+    report["sender"]["labels"].append("report mutation")
+    report["result"]["reasons"][0]["text"] = "report mutation"
+    report["exposure"]["clicked"]["values"].append(False)
+    assert (record, result, exposure) == before
+    record["sender"]["labels"].append("input mutation")
+    result["reasons"].append({"text": "input mutation"})
+    exposure["clicked"]["values"].append(None)
+    assert report["sender"]["labels"] == ["original", "report mutation"]
+    assert report["result"]["reasons"] == [{"text": "report mutation"}]
+    assert report["exposure"]["clicked"]["values"] == [True, False]
+    ai_manager.assess.assert_not_called()
+    logic_manager.evaluate.assert_not_called()
+
+
 def test_assess_with_findings_retains_findings_and_scores_with_one_ai_call():
     service, ai_manager = _service()
 

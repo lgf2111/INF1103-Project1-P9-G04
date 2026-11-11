@@ -68,3 +68,30 @@ class AssessmentService:
             "message": record["message"],
             "result": result,
         }
+
+    @staticmethod
+    def build_exposure_report(record: dict, result: dict, exposure: dict) -> dict:
+        """Construct an independent v3 report preserving explicit exposure answers.
+
+        Select only report fields without scoring or validation. Unknown answers
+        remain None; disclosure_answered distinguishes unknown from confirmed no.
+        """
+        return deepcopy(
+            {
+                "schema_version": 3,
+                "channel": record["channel"],
+                "message": record["message"],
+                "result": result,
+                "sender": record["sender"],
+                "has_link": record["has_link"],
+                "link": record["link"],
+                "has_file": record["has_file"],
+                "file_name": record["file_name"],
+                "exposure": {
+                    "clicked": exposure["clicked"],
+                    "downloaded": exposure["downloaded"],
+                    "submitted_category": exposure["submitted_category"],
+                    "disclosure_answered": exposure["disclosure_answered"],
+                },
+            }
+        )
