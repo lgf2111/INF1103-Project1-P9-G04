@@ -85,6 +85,44 @@ assessment is automatically saved. The existing CLI's local `reports.json`
 format has no stable ID or timestamp; preserve compatibility or migrate it
 deliberately rather than making the GUI assume a new schema.
 
+### Implemented report storage
+
+`phishreport.data.ReportStorage` is the shared storage ABC. `JsonReportStorage`
+and `SqliteReportStorage` implement ordered replacement and fresh, independently
+mutable reads. Missing files read as `[]`; malformed stored contents raise
+`ValueError`, and operational I/O failures raise `OSError`. `DataManager`
+continues to validate report schemas and expose save/load/query operations.
+
+Both launchers call `phishreport.data.factory.create_report_storage()` during
+composition. Set `PHISHREPORT_STORAGE=json|sqlite` in the process environment;
+the default is JSON. `PHISHREPORT_REPORTS_PATH` defaults to `reports.json` locally
+and `/data/reports.json` in the Telegram image. SQLite uses the sibling path with
+a `.sqlite3` suffix. The CLI loads `.env` after composition, so local storage
+selection must be exported in the shell. Docker `--env-file .env` works because
+it sets the process environment before the launcher runs.
+
+SQLite stores strict JSON payloads in
+`records(position INTEGER PRIMARY KEY, payload TEXT)`. Each operation owns and
+closes its connection. Writes use WAL, a five-second busy timeout, and an atomic
+replacement transaction. DataManager's read/modify/write sequence remains a
+single-writer contract; use the bot's existing shared save lock for bot writers.
+
+For migration, stop application writers and call
+`phishreport.data.migration.migrate_json_to_sqlite(source, target)`. It requires
+an existing valid JSON source and distinct destination, preserves source bytes
+and legitimate duplicates, and returns the imported record count. Identical
+reruns return `0`; different nonempty destination history is refused. Switching
+the environment selector alone does not migrate records.
+
+The whole `/data` directory must be mounted writable for the database and its
+WAL/SHM files. The [README storage instructions](../../README.md#report-storage-and-migration)
+include local and container migration commands. The shared fixture in
+`tests/core/test_data_core.py` is parametrized over both production backends.
+Run it alongside `test_sqlite_storage.py`, `test_storage_factory.py` and
+`test_storage_migration.py`; all live AI/Telegram access is mocked. Observe a real
+offline Docker run and unprivileged POSIX permission checks before recording
+those checks as passed.
+
 ### Errors and validation
 
 Use typed service errors with a stable code, safe message, and optional

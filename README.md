@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml/badge.svg)](https://github.com/lgf2111/INF1103-Project1-P9-G04/actions/workflows/ci.yml)
 
-PhishReport assesses suspicious emails, SMS and chat messages using the Groq API and rule-based scoring. The CLI provides a response priority and recommended actions, and saves assessments locally as JSON. Telegram is the Phase 2 interface: send the bot a suspicious message in a private chat and it replies with the same priority and recommended actions. It can also watch a linked Gmail inbox and message you when a new email looks like phishing.
+PhishReport assesses suspicious emails, SMS and chat messages using the Groq API and rule-based scoring. The CLI provides a response priority and recommended actions, and saves assessments locally using JSON or SQLite. Telegram is the Phase 2 interface: send the bot a suspicious message in a private chat and it replies with the same priority and recommended actions. It can also watch a linked Gmail inbox and message you when a new email looks like phishing.
 
 **A LOW-priority result does not guarantee that a message is safe.**
 
@@ -16,8 +16,8 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 | `phishreport/ai/` | AI assessment coordinator, prompt builder, completion client and response validator. |
 | `phishreport/logic_manager.py` | Apply assessment rules, scoring and routing. |
 | `phishreport/logic/` | Assessment rules, scoring, routing, response guidance and report summaries. |
-| `phishreport/data_manager.py` | Save, load and query JSON reports. |
-| `phishreport/data/` | Report validation and JSON storage. |
+| `phishreport/data_manager.py` | Public DataManager interface for saving, loading and querying reports. |
+| `phishreport/data/` | Report validation, JSON/SQLite storage, environment selection and explicit migration. |
 | `phishreport/cli/` | Terminal interface: `main.py` composes the four managers through `PhishReportApp`; `web_upload.py` handles browser-based `.eml` uploads. |
 | `phishreport/assessment.py` | Shared assessment workflow (AI findings, then business rules) used by the CLI and the bot. |
 | `phishreport/bot/` | Telegram interface: launcher, handlers, chat record and reply formatting, and the Gmail link and background email monitor (`gmail.py`, `gmail_handlers.py`, `monitor.py`). |
@@ -48,6 +48,69 @@ The manager uses `GroqClient` by default and accepts an `AIClient` implementatio
 for offline tests. It parses the completion, validates the findings schema and
 checks that extracted details match the original message. Only validated
 findings reach the scoring rules.
+
+### Report storage and migration
+
+Both launchers use `create_report_storage()` to select a `ReportStorage`
+implementation. `DataManager` keeps the same save, load and query behavior.
+SQLite uses Python's standard-library `sqlite3` module.
+
+| Process environment | Behavior |
+| --- | --- |
+| `PHISHREPORT_STORAGE` unset or `json` | JSON storage; the default is `reports.json`. |
+| `PHISHREPORT_STORAGE=sqlite` | SQLite storage; the default is `reports.sqlite3`. |
+| `PHISHREPORT_REPORTS_PATH` | JSON path; SQLite replaces its final suffix with `.sqlite3`. For example, `archive/history.json` selects `archive/history.sqlite3`. Parent directories must already exist. |
+
+Unsupported selectors raise `ValueError`. Storage selection happens before the
+CLI loads `.env`, so set these variables in the shell for local launches.
+Docker's `--env-file .env` supplies them before startup. In the Telegram image,
+leave `PHISHREPORT_REPORTS_PATH` unset to retain `/data/reports.json`; selecting
+SQLite then uses `/data/reports.sqlite3`. The `run.sh` CLI workflow runs from
+`/data`, so its default relative paths also use the mounted data directory.
+
+For a local SQLite CLI session, run from the repository root:
+
+```powershell
+$env:PHISHREPORT_STORAGE = "sqlite"
+uv run --python 3.14 --no-project --with-requirements requirements.txt python -m phishreport.cli
+```
+
+In Bash:
+
+```bash
+PHISHREPORT_STORAGE=sqlite uv run --python 3.14 --no-project --with-requirements requirements.txt python -m phishreport.cli
+```
+
+The same selector applies to `python -m phishreport.bot`; its Telegram and Groq
+credentials must also be present in the process environment.
+
+Switching backends does not import existing history automatically. Stop the CLI,
+bot and other writers, then migrate an existing JSON file explicitly:
+
+```text
+uv run --python 3.14 --no-project --with-requirements requirements.txt python -c "from phishreport.data.migration import migrate_json_to_sqlite; print(migrate_json_to_sqlite('reports.json', 'reports.sqlite3'))"
+```
+
+The printed number is the number of imported records. An identical rerun prints
+`0`. The helper preserves source bytes, record order, historical fields and
+legitimate duplicate records. It refuses a different nonempty destination or
+source/destination aliases. Missing or malformed source files fail before target
+initialization. Keep the source JSON as a backup.
+
+For an existing `.phishreport-data/reports.json`, use the built Telegram image
+with the entire data directory mounted writable. This command works in
+PowerShell and Bash from the repository root:
+
+```text
+docker run --rm --network none --mount "type=bind,source=${PWD}/.phishreport-data,target=/data" phishreport-telegram python -c "from phishreport.data.migration import migrate_json_to_sqlite; print(migrate_json_to_sqlite('/data/reports.json', '/data/reports.sqlite3'))"
+```
+
+After migration, set `PHISHREPORT_STORAGE=sqlite` in the `.env` passed to Docker
+and restart the bot. SQLite needs a writable directory for the database and its
+`-wal` and `-shm` sidecars. Relative local paths follow the working directory when
+an operation runs. Use one application writer per history file: transactions
+protect a replacement, while `DataManager.save()` still performs separate read
+and write operations. The bot serializes its own writers with its save lock.
 
 ## Set up
 
@@ -130,8 +193,9 @@ read fails, the bot asks the user to retry.
 **Assessing a message:** send any text message to the bot in a private chat. The
 bot builds a chat record, runs the shared `AssessmentService` (AI findings, then the
 rule-based score) and replies with the priority, score, reasons and recommended
-actions. It saves each assessment to the same `reports.json` the CLI uses, so
-**View saved reports** and **Summarize saved reports** in the CLI include them.
+actions. It saves each assessment to the selected report history. Configure the
+CLI with the same backend and path to include those records in **View saved
+reports** and **Summarize saved reports**.
 A chat message carries no attachment or interaction details, so nothing is recorded as
 clicked, downloaded or submitted; the score reflects the AI findings only. AI calls
 run on a worker thread so the bot stays responsive, and saves take turns.
@@ -155,7 +219,7 @@ background and messages you when an email looks like phishing.
 
 - Gmail is read over IMAP in read-only mode, so reading never marks mail as read.
 - Every 60 seconds the monitor fetches mail that arrived after linking, runs each email
-  through the shared `AssessmentService` and saves the report to `reports.json`. Read
+  through the shared `AssessmentService` and saves it to the selected report history. Read
   state is ignored; the newest message number it has handled is stored, so no email is
   checked twice by the background check. `/checkmail` is the way to re-check an email.
 - An email scored **MEDIUM** or **HIGH** triggers a Telegram message with the sender,
@@ -211,7 +275,8 @@ bash run.sh telegram
 ```
 
 The helper builds the `telegram` target if needed and mounts
-`.phishreport-data/` at `/data`, where the bot reads and writes `reports.json`.
+`.phishreport-data/` at `/data`, where the bot reads and writes `reports.json`
+or, with `PHISHREPORT_STORAGE=sqlite`, `reports.sqlite3`.
 It needs `GROQ_API_KEY` in `.env` to assess messages.
 It uses outbound polling with one running instance per token. When the bot is ready, the
 terminal prints your bot's username and the next steps (`/start`, `/linkgmail`,
@@ -224,9 +289,10 @@ docker build --target telegram -t phishreport-telegram .
 docker run --rm --env-file .env phishreport-telegram
 ```
 
-To check an existing `.phishreport-data/` directory with the direct command,
-add `--mount "type=bind,source=${PWD}/.phishreport-data,target=/data,readonly"`
-before the image name. Rebuild the image after changing the code.
+To persist history with the direct command, create `.phishreport-data/` first
+and add `--mount "type=bind,source=${PWD}/.phishreport-data,target=/data"`
+before the image name. Keep the mount writable for reports, Gmail settings and
+SQLite sidecars. Rebuild the image after changing the code.
 
 Outside Docker, set both Telegram settings in the current shell environment
 and launch from the repository root:
@@ -235,8 +301,10 @@ and launch from the repository root:
 uv run --python 3.14 --no-project --with-requirements requirements.txt python -m phishreport.bot
 ```
 
-The local launcher reads `reports.json` from the working directory. Set
-`PHISHREPORT_REPORTS_PATH` to select a different file.
+The local launcher defaults to JSON in `reports.json`. Set
+`PHISHREPORT_REPORTS_PATH` to choose the history path and `PHISHREPORT_STORAGE`
+to select JSON or its SQLite sibling, as described under
+[report storage and migration](#report-storage-and-migration).
 
 #### Verify the live connection
 
@@ -345,6 +413,20 @@ credentials or external network access:
 docker build --target telegram -t phishreport-telegram .
 docker run --rm --network none phishreport-telegram python -m pytest
 ```
+
+To see both backend parameter IDs and exercise the storage-specific failures:
+
+```text
+python -m pytest -v tests/core/test_data_core.py tests/core/test_sqlite_storage.py tests/core/test_storage_factory.py tests/core/test_storage_migration.py
+docker run --rm --network none phishreport-telegram python -m pytest -v tests/core/test_data_core.py tests/core/test_sqlite_storage.py tests/core/test_storage_factory.py tests/core/test_storage_migration.py
+```
+
+The shared fixture runs against `JsonReportStorage` and `SqliteReportStorage`.
+Rollback tests fail an insert or commit and then read the original history.
+Genuine directory-permission checks require POSIX permissions and an unprivileged
+user; they skip on Windows or when permissions can be bypassed. Run these checks
+under a non-root Linux user before claiming permission-denial coverage. The
+existing Gmail mode-`0600` assertion also requires POSIX semantics.
 
 ## Team contributions
 
