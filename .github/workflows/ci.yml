@@ -35,6 +35,14 @@ jobs:
       - name: Install requirements
         run: uv pip install --system -r requirements.txt
 
+      - name: Show shared JSON and SQLite storage contracts
+        run: >-
+          python -m pytest -vv
+          tests/core/test_data_core.py
+          tests/core/test_sqlite_storage.py
+          tests/core/test_storage_factory.py
+          tests/core/test_storage_migration.py
+
       - name: Run offline tests
         run: python -m pytest
 
@@ -51,5 +59,14 @@ jobs:
       - name: Build the Telegram image
         run: docker build --target telegram -t phishreport-telegram .
 
+      - name: Check the Telegram data directory exists
+        run: >-
+          docker run --rm --network none --user 65534:65534 --workdir /tmp
+          phishreport-telegram python -c "from pathlib import Path; assert Path('/data').is_dir()"
+
       - name: Run offline tests inside the Telegram image
-        run: docker run --rm --network none phishreport-telegram python -m pytest
+        # Run unprivileged so the POSIX permission tests exercise real failures.
+        # /tmp holds runtime writes; /app is the test root for shared conftest fixtures.
+        run: >-
+          docker run --rm --network none --user 65534:65534 --workdir /tmp
+          phishreport-telegram python -m pytest --rootdir=/app /app/tests -p no:cacheprovider
