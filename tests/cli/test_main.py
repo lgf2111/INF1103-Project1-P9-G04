@@ -11,7 +11,7 @@ import pytest
 
 from phishreport.ai import GroqClient, groq_client
 from phishreport.cli import main, web_upload
-from phishreport.data import DataManager
+from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
 from phishreport.logging_setup import AppLogging
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
@@ -21,6 +21,50 @@ REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 # Main
 # ============================================================================
 # Offline integration tests: real AI/logic/JSON; fictional input and mocked HTTP.
+
+
+@pytest.mark.parametrize("backend", [None, "json", "sqlite"], ids=["default", "json", "sqlite"])
+def test_cli_main_selects_persistent_storage_from_environment(tmp_path, monkeypatch, backend):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("PHISHREPORT_STORAGE", raising=False)
+    monkeypatch.setenv("PHISHREPORT_REPORTS_PATH", str(tmp_path / "history.json"))
+    if backend is not None:
+        monkeypatch.setenv("PHISHREPORT_STORAGE", backend)
+
+    def report(message):
+        return {
+            "schema_version": 2,
+            "channel": "email",
+            "message": message,
+            "result": {"score": 10, "priority": "LOW", "reasons": [], "checklist": []},
+        }
+
+    json_storage = JsonReportStorage(tmp_path / "history.json")
+    json_storage.write_records([report("JSON history")])
+    original_json = (tmp_path / "history.json").read_bytes()
+    if backend == "sqlite":
+        selected_storage = SqliteReportStorage(tmp_path / "history.sqlite3")
+        selected_storage.write_records([report("SQLite history")])
+        existing = report("SQLite history")
+    else:
+        selected_storage = json_storage
+        existing = report("JSON history")
+    loaded = []
+    added = report("New report")
+
+    def run(app):
+        loaded.extend(app._data_manager.load(strict=True))
+        app._data_manager.save(added)
+
+    monkeypatch.setattr(main.PhishReportApp, "run", run)
+    main.main()
+
+    assert loaded == [existing]
+    assert selected_storage.read_records() == [existing, added]
+    if backend == "sqlite":
+        assert (tmp_path / "history.json").read_bytes() == original_json
+    else:
+        assert not (tmp_path / "history.sqlite3").exists()
 
 
 def test_cli_app_uses_its_own_managers_for_each_assessment():

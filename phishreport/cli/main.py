@@ -8,6 +8,7 @@ from phishreport.ai import AIManager
 from phishreport.ai.errors import AIErrorTranslator
 from phishreport.assessment import AssessmentService
 from phishreport.data import DataManager
+from phishreport.data.factory import create_report_storage
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logging_setup import AppLogging
@@ -222,7 +223,7 @@ def main():
         io_manager=IOManager(ConsoleTerminal()),
         ai_manager=AIManager(),
         logic_manager=LogicManager(),
-        data_manager=DataManager(),
+        data_manager=DataManager(create_report_storage()),
     )
     app.run()
 
