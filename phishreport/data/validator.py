@@ -32,7 +32,14 @@ class ReportValidator:
     """Own report schema rules independently of persistence and logging."""
 
     def validate_new(self, record: dict) -> dict:
-        """Return an unchanged valid v2 report, or raise ValueError."""
+        """Return an unchanged valid v2 or v3 report, or raise ValueError."""
+        if not isinstance(record, dict):
+            raise ValueError("New reports must be objects.")
+        version = record.get("schema_version")
+        if type(version) is not int or version not in (2, 3):
+            raise ValueError("Unsupported new report version.")
+        if version == 3:
+            return self._validate_v3(record)
         return self._validate_v2(record)
 
     def validate_stored(self, record: dict) -> dict:

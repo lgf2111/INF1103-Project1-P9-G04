@@ -54,8 +54,9 @@ def v3_report():
     ],
     ids=["unknown", "confirmed-no", "partial-clicked", "partial-downloaded", "password", "otp"],
 )
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new"])
 def test_v3_preserves_nullable_exposure_and_original_record(
-    clicked, downloaded, category, answered
+    clicked, downloaded, category, answered, method
 ):
     record = v3_report()
     record["exposure"] = {
@@ -65,7 +66,7 @@ def test_v3_preserves_nullable_exposure_and_original_record(
         "disclosure_answered": answered,
     }
     before = deepcopy(record)
-    assert validator()._validate_v3(record) is record
+    assert getattr(validator(), method)(record) is record
     assert record == before
 
 
@@ -77,25 +78,28 @@ def test_v3_preserves_nullable_exposure_and_original_record(
     ],
     ids=["no-metadata", "generic-attachment-blank-sender"],
 )
-def test_v3_accepts_absent_metadata_and_generic_attachment(metadata):
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new"])
+def test_v3_accepts_absent_metadata_and_generic_attachment(metadata, method):
     record = v3_report()
     record.update(metadata)
     before = deepcopy(record)
-    assert validator()._validate_v3(record) is record
+    assert getattr(validator(), method)(record) is record
     assert record == before
 
 
 @pytest.mark.parametrize("record", [None, [], "report"])
-def test_v3_rejects_nonobject_records(record):
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new"])
+def test_v3_rejects_nonobject_records(record, method):
     before = deepcopy(record)
     with pytest.raises(ValueError):
-        validator()._validate_v3(record)
+        getattr(validator(), method)(record)
     assert record == before
 
 
 @pytest.mark.parametrize("section", [None, "exposure", "result"])
 @pytest.mark.parametrize("extra", [False, True], ids=["missing", "extra"])
-def test_v3_requires_exact_fields(section, extra):
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new"])
+def test_v3_requires_exact_fields(section, extra, method):
     record = v3_report()
     fields = record if section is None else record[section]
     if extra:
@@ -104,7 +108,7 @@ def test_v3_requires_exact_fields(section, extra):
         del fields[next(iter(fields))]
     before = deepcopy(record)
     with pytest.raises(ValueError):
-        validator()._validate_v3(record)
+        getattr(validator(), method)(record)
     assert record == before
 
 
@@ -121,12 +125,13 @@ def test_v3_requires_exact_fields(section, extra):
         ("has_link", False), ("link", None), ("has_file", False),
     ],
 )
-def test_v3_rejects_invalid_root_fields_without_mutation(field, value):
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new"])
+def test_v3_rejects_invalid_root_fields_without_mutation(field, value, method):
     record = v3_report()
     record[field] = value
     before = deepcopy(record)
     with pytest.raises(ValueError):
-        validator()._validate_v3(record)
+        getattr(validator(), method)(record)
     assert record == before
 
 
@@ -140,12 +145,13 @@ def test_v3_rejects_invalid_root_fields_without_mutation(field, value):
         ("submitted_category", "otp"),
     ],
 )
-def test_v3_rejects_invalid_or_unanswered_disclosure_without_mutation(field, value):
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new"])
+def test_v3_rejects_invalid_or_unanswered_disclosure_without_mutation(field, value, method):
     record = v3_report()
     record["exposure"][field] = value
     before = deepcopy(record)
     with pytest.raises(ValueError):
-        validator()._validate_v3(record)
+        getattr(validator(), method)(record)
     assert record == before
 
 
@@ -154,12 +160,24 @@ def test_v3_rejects_invalid_or_unanswered_disclosure_without_mutation(field, val
     [("score", True), ("score", 101), ("priority", "other"),
      ("reasons", [" "]), ("checklist", "text")],
 )
-def test_v3_rejects_invalid_assessment_without_mutation(field, value):
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new"])
+def test_v3_rejects_invalid_assessment_without_mutation(field, value, method):
     record = v3_report()
     record["result"][field] = value
     before = deepcopy(record)
     with pytest.raises(ValueError):
-        validator()._validate_v3(record)
+        getattr(validator(), method)(record)
+    assert record == before
+
+
+@pytest.mark.parametrize("factory", [v2_report, v3_report])
+@pytest.mark.parametrize("version", [True, False, 2.0, 3.0, "3", None, [], {}, 0, 1, 4])
+def test_new_rejects_invalid_schema_versions_without_mutation(factory, version):
+    record = factory()
+    record["schema_version"] = version
+    before = deepcopy(record)
+    with pytest.raises(ValueError):
+        validator().validate_new(record)
     assert record == before
 
 
