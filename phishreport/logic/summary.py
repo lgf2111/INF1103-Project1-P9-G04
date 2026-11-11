@@ -19,6 +19,21 @@ class StoredReport:
 
     def __init__(self, record: dict) -> None:
         self._record = record
+        if record.get("schema_version") == 3:
+            exposure = record.get("exposure")
+            if not isinstance(exposure, dict):
+                exposure = {}
+            # Project only confirmed actions; nested extras cannot replace metadata.
+            self._record = {
+                **record,
+                "clicked": exposure.get("clicked") is True,
+                "downloaded": exposure.get("downloaded") is True,
+                "submitted_category": (
+                    exposure.get("submitted_category")
+                    if exposure.get("disclosure_answered") is True
+                    else None
+                ),
+            }
         self._result = record.get("result") or record
 
     @property
