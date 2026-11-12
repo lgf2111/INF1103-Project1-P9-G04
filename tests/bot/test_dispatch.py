@@ -13,6 +13,8 @@ from telegram.ext import Application
 from telegram.request import BaseRequest
 
 from phishreport.bot.main import main
+from phishreport.data import DataManager
+from phishreport.data.factory import create_report_storage
 
 CHAT = {"id": 12345, "type": "private"}
 USER = {"id": 42, "is_bot": False, "first_name": "Reporter"}
@@ -116,6 +118,144 @@ def offline_application(monkeypatch, tmp_path, backend):
     app.add_error_handler(collect_error)
     assert app.update_processor.max_concurrent_updates == 1
     return app, manager, ai, request, errors
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+@pytest.mark.parametrize(
+    "flags,actions,answers,score,priority",
+    [
+        pytest.param((True, True, False), ("clicked", "finish"),
+                     (True, False, None, False), 80, "HIGH", id="suspicious-clicked"),
+        pytest.param((True, True, False), ("downloaded", "finish"),
+                     (False, True, None, False), 80, "HIGH", id="suspicious-downloaded"),
+        pytest.param((True, True, False), ("password", "finish"),
+                     (None, None, "password", True), 90, "HIGH", id="password"),
+        pytest.param((True, True, False), ("otp", "finish"),
+                     (None, None, "otp", True), 90, "HIGH", id="otp"),
+        pytest.param((True, True, False), ("skip",),
+                     (None, None, None, False), 60, "MEDIUM", id="fully-skipped"),
+        pytest.param((True, True, False), ("clicked", "skip"),
+                     (True, False, None, False), 80, "HIGH", id="partial-skip"),
+        pytest.param((True, True, False), ("neither", "no_disclosure", "finish"),
+                     (False, False, None, True), 60, "MEDIUM", id="confirmed-none"),
+        pytest.param((False, False, False), ("clicked", "finish"),
+                     (True, False, None, False), 35, "MEDIUM", id="ordinary-clicked"),
+        pytest.param((False, False, False), ("skip",),
+                     (None, None, None, False), 10, "LOW", id="ordinary-skipped"),
+        pytest.param((False, False, True), ("skip",),
+                     (None, None, None, False), 20, "LOW", id="insufficient-context"),
+    ],
+)
+def test_main_dispatch_exposure_acceptance(
+    monkeypatch, tmp_path, backend, flags, actions, answers, score, priority,
+):
+    """Real application routing completes, freezes and persists honest answers."""
+    async def scenario():
+        app, manager, ai, request, errors = offline_application(monkeypatch, tmp_path, backend)
+        suspicious, credential_request, insufficient_context = flags
+        ai.assess.return_value = {
+            "suspicious": suspicious,
+            "credential_request": credential_request,
+            "insufficient_context": insufficient_context,
+            "details": {"emails": [], "phone_numbers": [], "ip_addresses": []},
+        }
+        clicked, downloaded, submitted_category, disclosure_answered = answers
+        expected_exposure = {
+            "clicked": clicked, "downloaded": downloaded,
+            "submitted_category": submitted_category,
+            "disclosure_answered": disclosure_answered,
+        }
+        writes = []
+        actual_save = manager._data_manager.save
+
+        def record_save(report):
+            writes.append(deepcopy(report))
+            actual_save(report)
+
+        monkeypatch.setattr(manager._data_manager, "save", record_save)
+        await app.initialize()
+        await app.start()  # No polling, Gmail monitor or post_init.
+        try:
+            source = message(app.bot, 100)
+            await asyncio.wait_for(app.process_update(source), 2)
+            await request.until(lambda: bool(manager._sessions) and all(
+                item.reply_message_id is not None for item in manager._sessions.values()
+            ))
+            session, = manager._sessions.values()
+            initial, = [data for endpoint, data in request.calls if endpoint == "sendMessage"]
+            assert "Provisional assessment." in initial["text"]
+            assert "Did you click the link / download the file?" in initial["text"]
+            assert "Did you enter a password or code?" in initial["text"]
+            assert initial["reply_markup"]
+            assert ai.assess.call_count == 1
+            assert not writes and not manager._data_manager.load(strict=True)
+
+            for query_id, action in enumerate(actions, 1):
+                await asyncio.wait_for(
+                    app.process_update(callback(app.bot, session, action, query_id)), 2,
+                )
+                # An API edit completes each nonblocking handler before the next answer.
+                await request.until(lambda: sum(
+                    endpoint == "editMessageText" for endpoint, _ in request.calls
+                ) == query_id)
+                assert (
+                    "answerCallbackQuery", {"callback_query_id": str(query_id)}
+                ) in request.calls
+                assert ai.assess.call_count == 1
+                if action not in {"finish", "skip"}:
+                    assert not writes and not manager._data_manager.load(strict=True)
+
+            assert session.completed and session.saved
+            report, = writes
+            assert report == {
+                "schema_version": 3, "channel": "chat", "message": TEXT, "sender": None,
+                "has_link": True, "link": "https://example.test/login",
+                "has_file": True, "file_name": "invoice.pdf",
+                "exposure": expected_exposure, "result": session.result,
+            }
+            assert report["result"]["score"] == score
+            assert report["result"]["priority"] == priority
+            final_edit = [data for endpoint, data in request.calls
+                          if endpoint == "editMessageText"][-1]
+            assert "Report saved locally." in final_edit["text"]
+            assert f"Priority: {priority.title()}" in final_edit["text"]
+            assert f"Rule-based score: {score}" in final_edit["text"]
+            assert "Provisional assessment." not in final_edit["text"]
+            unconfirmed = clicked is None or downloaded is None or not disclosure_answered
+            assert ("Unconfirmed" in final_edit["text"]) is unconfirmed
+            assert ("Exposure unconfirmed" in final_edit["text"]) is unconfirmed
+            assert final_edit.get("reply_markup") is None
+
+            frozen_report = deepcopy(report)
+            frozen_result = deepcopy(session.result)
+            frozen_exposure = deepcopy(session.exposure)
+            # Saved buttons can arrive late, including an answer that would change the score.
+            for query_id, action in enumerate(("finish", "skip", "retry", "both", "otp"),
+                                              len(actions) + 1):
+                await asyncio.wait_for(
+                    app.process_update(callback(app.bot, session, action, query_id)), 2,
+                )
+                await request.until(lambda: sum(
+                    endpoint == "editMessageText" for endpoint, _ in request.calls
+                ) == query_id)
+                assert session.report == frozen_report
+                assert session.result == frozen_result and session.exposure == frozen_exposure
+                assert ai.assess.call_count == 1 and writes == [frozen_report]
+            await asyncio.wait_for(app.process_update(source), 2)
+        finally:
+            # stop drains PTB's nonblocking tasks, including replayed source delivery.
+            await asyncio.wait_for(app.stop(), 5)
+            await asyncio.wait_for(app.shutdown(), 3)
+        assert not app.running and not errors
+        assert ai.assess.call_count == 1 and writes == [frozen_report]
+        assert session.report == frozen_report
+        assert session.result == frozen_result and session.exposure == frozen_exposure
+        assert len(manager._sessions) == 1
+        assert sum(endpoint == "sendMessage" for endpoint, _ in request.calls) == 1
+        reopened = DataManager(create_report_storage())
+        assert reopened.load(strict=True) == [frozen_report]
+
+    asyncio.run(asyncio.wait_for(scenario(), 20))
 
 
 @pytest.mark.parametrize("backend", ["json", "sqlite"])
