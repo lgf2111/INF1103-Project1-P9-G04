@@ -4,6 +4,8 @@ import asyncio
 import os
 import subprocess
 import sys
+import threading
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, call, patch
@@ -12,15 +14,257 @@ import pytest
 from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler
 
-from phishreport.assessment import AssessmentSnapshot
+from phishreport.assessment import AssessmentService, AssessmentSnapshot
 from phishreport.bot import handlers as handlers_module
 from phishreport.bot.exposure import ExposureSession
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.main import main
 from phishreport.bot.messages import ChatRecordBuilder, ResultFormatter
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
+from phishreport.logic import LogicManager
 
 ALLOWED_CHAT_ID = 12345
+
+
+@pytest.fixture
+def save_exposure_setup():
+    ai = Mock()
+    ai.assess.return_value = {
+        "suspicious": True, "credential_request": True, "insufficient_context": False,
+    }
+    service = AssessmentService(ai, LogicManager())
+    record = ChatRecordBuilder().build("Verify https://example.test invoice.pdf", sender="Sender")
+    session = ExposureSession(
+        record, service.assess_with_findings(record),
+        chat_id=ALLOWED_CHAT_ID, user_id=42, message_id=100,
+    )
+    session.apply_answer("clicked", service)
+    service.rescore = Mock(side_effect=AssertionError("Must not re-score during save"))
+    return TelegramIOManager(Mock(spec=DataManager), assessment=service), session, ai
+
+
+def test_save_exposure_helper_concurrent_same_session_writes_once(save_exposure_setup):
+    manager, session, ai = save_exposure_setup
+
+    async def scenario():
+        await asyncio.wait_for(asyncio.gather(*(
+            manager._save_exposure_report(session) for _ in range(8)
+        )), 5)
+
+    asyncio.run(scenario())
+    assert session.completed and session.saved
+    manager._data_manager.save.assert_called_once()
+    report = manager._data_manager.save.call_args.args[0]
+    assert report["result"]["score"] == 80
+    assert report["exposure"]["clicked"] is True
+    assert ai.assess.call_count == 1
+
+
+@pytest.mark.parametrize("error_type", [OSError, ValueError])
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_save_exposure_helper_real_storage_retry_uses_unmutated_cache(
+    save_exposure_setup, tmp_path, backend, error_type,
+):
+    manager, session, ai = save_exposure_setup
+    storage = (JsonReportStorage(tmp_path / "history.json") if backend == "json"
+               else SqliteReportStorage(tmp_path / "history.sqlite3"))
+    data = DataManager(storage)
+    error = error_type("storage unavailable")
+
+    def failing_save(report):
+        report["result"]["score"] = 999
+        report["exposure"]["clicked"] = False
+        raise error
+
+    manager._data_manager = SimpleNamespace(save=failing_save)
+
+    async def scenario():
+        with pytest.raises(error_type) as caught:
+            await manager._save_exposure_report(session)
+        assert caught.value is error
+        assert session.completed and not session.saved
+        assert session.report["result"]["score"] == 80
+        assert session.report["exposure"]["clicked"] is True
+        cached = deepcopy(session.report)
+        session.expires_at = 0
+        manager._data_manager = data
+        await manager._save_exposure_report(session)
+        await manager._save_exposure_report(session)
+        assert data.load(strict=True) == [cached]
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+    assert session.saved
+    assert ai.assess.call_count == 1
+
+
+def test_save_exposure_helper_guards_saved_missing_service_and_expired(save_exposure_setup):
+    manager, session, _ = save_exposure_setup
+
+    async def scenario():
+        manager._assessment = None
+        with pytest.raises(ValueError):
+            await manager._save_exposure_report(session)
+        assert not session.completed and session.report is None
+        manager._assessment = Mock()
+        session.expires_at = 0
+        with pytest.raises(ValueError, match="expired"):
+            await manager._save_exposure_report(session)
+        assert not session.completed and session.report is None
+        session.saved = True
+        manager._assessment = None
+        session.complete = Mock(side_effect=AssertionError("Saved must return immediately"))
+        await manager._save_exposure_report(session)
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+    manager._data_manager.save.assert_not_called()
+
+
+def test_save_exposure_helper_completion_error_propagates(save_exposure_setup):
+    manager, session, _ = save_exposure_setup
+    error = ValueError("cannot complete")
+    manager._assessment.build_exposure_report = Mock(side_effect=error)
+
+    async def scenario():
+        with pytest.raises(ValueError) as caught:
+            await manager._save_exposure_report(session)
+        assert caught.value is error
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+    assert not session.completed and not session.saved and session.report is None
+    manager._data_manager.save.assert_not_called()
+
+
+@pytest.mark.parametrize("failure", [False, True])
+def test_save_exposure_helper_cancellation_waits_for_write_outcome(save_exposure_setup, failure):
+    manager, session, ai = save_exposure_setup
+    release = threading.Event()
+    threads = []
+    error = OSError("worker failed")
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+
+        def save(report):
+            threads.append(threading.get_ident())
+            loop.call_soon_threadsafe(started.set)
+            if not release.wait(5):
+                raise TimeoutError("Test did not release storage")
+            if failure:
+                raise error
+
+        manager._data_manager.save.side_effect = save
+        task = asyncio.create_task(manager._save_exposure_report(session))
+        try:
+            await asyncio.wait_for(started.wait(), 3)
+            assert threads == [threads[0]] and threads[0] != threading.get_ident()
+            task.cancel("first cancellation")
+            await asyncio.sleep(0)
+            task.cancel("second cancellation")
+            await asyncio.sleep(0)
+            assert not task.done() and not session.saved
+            assert manager.save_lock.locked() and session.lock.locked()
+            # A duplicate must remain blocked until the storage outcome is known.
+            duplicate = asyncio.create_task(manager._save_exposure_report(session))
+            await asyncio.sleep(0)
+            assert not duplicate.done()
+            duplicate.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await duplicate
+        finally:
+            release.set()
+        if failure:
+            with pytest.raises(OSError) as caught:
+                await asyncio.wait_for(task, 3)
+            assert caught.value is error
+            assert not session.saved
+        else:
+            with pytest.raises(asyncio.CancelledError, match="first cancellation"):
+                await asyncio.wait_for(task, 3)
+            assert session.saved
+            await manager._save_exposure_report(session)
+        assert not manager.save_lock.locked() and not session.lock.locked()
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+    manager._data_manager.save.assert_called_once()
+    assert ai.assess.call_count == 1
+
+
+def test_save_exposure_helper_cancel_waiting_global_lock_never_writes(save_exposure_setup):
+    manager, session, _ = save_exposure_setup
+
+    async def scenario():
+        async with manager.save_lock:
+            task = asyncio.create_task(manager._save_exposure_report(session))
+            await asyncio.sleep(0)
+            assert session.completed and session.lock.locked()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+        assert not session.saved and not session.lock.locked()
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+    manager._data_manager.save.assert_not_called()
+
+
+def test_save_exposure_helper_cancelled_worker_does_not_spin(save_exposure_setup):
+    manager, session, _ = save_exposure_setup
+    manager._data_manager.save.side_effect = asyncio.CancelledError("worker cancelled")
+
+    async def scenario():
+        with pytest.raises(asyncio.CancelledError):
+            await manager._save_exposure_report(session)
+        assert session.completed and not session.saved
+        assert not session.lock.locked() and not manager.save_lock.locked()
+
+    asyncio.run(asyncio.wait_for(scenario(), 3))
+
+
+def test_save_exposure_helper_sessions_and_gmail_share_serial_writer(save_exposure_setup):
+    manager, session, _ = save_exposure_setup
+    second = ExposureSession(
+        session.record, AssessmentSnapshot(session.findings, session.result),
+        chat_id=ALLOWED_CHAT_ID, user_id=42, message_id=101,
+    )
+    release = threading.Event()
+    active = peak = 0
+    calls = []
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        entered = asyncio.Event()
+
+        def save(report):
+            nonlocal active, peak
+            active += 1
+            peak = max(peak, active)
+            calls.append(report)
+            loop.call_soon_threadsafe(entered.set)
+            if not release.wait(5):
+                raise TimeoutError("Test did not release storage")
+            active -= 1
+
+        manager._data_manager.save.side_effect = save
+
+        async def gmail_writer():
+            async with manager.save_lock:
+                await asyncio.to_thread(manager._data_manager.save, {"channel": "email"})
+
+        gmail = asyncio.create_task(gmail_writer())
+        try:
+            await asyncio.wait_for(entered.wait(), 3)
+            tasks = [asyncio.create_task(manager._save_exposure_report(item))
+                     for item in (session, second)]
+            await asyncio.sleep(0)
+            assert len(calls) == 1
+            assert session.completed and second.completed
+        finally:
+            release.set()
+        await asyncio.wait_for(asyncio.gather(gmail, *tasks), 3)
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+    assert peak == 1 and active == 0 and len(calls) == 3
+    assert session.saved and second.saved
 
 
 def lookup_update(*, chat_id=ALLOWED_CHAT_ID, user_id=42, message_id=100, callback=False):

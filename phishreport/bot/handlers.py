@@ -123,6 +123,37 @@ class TelegramIOManager:
             return candidate
         return None
 
+    async def _save_exposure_report(self, session: ExposureSession) -> None:
+        """Complete and save once, retaining both locks until storage finishes.
+
+        Callers must not already hold session.lock. A failed write leaves the
+        completed snapshot available for retry. Cancellation after writing starts
+        waits for its outcome; success is recorded before cancellation propagates.
+        """
+        async with session.lock:
+            if session.saved:
+                return
+            if self._assessment is None:
+                raise ValueError("Message assessment is not available")
+            report = session.complete(self._assessment)
+            async with self._save_lock:
+                write_task = asyncio.create_task(asyncio.to_thread(self._data_manager.save, report))
+                cancellation = None
+                while True:
+                    try:
+                        await asyncio.shield(write_task)
+                        break
+                    except asyncio.CancelledError as error:
+                        # A cancelled worker task cannot deliver an outcome. This
+                        # guard also prevents spinning during process shutdown.
+                        if write_task.cancelled():
+                            raise
+                        if cancellation is None:
+                            cancellation = error
+                session.saved = True
+                if cancellation is not None:
+                    raise cancellation
+
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message
         if not self.is_allowed(update) or message is None:
