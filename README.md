@@ -369,6 +369,15 @@ PhishReport supports three ways to submit a message:
 2. **Folder import:** Select an exported `.eml` email from a local folder.
 3. **Browser upload:** Upload one `.eml` email through the local browser page at `http://localhost:8000` when the uploader is running.
 
+### CLI menu options
+
+The CLI provides two separate methods for importing `.eml` email files:
+
+- **Option 2 — Import the newest emails from your saved folder:** Opens the configured email folder and lists available `.eml` files, with the newest files shown first. Users can select which email to import.
+- **Option 3 — Upload an .eml in a browser:** Opens a local browser upload workflow, allowing users to select and upload an `.eml` file without navigating through the saved folder.
+
+For manual message entry (Option 1), users can enter multiple lines of text. Type `END` on its own line to finish entering the message. Blank lines within the message are preserved.
+
 Both `.eml` methods use the same email parser. The application reads supported text/HTML email content but **does not analyse attachments or embedded images**. Non-`.eml` browser uploads are rejected. Each imported file is limited to **2 MiB**. Users are asked separately whether they clicked links, downloaded files or disclosed credentials.
 
 ## Run Docker with persistent reports

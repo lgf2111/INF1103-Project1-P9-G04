@@ -23,8 +23,8 @@ class IOManager:
         """Display the CLI menu and return a validated, normalized menu choice."""
         self._terminal.write("\n=== PhishReport ===")
         self._terminal.write("1. Check a new message (Manual Input)")
-        self._terminal.write("2. Import an email (.eml file)")
-        self._terminal.write("3. Upload an email (.eml file)")
+        self._terminal.write("2. Import the newest emails from your saved folder")
+        self._terminal.write("3. Upload an .eml in a browser")
         self._terminal.write("4. View saved reports")
         self._terminal.write("5. Summarize saved reports")
         self._terminal.write("6. Quit")
