@@ -20,7 +20,7 @@ from phishreport.bot import handlers as handlers_module
 from phishreport.bot.exposure import ExposureSession
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.main import main
-from phishreport.bot.messages import ChatRecordBuilder, ResultFormatter
+from phishreport.bot.messages import EXPOSURE_CALLBACK_PREFIX, ChatRecordBuilder, ResultFormatter
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
 from phishreport.logic import LogicManager
 
@@ -1085,7 +1085,7 @@ def test_launcher_registers_welcome_and_button_handlers_for_polling(monkeypatch)
 
     (app,) = polling.call_args.args
     polling.assert_called_once_with(app, allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])
-    start, link, checkmail, unlink, check, text = app.handlers[0]
+    start, link, checkmail, unlink, check, exposure, text = app.handlers[0]
     assert isinstance(start, CommandHandler)
     assert start.commands == {"start"}
     assert link.commands == {"linkgmail"}
@@ -1094,7 +1094,22 @@ def test_launcher_registers_welcome_and_button_handlers_for_polling(monkeypatch)
     assert isinstance(check, CallbackQueryHandler)
     assert check.pattern.match(CHECK_CONNECTION)
     assert not check.pattern.match(CHECK_CONNECTION + "\n")
+    assert check.callback.__name__ == "check_connection"
+    assert check.block
+    assert isinstance(exposure, CallbackQueryHandler)
+    assert exposure.callback.__self__ is check.callback.__self__
+    assert exposure.callback.__name__ == "exposure_callback"
+    assert exposure.pattern.pattern == rf"^{EXPOSURE_CALLBACK_PREFIX}:"
+    for payload in ("exposure:bad", "exposure:bad\n", "exposure::finish"):
+        assert exposure.pattern.match(payload)
+        assert not check.pattern.match(payload)
+    assert not exposure.pattern.match(CHECK_CONNECTION)
+    assert not exposure.pattern.match(CHECK_CONNECTION + "\n")
+    assert exposure.block is False
     assert isinstance(text, MessageHandler)
+    assert text.callback.__name__ == "assess_message"
+    assert text.block is False
+    assert app.update_processor.max_concurrent_updates == 1
 
 
 def test_normal_launcher_imports_without_pytest_path_or_credentials():
