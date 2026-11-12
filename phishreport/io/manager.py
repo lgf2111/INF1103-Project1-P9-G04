@@ -130,16 +130,34 @@ class IOManager:
 
         return sender
 
+
     def get_message(self):
-        """Prompt for a single nonblank line and return its stripped message text."""
-        message = self._terminal.read("Enter the suspicious message: ").strip()
+        """Collect a multi-line message until END is entered on its own line."""
+        self._terminal.write(
+            "Paste your message. Type END on its own line to finish."
+        )
 
-        while message == "":
-            message = self._terminal.read(
-                "Message cannot be blank. Please enter the suspicious message: "
-            ).strip()
+        while True:
+            lines = []
 
-        return message
+            while True:
+                line = self._terminal.read(
+                    "Enter the suspicious message: " if not lines else ""
+                )
+
+                if line == "END":
+                    break
+
+                lines.append(line)
+
+            message = "\n".join(lines)
+
+            if message.strip():
+                return message
+
+            self._terminal.write(
+                "Message cannot be blank. Please enter the suspicious message."
+            )
 
     def get_link_information(self):
         """Return (has_link, link), requiring nonblank text when a link is reported.

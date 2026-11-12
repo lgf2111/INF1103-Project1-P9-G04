@@ -76,7 +76,15 @@ def test_demo_real_email_pipeline_and_reload(
     sender, message = io_manager.eml_reader.read_path(path)
     demo_reply(demo_transport)
     if entry == "manual":
-        answers = iter(["Email", sender, message, "no", "no", "no"])
+        answers = iter([
+            "Email",
+            sender,
+            *message.split("\n"),
+            "END",
+            "no",
+            "no",
+            "no",
+        ])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         cli.app.check_message()
     elif entry == "folder":
