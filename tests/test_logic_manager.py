@@ -3,12 +3,22 @@
 # Run with:  pytest
 
 from copy import deepcopy
+from dataclasses import FrozenInstanceError
 
 import logic_manager
 import pytest
-from logic_core import LogicManager
+from logic_core import LogicManager, RuleOutcome
 from logic_core.rule_engine import PriorityRuleEngine
-from logic_core.rules import DefaultRule, SuspiciousRule
+from logic_core.rules import (
+    CredentialRequestRule,
+    DefaultRule,
+    DisclosureRule,
+    InsufficientContextRule,
+    ReportedInteractionRule,
+    SuspiciousCredentialRule,
+    SuspiciousInteractionRule,
+    SuspiciousRule,
+)
 
 
 # Response-priority rules use fictional, already validated AI findings.
@@ -169,6 +179,45 @@ def test_rule_engine_uses_injected_rules_in_order():
 
     # The shared rule contract lets the engine use different concrete rules
     # without adding rule-specific branches to the engine.
+    assert manager.score(record) == 45
+
+
+@pytest.mark.parametrize(
+    "rule_type, changes, expected_score",
+    [
+        (DisclosureRule, {"submitted_category": "password"}, 90),
+        (
+            SuspiciousInteractionRule,
+            {"findings": {"suspicious": True}, "clicked": True},
+            80,
+        ),
+        (
+            SuspiciousCredentialRule,
+            {"findings": {"suspicious": True, "credential_request": True}},
+            60,
+        ),
+        (SuspiciousRule, {"findings": {"suspicious": True}}, 45),
+        (CredentialRequestRule, {"findings": {"credential_request": True}}, 40),
+        (ReportedInteractionRule, {"downloaded": True}, 35),
+        (InsufficientContextRule, {"findings": {"insufficient_context": True}}, 20),
+        (DefaultRule, {}, 10),
+    ],
+)
+def test_each_priority_rule_returns_an_immutable_outcome(
+    rule_type, changes, expected_score
+):
+    outcome = rule_type().evaluate(_assessment_record(**deepcopy(changes)))
+
+    assert outcome == RuleOutcome(rule_name=rule_type.__name__, score=expected_score)
+    with pytest.raises(FrozenInstanceError):
+        outcome.score = 0
+
+
+def test_logic_manager_exposes_rule_outcome_without_changing_score_api():
+    record = _assessment_record(findings={"suspicious": True})
+    manager = LogicManager()
+
+    assert manager.rule_outcome(record) == RuleOutcome("SuspiciousRule", 45)
     assert manager.score(record) == 45
 
 

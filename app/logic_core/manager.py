@@ -27,8 +27,12 @@ class LogicManager:
 
     def score(self, record):
         """Validate and calculate the first matching response-priority score."""
+        return self.rule_outcome(record).score
+
+    def rule_outcome(self, record):
+        """Validate a record and return its winning rule outcome value."""
         self.validate(record)
-        return self._rule_engine.score(record)
+        return self._rule_engine.evaluate(record)
 
     def priority_for(self, score):
         """Return the priority label for a calculated score."""

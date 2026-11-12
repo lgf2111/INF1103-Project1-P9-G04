@@ -10,6 +10,7 @@ from .rules import (
     SuspiciousInteractionRule,
     SuspiciousRule,
 )
+from .rule_outcome import RuleOutcome
 
 
 class PriorityRuleEngine:
@@ -31,9 +32,14 @@ class PriorityRuleEngine:
             )
         )
 
-    def score(self, record):
-        """Return the score from the first rule matching the validated record."""
+    def evaluate(self, record) -> RuleOutcome:
+        """Return the outcome from the first rule matching the validated record."""
         for rule in self._rules:
-            if rule.matches(record):
-                return rule.score(record)
+            outcome = rule.evaluate(record)
+            if outcome is not None:
+                return outcome
         raise ValueError("Priority rules must include a fallback rule.")
+
+    def score(self, record):
+        """Return the winning rule's numeric score for existing callers."""
+        return self.evaluate(record).score
