@@ -6,11 +6,17 @@ import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from phishreport.ai.errors import AIErrorTranslator
 from phishreport.bot.exposure import ExposureSession
-from phishreport.bot.messages import ChatRecordBuilder, ResultFormatter
+from phishreport.bot.messages import (
+    EXPOSURE_CALLBACK_PREFIX,
+    ChatRecordBuilder,
+    ResultFormatter,
+    build_exposure_keyboard,
+)
 from phishreport.data import DataManager
 
 CHECK_CONNECTION = "check_connection"
@@ -153,6 +159,71 @@ class TelegramIOManager:
                 session.saved = True
                 if cancellation is not None:
                     raise cancellation
+
+    async def exposure_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Acknowledge exposure buttons, serialize answers and render current state."""
+        query = getattr(update, "callback_query", None)
+        if query is None:
+            return
+        await query.answer()
+        chat = getattr(update, "effective_chat", None)
+        if (getattr(chat, "type", None) != ChatType.PRIVATE
+                or type(getattr(chat, "id", None)) is not int
+                or not self.is_allowed(update)):
+            return
+
+        unavailable = (
+            "These questions are not available. "
+            "Paste the message again to start a new assessment."
+        )
+        payload = getattr(query, "data", None)
+        match = re.fullmatch(
+            rf"{re.escape(EXPOSURE_CALLBACK_PREFIX)}:([A-Za-z0-9_-]{{16}}):"
+            r"(clicked|downloaded|both|neither|password|otp|no_disclosure|finish|skip|retry)",
+            payload,
+        ) if isinstance(payload, str) else None
+        session = self._find_exposure_session(update, match[1]) if match else None
+        try:
+            if session is None:
+                await query.edit_message_text(unavailable, reply_markup=None)
+                return
+
+            action = match[2]
+            feedback = ""
+            try:
+                if action in {"finish", "skip"}:
+                    # The helper owns session.lock, including during storage.
+                    await self._save_exposure_report(session)
+                elif action == "retry":
+                    async with session.lock:
+                        if not session.completed:
+                            raise ValueError("No completed report to retry")
+                    await self._save_exposure_report(session)
+                else:
+                    async with session.lock:
+                        # Replayed answer buttons only render the frozen report.
+                        if not session.completed:
+                            if self._assessment is None:
+                                raise ValueError("Message assessment is not available")
+                            session.apply_answer(action, self._assessment)
+            except (OSError, ValueError, RuntimeError):
+                feedback = "Could not update the assessment. Please try again.\n\n"
+
+            # Hold the lock across the edit: another button cannot replace a
+            # newer rendered state with an older reply after a slow Telegram call.
+            async with session.lock:
+                if not session.completed and time.monotonic() >= session.expires_at:
+                    await query.edit_message_text(unavailable, reply_markup=None)
+                else:
+                    text = self._formatter.format(session.result, session=session)
+                    if feedback and not session.completed:
+                        text = feedback + text
+                    await query.edit_message_text(
+                        text, reply_markup=build_exposure_keyboard(session),
+                    )
+        except BadRequest as error:
+            if "message is not modified" not in str(error).lower():
+                raise
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message

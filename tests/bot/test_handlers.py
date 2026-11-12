@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 from telegram import Update
+from telegram.error import BadRequest
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler
 
 from phishreport.assessment import AssessmentService, AssessmentSnapshot
@@ -24,6 +25,358 @@ from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
 from phishreport.logic import LogicManager
 
 ALLOWED_CHAT_ID = 12345
+
+UNAVAILABLE_EXPOSURE = (
+    "These questions are not available. Paste the message again to start a new assessment."
+)
+
+
+@pytest.fixture
+def callback_setup(save_exposure_setup):
+    manager, previous, ai = save_exposure_setup
+    service = manager._assessment
+    service.rescore = AssessmentService.rescore.__get__(service)
+    session = ExposureSession(
+        previous.record, AssessmentSnapshot(previous.findings, service.rescore(
+            previous.record, previous.findings,
+        )), chat_id=ALLOWED_CHAT_ID, user_id=42, message_id=100,
+    )
+    session.reply_message_id = 1100
+    manager._sessions[session.token] = session
+    manager._source_sessions[(ALLOWED_CHAT_ID, 42, 100)] = session.token
+
+    def update(action):
+        result = lookup_update(message_id=1100, callback=True)
+        result.callback_query = SimpleNamespace(
+            data=f"exposure:{session.token}:{action}", answer=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        )
+        return result
+
+    return manager, session, ai, update
+
+
+@pytest.mark.parametrize("action,score", [
+    ("clicked", 80), ("downloaded", 80), ("both", 80), ("neither", 60),
+    ("password", 90), ("otp", 90), ("no_disclosure", 60), ("skip", 60),
+])
+def test_exposure_callback_real_scoring_once_and_frozen_completion(callback_setup, action, score):
+    manager, session, ai, update = callback_setup
+
+    async def scenario():
+        answer = update(action)
+        await manager.exposure_callback(answer, None)
+        answer.callback_query.answer.assert_awaited_once_with()
+        assert session.result["score"] == score
+        for repeated in ("finish", "skip", "retry", "clicked"):
+            await manager.exposure_callback(update(repeated), None)
+        assert session.report["result"]["score"] == score
+        assert session.report["exposure"] == session.exposure
+        assert session.saved
+        if action == "skip":
+            assert session.report["result"]["priority"] == "MEDIUM"
+            assert session.report["exposure"] == {
+                "clicked": None, "downloaded": None,
+                "submitted_category": None, "disclosure_answered": False,
+            }
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+    manager._data_manager.save.assert_called_once_with(session.report)
+    assert ai.assess.call_count == 1
+
+
+@pytest.mark.parametrize("case", [
+    "wrong_owner", "wrong_reply", "expired", "unknown_token", "unknown_action",
+    "newline", "prefix", "token_length", "none_payload", "numeric_payload",
+])
+def test_exposure_callback_invalid_neutral_no_work(callback_setup, case):
+    manager, session, ai, update = callback_setup
+    incoming = update("clicked")
+    if case == "wrong_owner":
+        incoming.effective_user.id += 1
+    elif case == "wrong_reply":
+        incoming.effective_message.message_id += 1
+    elif case == "expired":
+        session.expires_at = 0
+    else:
+        incoming.callback_query.data = {
+            "unknown_token": f"exposure:{'_' * 16}:clicked",
+            "unknown_action": f"exposure:{session.token}:unknown",
+            "newline": f"exposure:{session.token}:clicked\n",
+            "prefix": f"other:{session.token}:clicked",
+            "token_length": f"exposure:{session.token}a:clicked",
+            "none_payload": None, "numeric_payload": 1,
+        }[case]
+    before = deepcopy(session.exposure)
+    asyncio.run(manager.exposure_callback(incoming, None))
+    incoming.callback_query.answer.assert_awaited_once_with()
+    incoming.callback_query.edit_message_text.assert_awaited_once_with(
+        UNAVAILABLE_EXPOSURE, reply_markup=None,
+    )
+    assert session.exposure == before and not session.completed
+    manager._data_manager.save.assert_not_called()
+    assert ai.assess.call_count == 1
+
+
+@pytest.mark.parametrize("case", ["no_chat", "missing_type", "group", "disallowed"])
+def test_exposure_callback_disallowed_ack_only(callback_setup, case):
+    manager, session, _, update = callback_setup
+    incoming = update("clicked")
+    manager._allowed_chat_id = ALLOWED_CHAT_ID
+    if case == "no_chat":
+        incoming.effective_chat = None
+    elif case == "missing_type":
+        del incoming.effective_chat.type
+    elif case == "group":
+        incoming.effective_chat.type = "group"
+    else:
+        incoming.effective_chat.id += 1
+    manager._find_exposure_session = Mock(side_effect=AssertionError("No lookup"))
+    asyncio.run(manager.exposure_callback(incoming, None))
+    incoming.callback_query.answer.assert_awaited_once_with()
+    incoming.callback_query.edit_message_text.assert_not_awaited()
+    assert not session.completed and session.exposure["clicked"] is None
+
+
+@pytest.mark.parametrize("chat_id", ["absent", None, "12345", 12345.0, True, False])
+def test_exposure_callback_invalid_chat_id_ack_only(callback_setup, chat_id):
+    manager, session, ai, update = callback_setup
+    manager._allowed_chat_id = ALLOWED_CHAT_ID
+    incoming = update("clicked")
+    if chat_id == "absent":
+        del incoming.effective_chat.id
+    else:
+        incoming.effective_chat.id = chat_id
+    before = (manager._sessions.copy(), manager._source_sessions.copy())
+    manager._find_exposure_session = Mock(side_effect=AssertionError("No lookup"))
+    asyncio.run(manager.exposure_callback(incoming, None))
+    incoming.callback_query.answer.assert_awaited_once_with()
+    incoming.callback_query.edit_message_text.assert_not_awaited()
+    assert (manager._sessions, manager._source_sessions) == before
+    assert session.exposure["clicked"] is None and not session.completed
+    manager._data_manager.save.assert_not_called()
+    assert ai.assess.call_count == 1
+
+
+def test_exposure_callback_no_query_and_failed_ack_never_lookup(callback_setup):
+    manager, _, _, update = callback_setup
+    manager._find_exposure_session = Mock(side_effect=AssertionError("No lookup"))
+
+    async def scenario():
+        await manager.exposure_callback(SimpleNamespace(), None)
+        incoming = update("finish")
+        incoming.callback_query.answer.side_effect = RuntimeError("ack failed")
+        with pytest.raises(RuntimeError, match="ack failed"):
+            await manager.exposure_callback(incoming, None)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_exposure_callback_save_failure_retry_real_storage(callback_setup, tmp_path, backend):
+    manager, session, ai, update = callback_setup
+    manager._data_manager.save.side_effect = OSError("SECRET path")
+
+    async def scenario():
+        await manager.exposure_callback(update("password"), None)
+        failed = update("finish")
+        await manager.exposure_callback(failed, None)
+        text = failed.callback_query.edit_message_text.call_args.args[0]
+        assert "SECRET" not in text and "Retry saving" in text
+        assert session.completed and not session.saved
+        report = deepcopy(session.report)
+        session.expires_at = 0
+        storage = (JsonReportStorage(tmp_path / "history.json") if backend == "json"
+                   else SqliteReportStorage(tmp_path / "history.sqlite3"))
+        manager._data_manager = DataManager(storage)
+        await manager.exposure_callback(update("retry"), None)
+        assert session.saved and manager._data_manager.load(strict=True) == [report]
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+    assert ai.assess.call_count == 1
+
+
+@pytest.mark.parametrize("error", [OSError, ValueError, RuntimeError])
+def test_exposure_callback_expected_answer_failure_safe_feedback(callback_setup, error):
+    manager, session, _, update = callback_setup
+    manager._assessment.rescore = Mock(side_effect=error("SECRET"))
+    incoming = update("clicked")
+    asyncio.run(manager.exposure_callback(incoming, None))
+    text = incoming.callback_query.edit_message_text.call_args.args[0]
+    assert text.startswith("Could not update the assessment. Please try again.")
+    assert "SECRET" not in text and text.endswith(ResultFormatter.FOOTER)
+    assert len(text.encode("utf-16-le")) // 2 <= 4096
+    assert session.exposure["clicked"] is None
+
+
+def test_exposure_callback_retry_pending_and_missing_service_do_not_write(callback_setup):
+    manager, session, _, update = callback_setup
+
+    async def scenario():
+        await manager.exposure_callback(update("retry"), None)
+        assert not session.completed
+        manager._assessment = None
+        for action in ("clicked", "finish"):
+            await manager.exposure_callback(update(action), None)
+            assert not session.completed
+
+    asyncio.run(scenario())
+    manager._data_manager.save.assert_not_called()
+
+
+@pytest.mark.parametrize("not_modified", [False, True])
+def test_exposure_callback_telegram_failure_preserves_saved_state(callback_setup, not_modified):
+    manager, session, ai, update = callback_setup
+
+    async def scenario():
+        incoming = update("finish")
+        incoming.callback_query.edit_message_text.side_effect = BadRequest(
+            "MESSAGE IS NOT MODIFIED" if not_modified else "edit unavailable",
+        )
+        if not_modified:
+            await manager.exposure_callback(incoming, None)
+        else:
+            with pytest.raises(BadRequest, match="edit unavailable"):
+                await manager.exposure_callback(incoming, None)
+        assert session.saved
+        await manager.exposure_callback(update("retry"), None)
+
+    asyncio.run(scenario())
+    manager._data_manager.save.assert_called_once()
+    assert ai.assess.call_count == 1
+
+
+@pytest.mark.parametrize("action", ["clicked", "finish", "skip"])
+def test_exposure_callback_ack_before_lock_expiry_while_waiting(callback_setup, action):
+    manager, session, _, update = callback_setup
+    incoming = update(action)
+
+    async def scenario():
+        async with session.lock:
+            task = asyncio.create_task(manager.exposure_callback(incoming, None))
+            await asyncio.sleep(0)
+            incoming.callback_query.answer.assert_awaited_once_with()
+            assert not task.done()
+            session.expires_at = 0
+        await task
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+    incoming.callback_query.edit_message_text.assert_awaited_once_with(
+        UNAVAILABLE_EXPOSURE, reply_markup=None,
+    )
+    assert session.exposure["clicked"] is None
+    manager._data_manager.save.assert_not_called()
+
+
+def test_exposure_callback_concurrent_final_buttons_and_unrelated_start(callback_setup):
+    manager, session, ai, update = callback_setup
+    release = threading.Event()
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+        started = asyncio.Event()
+
+        def save(report):
+            loop.call_soon_threadsafe(started.set)
+            assert release.wait(5)
+
+        manager._data_manager.save.side_effect = save
+        first, second = update("finish"), update("skip")
+        task = asyncio.create_task(manager.exposure_callback(first, None))
+        try:
+            await asyncio.wait_for(started.wait(), 3)
+            first.callback_query.answer.assert_awaited_once_with()
+            duplicate = asyncio.create_task(manager.exposure_callback(second, None))
+            await asyncio.sleep(0)
+            second.callback_query.answer.assert_awaited_once_with()
+            welcome = fake_update()
+            await asyncio.wait_for(manager.start(welcome, None), 1)
+            welcome.effective_message.reply_text.assert_awaited_once()
+            assert not duplicate.done()
+        finally:
+            release.set()
+        await asyncio.gather(task, duplicate)
+        for incoming in (first, second):
+            assert "Report saved locally." in (
+                incoming.callback_query.edit_message_text.call_args.args[0]
+            )
+
+    asyncio.run(asyncio.wait_for(scenario(), 8))
+    manager._data_manager.save.assert_called_once()
+    assert session.saved and ai.assess.call_count == 1
+
+
+def test_exposure_callback_serialized_edits_preserve_current_answer(callback_setup):
+    manager, session, ai, update = callback_setup
+    edits = []
+
+    async def scenario():
+        editing, release = asyncio.Event(), asyncio.Event()
+        first, second = update("clicked"), update("password")
+
+        async def slow_edit(text, **kwargs):
+            assert session.lock.locked()
+            editing.set()
+            await release.wait()
+            edits.append(text)
+
+        async def final_edit(text, **kwargs):
+            assert session.lock.locked()
+            edits.append(text)
+
+        first.callback_query.edit_message_text.side_effect = slow_edit
+        second.callback_query.edit_message_text.side_effect = final_edit
+        task = asyncio.create_task(manager.exposure_callback(first, None))
+        await editing.wait()
+        duplicate = asyncio.create_task(manager.exposure_callback(second, None))
+        await asyncio.sleep(0)
+        second.callback_query.answer.assert_awaited_once_with()
+        assert session.result["score"] == 80 and not duplicate.done()
+        release.set()
+        await asyncio.gather(task, duplicate)
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+    assert "Information submitted: Unconfirmed" in edits[0]
+    assert "Information submitted: Password" in edits[1]
+    assert session.result["score"] == 90 and ai.assess.call_count == 1
+    manager._data_manager.save.assert_not_called()
+
+
+def test_exposure_callback_lookup_happens_after_ack(callback_setup):
+    manager, _, _, update = callback_setup
+    incoming = update("clicked")
+    original = manager._find_exposure_session
+
+    def find(*args):
+        incoming.callback_query.answer.assert_awaited_once_with()
+        return original(*args)
+
+    manager._find_exposure_session = find
+    asyncio.run(manager.exposure_callback(incoming, None))
+
+
+@pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
+def test_exposure_callback_completion_failure_preserves_pending(callback_setup, error_type):
+    manager, session, _, update = callback_setup
+    manager._assessment.build_exposure_report = Mock(side_effect=error_type("SECRET"))
+    incoming = update("finish")
+    asyncio.run(manager.exposure_callback(incoming, None))
+    text = incoming.callback_query.edit_message_text.call_args.args[0]
+    assert text.startswith("Could not update the assessment. Please try again.")
+    assert "SECRET" not in text
+    assert not session.completed and session.report is None
+    manager._data_manager.save.assert_not_called()
+
+
+def test_exposure_callback_failure_prefix_fits_maximum_formatted_reply(callback_setup):
+    manager, session, _, update = callback_setup
+    session.result["reasons"] = ["😀" * 10000]
+    manager._assessment.rescore = Mock(side_effect=ValueError("SECRET"))
+    incoming = update("clicked")
+    asyncio.run(manager.exposure_callback(incoming, None))
+    text = incoming.callback_query.edit_message_text.call_args.args[0]
+    assert 4000 < len(text.encode("utf-16-le")) // 2 <= 4096
+    assert text.endswith(ResultFormatter.FOOTER)
 
 
 @pytest.fixture
