@@ -1,5 +1,6 @@
 """Evaluate ordered domain rules using their shared polymorphic contract."""
 
+from .rule_outcome import RuleOutcome
 from .rules import (
     CredentialRequestRule,
     DefaultRule,
@@ -10,7 +11,6 @@ from .rules import (
     SuspiciousInteractionRule,
     SuspiciousRule,
 )
-from .rule_outcome import RuleOutcome
 
 
 class PriorityRuleEngine:
