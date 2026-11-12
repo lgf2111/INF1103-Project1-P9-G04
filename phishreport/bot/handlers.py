@@ -1,6 +1,8 @@
 """Handle the Telegram welcome, connection check and message assessment."""
 
 import asyncio
+import re
+import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
@@ -53,6 +55,73 @@ class TelegramIOManager:
         if chat is None or chat.type != ChatType.PRIVATE:
             return False
         return self._allowed_chat_id is None or chat.id == self._allowed_chat_id
+
+    def _find_exposure_session(
+        self, update: Update, token: str | None = None,
+    ) -> ExposureSession | None:
+        """Resolve an owned session and lazily maintain the in-memory caches.
+
+        Invalid requests do not trigger housekeeping. Keep locked work and
+        completed unsaved reports available for finalization/storage retries.
+        Only a new source request may make room by evicting saved sessions.
+        """
+        chat = getattr(update, "effective_chat", None)
+        user = getattr(update, "effective_user", None)
+        message = getattr(update, "effective_message", None)
+        chat_id = getattr(chat, "id", None)
+        user_id = getattr(user, "id", None)
+        message_id = getattr(message, "message_id", None)
+        if any(type(value) is not int for value in (chat_id, user_id, message_id)):
+            return None
+        if getattr(chat, "type", None) != ChatType.PRIVATE or not self.is_allowed(update):
+            return None
+
+        query = getattr(update, "callback_query", None)
+        if token is None:
+            if query is not None:
+                return None
+            source = (chat_id, user_id, message_id)
+            candidate = self._sessions.get(self._source_sessions.get(source))
+            if candidate is not None and (
+                candidate.chat_id, candidate.user_id, candidate.message_id
+            ) != source:
+                return None
+        else:
+            if query is None or not isinstance(token, str):
+                return None
+            if re.fullmatch(r"[A-Za-z0-9_-]{16}", token) is None:
+                return None
+            candidate = self._sessions.get(token)
+            if candidate is None or (
+                candidate.chat_id != chat_id or candidate.user_id != user_id
+                or candidate.reply_message_id is None
+                or candidate.reply_message_id != message_id
+            ):
+                return None
+
+        now = time.monotonic()
+        for cached_token, session in list(self._sessions.items()):
+            if (now >= session.expires_at and not session.lock.locked()
+                    and (not session.completed or session.saved)):
+                del self._sessions[cached_token]
+
+        if token is None and candidate is None and len(self._sessions) >= self._session_limit:
+            saved = sorted(
+                ((cached_token, session) for cached_token, session in self._sessions.items()
+                 if session.saved and not session.lock.locked()),
+                key=lambda item: item[1].created_at,
+            )
+            for cached_token, _session in saved:
+                if len(self._sessions) < self._session_limit:
+                    break
+                del self._sessions[cached_token]
+
+        for source, cached_token in list(self._source_sessions.items()):
+            if cached_token not in self._sessions:
+                del self._source_sessions[source]
+        if candidate is not None and candidate.token in self._sessions:
+            return candidate
+        return None
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         message = update.effective_message

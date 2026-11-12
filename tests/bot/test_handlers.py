@@ -13,6 +13,7 @@ from telegram import Update
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler
 
 from phishreport.assessment import AssessmentSnapshot
+from phishreport.bot import handlers as handlers_module
 from phishreport.bot.exposure import ExposureSession
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.main import main
@@ -20,6 +21,238 @@ from phishreport.bot.messages import ChatRecordBuilder, ResultFormatter
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
 
 ALLOWED_CHAT_ID = 12345
+
+
+def lookup_update(*, chat_id=ALLOWED_CHAT_ID, user_id=42, message_id=100, callback=False):
+    return SimpleNamespace(
+        effective_chat=SimpleNamespace(id=chat_id, type="private"),
+        effective_user=SimpleNamespace(id=user_id),
+        effective_message=SimpleNamespace(message_id=message_id),
+        callback_query=SimpleNamespace() if callback else None,
+    )
+
+
+def cache_lookup_session(manager, *, message_id=100, created_at=10, state="pending"):
+    session = ExposureSession(
+        {"message": "same text"}, AssessmentSnapshot(findings={}, result={"score": 0}),
+        chat_id=ALLOWED_CHAT_ID, user_id=42, message_id=message_id,
+    )
+    session.created_at = created_at
+    session.expires_at = 200
+    session.reply_message_id = message_id + 1000
+    session.completed = state in {"saved", "retry"}
+    session.saved = state == "saved"
+    manager._sessions[session.token] = session
+    manager._source_sessions[(session.chat_id, session.user_id, message_id)] = session.token
+    return session
+
+
+def test_exposure_lookup_source_replay_and_callback_use_distinct_message_ids(monkeypatch):
+    manager = TelegramIOManager(Mock(spec=DataManager))
+    session = cache_lookup_session(manager)
+    clock = Mock(return_value=100)
+    monkeypatch.setattr(handlers_module, "time", SimpleNamespace(monotonic=clock), raising=False)
+
+    assert manager._find_exposure_session(lookup_update()) is session
+    assert manager._find_exposure_session(
+        lookup_update(message_id=1100, callback=True), session.token
+    ) is session
+    assert clock.call_count == 2
+    assert manager._data_manager.mock_calls == []
+
+
+@pytest.mark.parametrize("missing", ["effective_chat", "effective_user", "effective_message"])
+@pytest.mark.parametrize("absent", [False, True])
+def test_exposure_lookup_missing_identity_is_unchanged(missing, absent):
+    manager = TelegramIOManager(Mock(spec=DataManager))
+    session = cache_lookup_session(manager)
+    session.expires_at = 0
+    update = lookup_update()
+    if absent:
+        delattr(update, missing)
+    else:
+        setattr(update, missing, None)
+    before = (manager._sessions.copy(), manager._source_sessions.copy())
+
+    assert manager._find_exposure_session(update) is None
+    assert (manager._sessions, manager._source_sessions) == before
+
+
+@pytest.mark.parametrize("field", ["chat_id", "user_id", "message_id"])
+@pytest.mark.parametrize("value", [None, True, "100", 100.0])
+def test_exposure_lookup_requires_exact_integer_update_ids(field, value):
+    manager = TelegramIOManager(Mock(spec=DataManager))
+    session = cache_lookup_session(manager)
+    session.expires_at = 0
+    before = (manager._sessions.copy(), manager._source_sessions.copy())
+
+    assert manager._find_exposure_session(lookup_update(**{field: value})) is None
+    assert (manager._sessions, manager._source_sessions) == before
+
+
+@pytest.mark.parametrize("chat_type", ["absent", None, "invalid"])
+@pytest.mark.parametrize("callback", [False, True])
+def test_exposure_lookup_malformed_chat_type_is_unchanged(chat_type, callback, monkeypatch):
+    manager = TelegramIOManager(Mock(spec=DataManager))
+    session = cache_lookup_session(manager)
+    session.expires_at = 0
+    update = lookup_update(message_id=1100 if callback else 100, callback=callback)
+    if chat_type == "absent":
+        del update.effective_chat.type
+    else:
+        update.effective_chat.type = chat_type
+    clock = Mock(side_effect=AssertionError("Invalid identity must not trigger cleanup"))
+    monkeypatch.setattr(handlers_module, "time", SimpleNamespace(monotonic=clock))
+    before = (manager._sessions.copy(), manager._source_sessions.copy())
+
+    assert manager._find_exposure_session(update, session.token if callback else None) is None
+    assert (manager._sessions, manager._source_sessions) == before
+
+
+@pytest.mark.parametrize("case", [
+    "group", "disallowed", "source_callback", "callback_missing", "wrong_user",
+    "wrong_chat", "wrong_reply", "source_id_as_reply", "missing_reply", "source_mismatch",
+])
+def test_exposure_lookup_invalid_routing_never_cleans_caches(case):
+    manager = TelegramIOManager(Mock(spec=DataManager), ALLOWED_CHAT_ID)
+    session = cache_lookup_session(manager)
+    expired = cache_lookup_session(manager, message_id=101)
+    expired.expires_at = 0
+    update = lookup_update(message_id=1100, callback=True)
+    token = session.token
+    if case == "group":
+        update.effective_chat.type = "group"
+    elif case == "disallowed":
+        update.effective_chat.id += 1
+    elif case == "source_callback":
+        token = None
+        update.effective_message.message_id = 100
+    elif case == "callback_missing":
+        update.callback_query = None
+    elif case == "wrong_user":
+        update.effective_user.id += 1
+    elif case == "wrong_chat":
+        manager._allowed_chat_id = None
+        update.effective_chat.id += 1
+    elif case == "wrong_reply":
+        update.effective_message.message_id = 999
+    elif case == "source_id_as_reply":
+        update.effective_message.message_id = 100
+    elif case == "missing_reply":
+        session.reply_message_id = None
+    else:
+        update = lookup_update()
+        token = None
+        session.message_id = 999
+    before = (manager._sessions.copy(), manager._source_sessions.copy())
+
+    assert manager._find_exposure_session(update, token) is None
+    assert (manager._sessions, manager._source_sessions) == before
+
+
+@pytest.mark.parametrize("token", ["", "a" * 15, "a" * 17, "a" * 15 + "\n",
+                                       "a" * 15 + "!", "é" * 16, 123, True, [], "_" * 16])
+def test_exposure_lookup_bad_or_unknown_tokens_never_clean_caches(token):
+    manager = TelegramIOManager(Mock(spec=DataManager))
+    session = cache_lookup_session(manager)
+    session.expires_at = 0
+    before = (manager._sessions.copy(), manager._source_sessions.copy())
+
+    assert manager._find_exposure_session(lookup_update(callback=True), token) is None
+    assert (manager._sessions, manager._source_sessions) == before
+
+
+@pytest.mark.parametrize("mode", ["source", "callback"])
+@pytest.mark.parametrize("state, locked, retained", [
+    ("pending", False, False), ("saved", False, False), ("retry", False, True),
+    ("pending", True, True), ("saved", True, True),
+])
+def test_exposure_lookup_expiry_boundary_and_retry_retention(
+    monkeypatch, mode, state, locked, retained,
+):
+    manager = TelegramIOManager(Mock(spec=DataManager))
+    session = cache_lookup_session(manager, state=state)
+    if locked:
+        with pytest.raises(StopIteration):
+            session.lock.acquire().send(None)
+    clock = Mock(return_value=200)
+    monkeypatch.setattr(handlers_module, "time", SimpleNamespace(monotonic=clock), raising=False)
+    manager._source_sessions[(1, 2, 3)] = "absent_token"
+    update = lookup_update(message_id=1100 if mode == "callback" else 100,
+                           callback=mode == "callback")
+
+    found = manager._find_exposure_session(update, session.token if mode == "callback" else None)
+
+    assert found is (session if retained else None)
+    assert (session.token in manager._sessions) is retained
+    assert ((ALLOWED_CHAT_ID, 42, 100) in manager._source_sessions) is retained
+    assert (1, 2, 3) not in manager._source_sessions
+    clock.assert_called_once_with()
+    if locked:
+        session.lock.release()
+
+
+def test_exposure_lookup_before_expiry_and_orphan_source_are_valid_requests(monkeypatch):
+    manager = TelegramIOManager(Mock(spec=DataManager))
+    session = cache_lookup_session(manager)
+    monkeypatch.setattr(handlers_module, "time", SimpleNamespace(monotonic=lambda: 199.999),
+                        raising=False)
+    assert manager._find_exposure_session(lookup_update()) is session
+    manager._source_sessions[(ALLOWED_CHAT_ID, 42, 101)] = "missing"
+    assert manager._find_exposure_session(lookup_update(message_id=101)) is None
+    assert manager._source_sessions == {(ALLOWED_CHAT_ID, 42, 100): session.token}
+
+
+@pytest.mark.parametrize("limit", [4, 5])
+def test_exposure_lookup_new_source_evicts_only_oldest_saved_unlocked(monkeypatch, limit):
+    manager = TelegramIOManager(Mock(spec=DataManager))
+    manager._session_limit = limit
+    pending = cache_lookup_session(manager, message_id=100, created_at=1)
+    retry = cache_lookup_session(manager, message_id=101, created_at=2, state="retry")
+    locked = cache_lookup_session(manager, message_id=102, created_at=3, state="saved")
+    newer = cache_lookup_session(manager, message_id=103, created_at=20, state="saved")
+    older = cache_lookup_session(manager, message_id=104, created_at=10, state="saved")
+    with pytest.raises(StopIteration):
+        locked.lock.acquire().send(None)
+    monkeypatch.setattr(
+        handlers_module, "time", SimpleNamespace(monotonic=lambda: 100), raising=False,
+    )
+
+    assert manager._find_exposure_session(lookup_update(message_id=999)) is None
+
+    retained = {pending.token, retry.token, locked.token}
+    if limit == 5:
+        retained.add(newer.token)
+    assert set(manager._sessions) == retained
+    assert len(manager._source_sessions) == limit - 1
+    assert older.token not in manager._source_sessions.values()
+    locked.lock.release()
+
+
+@pytest.mark.parametrize("mode", ["source", "callback", "new_source"])
+def test_exposure_lookup_capacity_preserves_existing_replay_and_active_work(monkeypatch, mode):
+    manager = TelegramIOManager(Mock(spec=DataManager))
+    manager._session_limit = 1
+    pending = cache_lookup_session(manager)
+    saved = cache_lookup_session(manager, message_id=101, state="saved")
+    monkeypatch.setattr(
+        handlers_module, "time", SimpleNamespace(monotonic=lambda: 100), raising=False,
+    )
+    if mode == "new_source":
+        # Only active sessions: capacity stays full for the future busy response.
+        saved.saved = False
+        expected = None
+        update = lookup_update(message_id=999)
+    else:
+        expected = pending
+        update = lookup_update(message_id=1100 if mode == "callback" else 100,
+                               callback=mode == "callback")
+    before = (manager._sessions.copy(), manager._source_sessions.copy())
+
+    assert manager._find_exposure_session(
+        update, pending.token if mode == "callback" else None
+    ) is expected
+    assert (manager._sessions, manager._source_sessions) == before
 
 
 def test_constructor_tracking_starts_empty_and_isolated_per_manager():
