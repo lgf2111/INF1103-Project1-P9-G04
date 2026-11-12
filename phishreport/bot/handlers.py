@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+import secrets
 import time
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
@@ -254,31 +255,70 @@ class TelegramIOManager:
             await message.reply_text("Connection check passed.")
 
     async def assess_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Assess the text of a private chat message and reply with the outcome."""
-        message = update.effective_message
-        if not self.is_allowed(update) or message is None or not message.text:
-            return
-        if self._assessment is None:
-            await message.reply_text("Message assessment is not available right now.")
-            return
-
-        record = self._record_builder.build(message.text)
-        try:
-            # The AI call blocks, so run it on a worker thread to keep the bot responsive.
-            result = await asyncio.to_thread(self._assessment.assess, record)
-        except RuntimeError as error:
-            await message.reply_text(self._error_translator.translate(error))
-            return
-        except ValueError as error:
-            await message.reply_text("Sorry, the check failed: " + str(error))
+        """Cache one assessment per source and deliver provisional exposure questions."""
+        chat = getattr(update, "effective_chat", None)
+        user = getattr(update, "effective_user", None)
+        message = getattr(update, "effective_message", None)
+        chat_id = getattr(chat, "id", None)
+        user_id = getattr(user, "id", None)
+        message_id = getattr(message, "message_id", None)
+        text = getattr(message, "text", None)
+        if (any(type(value) is not int for value in (chat_id, user_id, message_id))
+                or getattr(chat, "type", None) != ChatType.PRIVATE
+                or getattr(update, "callback_query", None) is not None
+                or not isinstance(text, str) or not text.strip()
+                or not self.is_allowed(update)):
             return
 
-        note = ""
-        try:
-            async with self._save_lock:
-                await asyncio.to_thread(
-                    self._data_manager.save, self._assessment.build_report(record, result)
+        # Initialize before the first await, so concurrent ingress shares one
+        # lock. This lock never waits for callback storage or future answers.
+        if not hasattr(self, "_message_lock"):
+            self._message_lock = asyncio.Lock()
+        async with self._message_lock:
+            if self._assessment is None:
+                await message.reply_text("Message assessment is not available right now.")
+                return
+
+            session = self._find_exposure_session(update)
+            if session is None:
+                if len(self._sessions) >= self._session_limit:
+                    await message.reply_text(
+                        "Too many pending assessments. "
+                        "Finish or skip an earlier one, then try again."
+                    )
+                    return
+                record = self._record_builder.build(text)
+                try:
+                    # Retain findings for later answers; AI work stays off-loop.
+                    snapshot = await asyncio.to_thread(
+                        self._assessment.assess_with_findings, record,
+                    )
+                except RuntimeError as error:
+                    await message.reply_text(self._error_translator.translate(error))
+                    return
+                except ValueError as error:
+                    await message.reply_text("Sorry, the check failed: " + str(error))
+                    return
+
+                session = ExposureSession(
+                    record, snapshot, chat_id=chat_id, user_id=user_id, message_id=message_id,
                 )
-        except (OSError, ValueError):
-            note = "\n\n(This report could not be saved locally.)"
-        await message.reply_text(self._formatter.format(result) + note)
+                while session.token in self._sessions:
+                    session.token = secrets.token_urlsafe(12)
+                # Index before delivery: Telegram failures must not lose the AI
+                # snapshot or any completed report when delivery is retried.
+                self._sessions[session.token] = session
+                self._source_sessions[(chat_id, user_id, message_id)] = session.token
+
+            if session.reply_message_id is not None:
+                return
+            async with session.lock:
+                if session.reply_message_id is not None:
+                    return
+                reply = await message.reply_text(
+                    self._formatter.format(session.result, session=session),
+                    reply_markup=build_exposure_keyboard(session),
+                )
+                reply_id = getattr(reply, "message_id", None)
+                if type(reply_id) is int:
+                    session.reply_message_id = reply_id
