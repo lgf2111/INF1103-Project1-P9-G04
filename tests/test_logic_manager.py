@@ -2,6 +2,7 @@
 # Uses fake AI answers (no real API), so it runs anywhere, including Docker.
 # Run with:  pytest
 
+import json
 from copy import deepcopy
 from dataclasses import FrozenInstanceError
 
@@ -346,8 +347,24 @@ def test_evaluate_uses_one_rule_outcome(monkeypatch):
     assert result["score"] == 80
     assert result["priority"] == "HIGH"
     assert result["matched_rule"] == "SyntheticRule"
-    assert result["trace"] == tuple(step.as_dict() for step in expected_trace)
+    assert result["trace"] == [step.as_dict() for step in expected_trace]
     assert record == original
+
+
+def test_evaluation_result_is_json_serializable_for_interface_adapters():
+    record = _assessment_record(
+        findings={"suspicious": True, "credential_request": True}
+    )
+
+    result = LogicManager().evaluate(record)
+    serialized = json.loads(json.dumps(result))
+
+    assert serialized["matched_rule"] == "SuspiciousCredentialRule"
+    assert serialized["trace"][-1] == {
+        "rule_name": "SuspiciousCredentialRule",
+        "matched": True,
+        "score": 60,
+    }
 
 
 @pytest.mark.parametrize(

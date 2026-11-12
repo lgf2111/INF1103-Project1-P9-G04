@@ -52,7 +52,7 @@ class LogicManager:
         }
         evaluation = self.build_evaluation(record, routed_outcome)
         evaluation["matched_rule"] = rule_outcome.rule_name
-        evaluation["trace"] = tuple(step.as_dict() for step in rule_outcome.trace)
+        evaluation["trace"] = [step.as_dict() for step in rule_outcome.trace]
         return evaluation
 
     def build_evaluation(self, record, outcome):
