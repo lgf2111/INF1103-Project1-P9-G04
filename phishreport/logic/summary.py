@@ -10,11 +10,11 @@ CHANNEL_LABELS = {"email": "Email", "sms": "SMS", "chat": "Chat"}
 
 
 class StoredReport:
-    """Read-only view of a saved report that hides the two stored layouts.
+    """Read-only view of current and historical saved report layouts.
 
-    Current reports keep the assessment under ``result``. Older eight-field
-    reports keep ``score`` and ``priority`` at the top level. Callers see the
-    same properties for both.
+    Version-3 reports project only confirmed nested exposure answers. Current
+    assessments live under ``result``; older reports may keep ``score`` and
+    ``priority`` at the top level. Callers see the same properties throughout.
     """
 
     def __init__(self, record: dict) -> None:

@@ -178,9 +178,9 @@ downloaded file or a submitted password or code.
 | `IOManager` / `ReportPresenter` | `collect_summary_filter()` asks for the criteria and `display_summary()` prints the result. |
 | `PhishReportApp` | `summarize_reports()` connects the four managers. |
 
-**Tests:** `tests/core/test_summary.py` covers filter matching and validation, both
-stored layouts, each metric (including unclassifiable values), a custom metric
-subclass, an empty history, an unreadable history file, the filter prompts, the printed
+**Tests:** `tests/core/test_summary.py` covers filter matching and validation,
+current and historical layouts, each metric (including unclassifiable values),
+a custom metric subclass, an empty history, an unreadable history file, the filter prompts, the printed
 summary and the menu flow. No AI service is needed.
 
 ### Telegram bot
@@ -190,17 +190,43 @@ button. The button acknowledges the tap and checks whether the existing
 DataManager can read local history. Missing or empty history passes. If the
 read fails, the bot asks the user to retry.
 
-**Assessing a message:** send any text message to the bot in a private chat. The
-bot builds a chat record, runs the shared `AssessmentService` (AI findings, then the
-rule-based score) and replies with the priority, score, reasons and recommended
-actions. It saves each assessment to the selected report history. Configure the
-CLI with the same backend and path to include those records in **View saved
-reports** and **Summarize saved reports**.
-A chat message carries no attachment or interaction details, so nothing is recorded as
-clicked, downloaded or submitted; the score reflects the AI findings only. AI calls
-run on a worker thread so the bot stays responsive, and saves take turns.
+**Assessing a message:** paste text in a private chat. The bot calls the shared
+`AssessmentService` once for validated AI findings and shows a **Provisional
+assessment** with priority, score, reasons and recommended actions. It extracts
+the first supported URL and filename clue (or an attachment mention) from the
+text; these are not verified attachments or evidence of any interaction.
 
-Every assessment calls the Groq API with your key. Leaving `TELEGRAM_ALLOWED_CHAT_ID`
+Two questions share one keyboard:
+
+- Interaction: **Clicked link**, **Downloaded file**, **Both**, **Neither**.
+- Disclosure: **Password**, **One-time code**, **Neither password nor code**.
+
+Selections update the score using retained findings, without another AI call.
+Choose **Finish and save** or **Skip unanswered** to save the completed report.
+Both retain partial answers; unanswered fields remain **Unconfirmed**, and the
+reply says **Exposure unconfirmed** whenever any question is unanswered. Neither
+the initial reply nor answer selection saves history. Unfinished sessions expire
+after 30 minutes or bot restart without being saved. A completed report whose
+write fails stays available for **Retry saving** while the process remains alive,
+even past the pending timeout. **Report saved locally** appears only after a
+successful write.
+
+AI and storage work run on worker threads, and message/callback handlers do not
+wait for future answers. Another message or command can be handled while questions
+are pending or a callback save is in progress. Repeated finalization uses one
+cached report and avoids another save within the retained session; this is
+in-process protection, not durable distributed exactly-once delivery.
+
+Completed Telegram text reports use schema v3 with extracted metadata and nullable
+exposure answers. Configure the CLI with the same backend and path to see them in
+**View saved reports** and **Summarize saved reports**, including saved links and
+Unconfirmed answers. Unknowns do not count as confirmed exposure. Existing
+CLI assessments and Gmail monitoring continue to save v2 reports; supported older
+history remains readable. See [backend contracts](docs/handoffs/BACKEND_HANDOFF.md).
+
+Each new assessment requests AI findings using your Groq key; provider retries or
+fallback may make multiple HTTP attempts. Answers, rescoring and completed-save
+retries request no fresh findings. Leaving `TELEGRAM_ALLOWED_CHAT_ID`
 blank lets any private chat that finds the bot use that quota, so set the chat ID if
 the bot is public.
 
@@ -315,6 +341,44 @@ to select JSON or its SQLite sibling, as described under
 3. If a second Telegram account is available, send `/start` from its private
    chat with the same bot and confirm it receives no menu.
 
+#### Check the exposure flow with an isolated history
+
+Use an activated Python 3.12 environment with dependencies installed, from the
+repository root. In PowerShell, choose a fresh demo path and one backend before
+starting the bot (Telegram settings and `GROQ_API_KEY` must already be in the shell):
+
+```powershell
+New-Item -ItemType Directory -Force .local/telegram-demo | Out-Null
+$env:PHISHREPORT_REPORTS_PATH = "$PWD/.local/telegram-demo/reports.json"
+$env:PHISHREPORT_STORAGE = "json"
+python -m phishreport.bot
+```
+
+Repeat the checklist with `PHISHREPORT_STORAGE = "sqlite"`; it uses the sibling
+`reports.sqlite3`. Keep that same selector and path when starting the CLI with
+`python -m phishreport.cli`. This demo history is separate from normal reports.
+Selections in this checklist simulate exposure only: do not visit the SMS link
+or enter/send any real password or one-time code.
+
+1. Paste your real suspicious SMS. Check the initial provisional reply and
+   questions; history must not yet gain a report. The pasted SMS is a chat input.
+2. Select **Clicked link**, then **Finish and save**. Expect **80 / HIGH** if
+   the AI findings are suspicious. With a new submission, select **Password**
+   or **One-time code** and finish: expect **90 / HIGH** after valid AI findings.
+3. On a new submission, choose **Skip unanswered** without answers. A suspicious
+   AI baseline stays **MEDIUM** (60 if it also requests credentials, otherwise
+   45). Check **Unconfirmed**. On another, select **Clicked link**, then skip;
+   the click stays Yes and disclosure stays Unconfirmed.
+4. Leave questions pending, send a second message and `/start`, and check both
+   receive replies. Repeat a Finish/Skip callback if available and confirm the
+   completed report appears only once in history.
+5. Stop and restart the bot: unfinished questions are unavailable and unsaved.
+   Stop it again, start the CLI with the same backend/path, and inspect saved
+   links and answers in history and summaries. Repeat for both backends.
+
+A live SMS demo, mounted container restart, and remote CI each require their own
+observed evidence; offline tests alone do not establish those results.
+
 #### Add the next handler
 
 Add an async method to `TelegramIOManager` in `phishreport/bot/handlers.py`.
@@ -343,6 +407,23 @@ The application suite uses fake completion clients and mocked Groq HTTP calls
 to check prompt handling, retries, response validation and CLI behavior.
 The Telegram tests use fake updates and temporary data. Neither suite needs
 credentials once dependencies are installed.
+
+For focused exposure and persistence checks in an activated Python 3.12
+environment, run:
+
+```text
+python -m pytest tests/bot/test_assessment.py tests/bot/test_handlers.py tests/bot/test_dispatch.py tests/bot/test_exposure.py tests/bot/test_messages.py -q
+python -m pytest tests/core/test_assessment_service.py tests/core/test_data_core.py tests/core/test_summary.py tests/core/test_io_core.py tests/core/test_sqlite_storage.py tests/core/test_storage_factory.py tests/core/test_storage_migration.py -q
+```
+
+The existing CI and Docker configurations use Python 3.14; the local project target
+is Python 3.12. Observe a successful CI run for the matching pushed revision and
+the [offline Telegram container command](#run-docker-with-persistent-reports)
+separately before claiming either passes. Local Docker and `gh` were unavailable
+and WSL was not installed at the exposure documentation checkpoint. The preceding
+local Python 3.12 full-suite run recorded 1630 passed, 18 skipped and one unchanged
+Windows Gmail permission failure (`0600` expected, `0666` observed); it was not a
+clean full-suite pass or a container/remote CI result.
 
 ### Assessment policy
 
