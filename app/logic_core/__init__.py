@@ -2,5 +2,6 @@
 
 from .manager import LogicManager
 from .rule_outcome import RuleOutcome
+from .rule_trace import RuleTrace
 
-__all__ = ["LogicManager", "RuleOutcome"]
+__all__ = ["LogicManager", "RuleOutcome", "RuleTrace"]

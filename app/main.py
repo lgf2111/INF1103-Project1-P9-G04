@@ -97,12 +97,15 @@ def check_message(record=None):
         io_manager.show_message("Sorry, the check failed: " + str(error))
         return
 
-    # Retain the original message and assessment in the agreed version-2 format.
+    # Keep the saved version-2 result shape; the rule trace is shown for the
+    # current assessment but is not part of the established history format.
     report = {
         "schema_version": 2,
         "channel": record["channel"],
         "message": record["message"],
-        "result": result,
+        "result": {
+            key: result[key] for key in ("score", "priority", "reasons", "checklist")
+        },
     }
     try:
         data_manager.save(report)

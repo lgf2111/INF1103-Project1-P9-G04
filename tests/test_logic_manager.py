@@ -7,7 +7,7 @@ from dataclasses import FrozenInstanceError
 
 import logic_manager
 import pytest
-from logic_core import LogicManager, RuleOutcome
+from logic_core import LogicManager, RuleOutcome, RuleTrace
 from logic_core.rule_engine import PriorityRuleEngine
 from logic_core.rules import (
     CredentialRequestRule,
@@ -165,6 +165,14 @@ def test_class_based_manager_evaluates_ai_enriched_record():
 
     assert result["score"] == 60
     assert result["priority"] == "MEDIUM"
+    assert result["matched_rule"] == "SuspiciousCredentialRule"
+    assert [step["rule_name"] for step in result["trace"]] == [
+        "DisclosureRule",
+        "SuspiciousInteractionRule",
+        "SuspiciousCredentialRule",
+    ]
+    assert [step["matched"] for step in result["trace"]] == [False, False, True]
+    assert result["trace"][-1]["score"] == 60
     assert result["reasons"] and result["checklist"]
     assert record == original
 
@@ -217,7 +225,15 @@ def test_logic_manager_exposes_rule_outcome_without_changing_score_api():
     record = _assessment_record(findings={"suspicious": True})
     manager = LogicManager()
 
-    assert manager.rule_outcome(record) == RuleOutcome("SuspiciousRule", 45)
+    outcome = manager.rule_outcome(record)
+    assert outcome.rule_name == "SuspiciousRule"
+    assert outcome.score == 45
+    assert outcome.trace == (
+        RuleTrace("DisclosureRule", False),
+        RuleTrace("SuspiciousInteractionRule", False),
+        RuleTrace("SuspiciousCredentialRule", False),
+        RuleTrace("SuspiciousRule", True, 45),
+    )
     assert manager.score(record) == 45
 
 
@@ -269,7 +285,18 @@ def test_priority_thresholds(monkeypatch, value, priority, operation):
         calls.append(received)
         return value
 
-    monkeypatch.setattr(logic_manager, "score", fixed_score)
+    if operation == "route":
+        monkeypatch.setattr(logic_manager, "score", fixed_score)
+    else:
+        fixed_outcome = RuleOutcome("BoundaryRule", value)
+
+        def fixed_rule_outcome(received):
+            calls.append(received)
+            return fixed_outcome
+
+        monkeypatch.setattr(
+            logic_manager._DEFAULT_MANAGER, "rule_outcome", fixed_rule_outcome
+        )
     result = getattr(logic_manager, operation)(record)
     assert result["score"] == value
     assert result["priority"] == priority
@@ -280,16 +307,16 @@ def test_evaluate_scores_once(monkeypatch):
     """Check real scoring and validation run once without changing the record."""
     record = _assessment_record(submitted_category="password")
     original = deepcopy(record)
-    original_score = logic_manager.score
+    original_outcome = logic_manager._DEFAULT_MANAGER.rule_outcome
     calls = []
 
-    def track_score(received):
-        """Count scoring calls while preserving actual validation and rules."""
+    def track_outcome(received):
+        """Count rule evaluation while preserving validation and rules."""
         calls.append(received)
-        return original_score(received)
+        return original_outcome(received)
 
-    # Wrap real scoring so this regression also exercises record validation.
-    monkeypatch.setattr(logic_manager, "score", track_score)
+    # Wrap real rule evaluation so this regression exercises validation and rules.
+    monkeypatch.setattr(logic_manager._DEFAULT_MANAGER, "rule_outcome", track_outcome)
     result = logic_manager.evaluate(record)
 
     assert len(calls) == 1
@@ -299,25 +326,27 @@ def test_evaluate_scores_once(monkeypatch):
     assert record == original
 
 
-def test_evaluate_routes_once(monkeypatch):
-    """Check evaluation calls route once and uses its returned outcome."""
+def test_evaluate_uses_one_rule_outcome(monkeypatch):
+    """Check evaluation uses one rule outcome for routing, trace, and guidance."""
     record = _assessment_record()
     original = deepcopy(record)
     calls = []
+    expected_trace = (RuleTrace("SyntheticRule", True, 80),)
 
-    def fixed_route(received):
-        """Track routing and return an outcome distinct from this record's score."""
+    def fixed_outcome(received):
+        """Return an outcome distinct from the record's default rule."""
         calls.append(received)
-        return {"score": 80, "priority": "HIGH"}
+        return RuleOutcome("SyntheticRule", 80, expected_trace)
 
-    # A distinct outcome detects evaluation bypassing or discarding routing.
-    monkeypatch.setattr(logic_manager, "route", fixed_route)
+    monkeypatch.setattr(logic_manager._DEFAULT_MANAGER, "rule_outcome", fixed_outcome)
     result = logic_manager.evaluate(record)
 
     assert len(calls) == 1
     assert calls[0] is record
     assert result["score"] == 80
     assert result["priority"] == "HIGH"
+    assert result["matched_rule"] == "SyntheticRule"
+    assert result["trace"] == tuple(step.as_dict() for step in expected_trace)
     assert record == original
 
 

@@ -27,9 +27,8 @@ def route(record):
 
 
 def evaluate(record):
-    """Return guidance while preserving the historical routing patch point."""
-    outcome = route(record)
-    return _DEFAULT_MANAGER.build_evaluation(record, outcome)
+    """Return guidance and the rule trace from the class-based manager."""
+    return _DEFAULT_MANAGER.evaluate(record)
 
 
 def _validate_record(record):

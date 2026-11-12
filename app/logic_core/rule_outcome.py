@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+from .rule_trace import RuleTrace
+
 
 @dataclass(frozen=True, slots=True)
 class RuleOutcome:
@@ -9,3 +11,4 @@ class RuleOutcome:
 
     rule_name: str
     score: int
+    trace: tuple[RuleTrace, ...] = ()

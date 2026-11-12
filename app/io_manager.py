@@ -600,6 +600,13 @@ def display_result(result: dict | None) -> None:
         for reason in result["reasons"]:
             print(" -", reason)
 
+    if result.get("trace"):
+        print("\nRule trace:")
+        for step in result["trace"]:
+            status = "matched" if step["matched"] else "did not match"
+            score = f" (score {step['score']})" if step["score"] is not None else ""
+            print(f" - {step['rule_name']}: {status}{score}")
+
     print("\nRecommended actions:")
     for number, step in enumerate(result.get("checklist", []), start=1):
         print(f"{number}. {step}")

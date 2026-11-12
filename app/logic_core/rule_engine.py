@@ -1,6 +1,7 @@
 """Evaluate ordered domain rules using their shared polymorphic contract."""
 
 from .rule_outcome import RuleOutcome
+from .rule_trace import RuleTrace
 from .rules import (
     CredentialRequestRule,
     DefaultRule,
@@ -34,10 +35,22 @@ class PriorityRuleEngine:
 
     def evaluate(self, record) -> RuleOutcome:
         """Return the outcome from the first rule matching the validated record."""
+        trace = []
         for rule in self._rules:
             outcome = rule.evaluate(record)
+            trace.append(
+                RuleTrace(
+                    rule_name=type(rule).__name__,
+                    matched=outcome is not None,
+                    score=outcome.score if outcome is not None else None,
+                )
+            )
             if outcome is not None:
-                return outcome
+                return RuleOutcome(
+                    rule_name=outcome.rule_name,
+                    score=outcome.score,
+                    trace=tuple(trace),
+                )
         raise ValueError("Priority rules must include a fallback rule.")
 
     def score(self, record):

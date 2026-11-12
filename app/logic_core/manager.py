@@ -44,9 +44,16 @@ class LogicManager:
         return {"score": score, "priority": self.priority_for(score)}
 
     def evaluate(self, record):
-        """Return score, priority, reasons, and exposure-aware response steps."""
-        outcome = self.route(record)
-        return self.build_evaluation(record, outcome)
+        """Return guidance with the ordered rule trace for the current assessment."""
+        rule_outcome = self.rule_outcome(record)
+        routed_outcome = {
+            "score": rule_outcome.score,
+            "priority": self.priority_for(rule_outcome.score),
+        }
+        evaluation = self.build_evaluation(record, routed_outcome)
+        evaluation["matched_rule"] = rule_outcome.rule_name
+        evaluation["trace"] = tuple(step.as_dict() for step in rule_outcome.trace)
+        return evaluation
 
     def build_evaluation(self, record, outcome):
         """Build evaluation guidance from an already calculated route outcome."""

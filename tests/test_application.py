@@ -40,6 +40,11 @@ from email_html import html_to_text
 REAL_EMAILS = Path(__file__).resolve().parent / "fixtures"
 
 
+def _persisted_result(result):
+    """Return the stable version-2 fields retained in report history."""
+    return {key: result[key] for key in ("score", "priority", "reasons", "checklist")}
+
+
 # ============================================================================
 # Demo
 # ============================================================================
@@ -121,7 +126,10 @@ def test_demo_real_email_pipeline_and_reload(
     assert records[0]["result"]["score"] == 60
     assert records[0]["result"]["priority"] == "MEDIUM"
     assert records[0]["result"]["reasons"] and records[0]["result"]["checklist"]
-    assert "Rule-based score: 60" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "Rule-based score: 60" in output
+    assert "Rule trace:" in output
+    assert "SuspiciousCredentialRule: matched (score 60)" in output
     demo_transport.assert_called_once()
     before = (tmp_path / "reports.json").read_bytes()
     # A separate interpreter proves reload does not depend on in-memory state.
@@ -1089,12 +1097,18 @@ def test_io_display_display_result_shows_assessment(capsys):
             "score": 30,
             "reasons": ["More context is required."],
             "checklist": ["Give more details."],
+            "trace": [
+                {"rule_name": "DisclosureRule", "matched": False, "score": None},
+                {"rule_name": "DefaultRule", "matched": True, "score": 10},
+            ],
         }
     )
     output = capsys.readouterr().out
     assert "Priority: Insufficient Information" in output
     assert "Rule-based score: 30" in output
     assert "More context is required." in output
+    assert "DisclosureRule: did not match" in output
+    assert "DefaultRule: matched (score 10)" in output
     assert "1. Give more details." in output
 
 
@@ -2895,7 +2909,11 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
         assert "https://credential.example.test/login" in message
         assert "<p>" not in message and "Content-Type:" not in message
         assert records[0]["result"]["score"] == expected_score
-        main.io_manager.display_result.assert_called_once_with(records[0]["result"])
+        displayed = main.io_manager.display_result.call_args.args[0]
+        assert displayed["score"] == expected_score
+        assert displayed["trace"][-1]["matched"] is True
+        assert displayed["trace"][-1]["score"] == expected_score
+        main.io_manager.display_result.assert_called_once()
 
 
 @pytest.mark.parametrize(
@@ -2977,7 +2995,11 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
         assert len(records) == 1
         assert records[0]["message"] == "Subject: Fictional request\n\n" + body
         assert records[0]["result"]["score"] == 60
-        main.io_manager.display_result.assert_called_once_with(records[0]["result"])
+        displayed = main.io_manager.display_result.call_args.args[0]
+        assert displayed["score"] == 60
+        assert displayed["trace"][-1]["matched"] is True
+        assert displayed["trace"][-1]["score"] == 60
+        main.io_manager.display_result.assert_called_once()
 
 
 @pytest.mark.parametrize("failure", ["input", "timeout", "http", "incomplete", "json", "schema"])
@@ -3042,12 +3064,14 @@ def test_main_successful_assessment_reaches_real_logic_and_storage(main_app_boun
             "schema_version": 2,
             "channel": record["channel"],
             "message": record["message"],
-            "result": main.io_manager.display_result.call_args.args[0],
+            "result": _persisted_result(main.io_manager.display_result.call_args.args[0]),
         }
     ]
     assert record == original
     result = main.io_manager.display_result.call_args.args[0]
     assert result["score"] == 90 and result["priority"] == "HIGH"
+    assert result["matched_rule"] == "DisclosureRule"
+    assert result["trace"][-1]["matched"] is True
     assert result["checklist"]
     main.io_manager.display_result.assert_called_once()
     main.io_manager.show_message.assert_not_called()
@@ -3249,7 +3273,7 @@ def test_main_recovered_timeout_saves_and_displays_only_one_assessment(
         "schema_version": 2,
         "channel": record["channel"],
         "message": record["message"],
-        "result": main.io_manager.display_result.call_args.args[0],
+        "result": _persisted_result(main.io_manager.display_result.call_args.args[0]),
     }
     main.io_manager.display_result.assert_called_once()
     main.io_manager.show_message.assert_not_called()
@@ -3271,7 +3295,7 @@ def test_main_timeout_fallback_reaches_real_logic_and_saves_once(main_app_bounda
             "schema_version": 2,
             "channel": main_record()["channel"],
             "message": main_record()["message"],
-            "result": main.io_manager.display_result.call_args.args[0],
+            "result": _persisted_result(main.io_manager.display_result.call_args.args[0]),
         }
     ]
     main.io_manager.display_result.assert_called_once()
