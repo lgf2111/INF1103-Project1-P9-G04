@@ -12,7 +12,8 @@ from phishreport.data.factory import create_report_storage
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
 from phishreport.io.check_command import CheckCommand
-from phishreport.io.commands import CommandRequest
+from phishreport.io.commands import CommandRequest, CommandRouter
+from phishreport.io.help_command import HelpCommand
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
@@ -83,7 +84,8 @@ class PhishReportApp:
         """Validate one combined AI response before assessment, saving or display.
 
         Collect input interactively when record is None; otherwise use the supplied
-        record. Explicit command_text uses the shared pasted-message command.
+        record. Explicit command_text is full raw slash input (e.g. /check text)
+        routed through the shared command catalog.
         Stop assessment on handled AI/validation failures. Save the
         version-3 outcome locally, then display it even if persistence fails.
         """
@@ -100,9 +102,14 @@ class PhishReportApp:
                     ),
                     assess_record=self._assessment.assess,
                 )
+                catalog = [command]
+                catalog.append(HelpCommand(catalog))
                 request = CommandRequest(command_text, "cli")
-                reply = command.execute(request)
-                if reply.kind == "usage":
+                reply = CommandRouter(catalog).route(request)
+                if reply is None:
+                    self._io_manager.show_message("Please choose 1, 2, 3, 4, 5 or 6.")
+                    return
+                if reply.kind != "assessment":
                     self._io_manager.show_message(reply.text)
                     return
                 outcome = request.session["check_outcome"]
