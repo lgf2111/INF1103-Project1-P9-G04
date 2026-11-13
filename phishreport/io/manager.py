@@ -20,7 +20,7 @@ class IOManager:
         self._presenter = ReportPresenter(terminal)
 
     def main_menu(self) -> str:
-        """Display the CLI menu and return a validated, normalized menu choice."""
+        """Return a normalized menu number or untouched slash-command input."""
         self._terminal.write("\n=== PhishReport ===")
         self._terminal.write("1. Check a new message (Manual Input)")
         self._terminal.write("2. Import the newest emails from your saved folder")
@@ -29,11 +29,14 @@ class IOManager:
         self._terminal.write("5. Summarize saved reports")
         self._terminal.write("6. Quit")
 
-        return self.get_valid_choice(
-            "Choose 1-6: ",
-            ("1", "2", "3", "4", "5", "6"),
-            "Invalid choice. Please choose 1-6: ",
-        )
+        prompt = "Choose 1-6: "
+        while True:
+            choice = self._terminal.read(prompt)
+            if choice.lstrip().startswith("/"):
+                return choice
+            if choice.strip() in ("1", "2", "3", "4", "5", "6"):
+                return choice.strip()
+            prompt = "Invalid choice. Please choose 1-6: "
 
     def get_valid_choice(self, prompt, valid_choices, error_message):
         """Prompt until stripped, lowercase input matches one of valid_choices.
