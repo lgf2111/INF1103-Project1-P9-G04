@@ -207,6 +207,10 @@ def test_alert_is_html_escaped_and_clipped():
     result = {
         "priority": "HIGH",
         "score": 90,
+        "matched_rule": "DisclosureRule",
+        "trace": [
+            {"rule_name": "DisclosureRule", "matched": True, "score": 90},
+        ],
         "reasons": ["<script>x</script> " + "a" * 500],
         "checklist": [f"step {n}" for n in range(9)],
     }
@@ -216,6 +220,8 @@ def test_alert_is_html_escaped_and_clipped():
     assert "🚨 <b>HIGH risk</b>" in text
     assert "&lt;script&gt;" in text and "<script>" not in text
     assert "Evil &lt;e@x.test&gt;" in text
+    assert "Matched rule:</b> DisclosureRule" in text
+    assert "DisclosureRule: matched (score: 90)" in text
     assert "5. step 4" in text and "6. step 5" not in text
     assert "Open the email" not in text
     assert "..." in text

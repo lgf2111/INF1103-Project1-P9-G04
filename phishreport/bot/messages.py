@@ -128,6 +128,17 @@ class PhishingAlertFormatter:
         if subject:
             lines.append(f"<b>Subject:</b> {self._clip(subject)}")
         lines.append(f"<b>Score:</b> {escape(str(result.get('score', 'n/a')))}/100")
+        if result.get("matched_rule"):
+            lines.append(f"<b>Matched rule:</b> {self._clip(result['matched_rule'])}")
+        trace = result.get("trace") or []
+        if trace:
+            lines += ["", "<b>Rule evaluation trace</b>"]
+            for step in trace:
+                rule_name = self._clip(step.get("rule_name", "Unknown rule"))
+                status = "matched" if step.get("matched") else "not matched"
+                score = step.get("score")
+                score_text = f" (score: {escape(str(score))})" if score is not None else ""
+                lines.append(f"• {rule_name}: {status}{score_text}")
         if result.get("reasons"):
             lines += ["", "<b>Why it was flagged</b>"]
             lines += [f"• {self._clip(reason)}" for reason in result["reasons"]]

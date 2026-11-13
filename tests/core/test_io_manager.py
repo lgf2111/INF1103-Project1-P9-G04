@@ -112,14 +112,47 @@ def test_io_manager_get_sender_allows_blank_input(monkeypatch):
     assert result is None
 
 
+
 def test_io_manager_get_message_reprompts_blank_input(monkeypatch):
-    answers = iter(["", "   ", "Suspicious message"])
+    answers = iter([
+        "",
+        "   ",
+        "END",
+        "Suspicious message",
+        "END"
+    ])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
     result = io_manager.get_message()
 
     assert result == "Suspicious message"
+
+def test_io_manager_collect_input_preserves_five_line_message(monkeypatch):
+    body = [
+        "Subject: Account Verification",
+        "",
+        "Dear Customer,",
+        "Your account requires verification.",
+        "Regards, Support"
+    ]
+
+    answers = iter([
+        "Email",
+        "sender@example.com",
+        *body,
+        "END",
+        "no",
+        "no",
+        "no"
+    ])
+
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    record = io_manager.collect_input()
+
+    assert record["message"] == "\n".join(body)
+    assert record["message"].count("\n") == 4
 
 
 def test_io_manager_get_link_information_reprompts_blank_link(monkeypatch):
@@ -202,17 +235,19 @@ def test_io_manager_collect_user_actions_without_link_or_file(monkeypatch):
 
 def test_io_manager_collect_input_returns_complete_record(monkeypatch):
     answers = iter(
-        [
-            "Email",
-            "update@micr0soft.com",
-            "Download Update.exe immediately.",
-            "no",
-            "yes",
-            "Update.exe",
-            "yes",
-            "no",
-        ]
-    )
+    [
+        "Email",
+        "update@micr0soft.com",
+        "Download Update.exe immediately.",
+        "END",
+        "no",
+        "yes",
+        "Update.exe",
+        "yes",
+        "no",
+    ]
+)
+
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
@@ -829,6 +864,10 @@ def test_io_display_display_result_shows_assessment(capsys):
         {
             "priority": "insufficient_information",
             "score": 30,
+            "matched_rule": "InsufficientContextRule",
+            "trace": [
+                {"rule_name": "InsufficientContextRule", "matched": True, "score": 30}
+            ],
             "reasons": ["More context is required."],
             "checklist": ["Give more details."],
         }
@@ -836,6 +875,9 @@ def test_io_display_display_result_shows_assessment(capsys):
     output = capsys.readouterr().out
     assert "Priority: Insufficient Information" in output
     assert "Rule-based score: 30" in output
+    assert "Matched rule: InsufficientContextRule" in output
+    assert "Rule evaluation trace:" in output
+    assert "InsufficientContextRule: matched (score: 30)" in output
     assert "More context is required." in output
     assert "1. Give more details." in output
 
@@ -968,6 +1010,7 @@ def test_io_display_check_new_message_displays_full_record(cli, monkeypatch, cap
     assert "Priority:" in output
     assert "Rule-based score:" in output  # Changed from "Score:"
     assert "Recommended actions:" in output
+    assert "Rule evaluation trace:" in output
 
     # Verify the saved data structure
     assert len(saved) == 1
@@ -981,7 +1024,20 @@ def test_io_display_check_new_message_displays_full_record(cli, monkeypatch, cap
         "result",
     }
     assert saved[0]["schema_version"] == 3
-    assert set(saved[0]["result"]) == {"score", "priority", "reasons", "checklist"}
+    assert set(saved[0]["result"]) == {
+        "score",
+        "priority",
+        "reasons",
+        "checklist",
+        "matched_rule",
+        "trace",
+    }
+    assert saved[0]["result"]["matched_rule"] == "DefaultRule"
+    assert saved[0]["result"]["trace"][-1] == {
+        "rule_name": "DefaultRule",
+        "matched": True,
+        "score": 10,
+    }
 
     assert len(api_calls) == 1
 

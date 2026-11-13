@@ -97,7 +97,9 @@ class ReportValidator:
         """Validate the score, priority, guidance and permitted explanation fields.
 
         Return None on success; raise ValueError without changing the result on
-        failure. Empty guidance lists are accepted, but blank list entries are not.
+        failure. Four-field historical results remain valid. Newer v2 and v3
+        reports may also carry the matched-rule trace. Empty guidance lists are
+        accepted, but blank list entries are not.
         """
         required_fields = {
             "score",
@@ -175,7 +177,8 @@ class ReportValidator:
             if not isinstance(record[key], str) or not record[key].strip():
                 raise ValueError("Invalid report text: " + key)
         # Keep the original message intact; validation never strips or truncates it.
-        self._validate_result(record["result"])
+        # The merged RuleOutcome workflow writes traces to v2 reports too.
+        self._validate_result(record["result"], allow_rule_trace=True)
         return record
 
     def _validate_v3(self, record):

@@ -36,8 +36,12 @@ class LogicManager:
 
     def score(self, record):
         """Validate and calculate the first matching response-priority score."""
+        return self.rule_outcome(record).score
+
+    def rule_outcome(self, record):
+        """Validate a record and return its winning rule outcome value."""
         self.validate(record)
-        return self._rule_engine.score(record)
+        return self._rule_engine.evaluate(record)
 
     def priority_for(self, score):
         """Return the priority label for a calculated score."""
@@ -49,9 +53,16 @@ class LogicManager:
         return {"score": score, "priority": self.priority_for(score)}
 
     def evaluate(self, record):
-        """Return score, priority, reasons, and exposure-aware response steps."""
-        outcome = self.route(record)
-        return self.build_evaluation(record, outcome)
+        """Return guidance with the ordered rule trace for the assessment."""
+        rule_outcome = self.rule_outcome(record)
+        outcome = {
+            "score": rule_outcome.score,
+            "priority": self.priority_for(rule_outcome.score),
+        }
+        evaluation = self.build_evaluation(record, outcome)
+        evaluation["matched_rule"] = rule_outcome.rule_name
+        evaluation["trace"] = [step.as_dict() for step in rule_outcome.trace]
+        return evaluation
 
     def build_evaluation(self, record, outcome):
         """Build evaluation guidance from an already calculated route outcome."""
