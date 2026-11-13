@@ -1,133 +1,39 @@
-# For Implementation: Telegram and Feedback Workflow
+# For Implementation: Feedback Store and Correction Workflow
 
-## Purpose
+## Purpose and assignment fit
 
-This note is a handover for completing the assessment trace and feedback work
-through both the CLI and a Telegram bot. It records the current contracts,
-required integration points, and decisions to settle before implementation.
+The feedback workflow is the project's meaningful new feature: users can flag an assessment as incorrect and attach a correction. The Telegram bot remains the selected GUI. Feedback is stored for later human review; it does not change a score or retrain the AI.
 
-## Assignment alignment
+## Current branch and status
 
-- A user review/correction workflow is explicitly listed in the Phase 2 brief as
-  an example of a meaningful new feature.
-- Team decision: the Telegram bot is the selected GUI/advanced feature; the
-  feedback and correction workflow is the meaningful new feature.
-- AI must remain part of every assessment. Feedback must not bypass the AI
-  manager or silently alter the rule-based score.
-- The four manager responsibilities must remain identifiable. CLI and Telegram
-  should be interface adapters that reuse shared application services.
-- The required OOP classes should remain purposeful and be kept in separate
-  files, as instructed for this project.
-- Demonstrate the Telegram bot as an interactive user-facing interface and
-  describe its GUI scope in the engineering report.
+- Work is on `feat/feedback-store`; the existing branch history is retained.
+- The branch includes a merge of the current `origin/main` available when this work began.
+- Assessment IDs, feedback persistence, CLI collection, Telegram callbacks, and offline tests are implemented.
+- Changes are committed in incremental commits. Nothing has been pushed by this work.
 
 ## Current implementation
 
-- `LogicManager.evaluate(record)` returns a JSON-compatible dictionary with
-  `score`, `priority`, `reasons`, `checklist`, `matched_rule`, and `trace`.
-- `trace` is an ordered list of rule checks up to and including the first
-  matching rule. Each item has `rule_name`, `matched`, and `score` (`null` for
-  a non-matching rule).
-- `io_manager.display_result()` renders the trace in the CLI.
-- `main.check_message()` still owns the CLI-oriented orchestration around input,
-  AI, Logic Manager, saving, and display. A Telegram adapter should not call it
-  directly because it collects terminal input and prints to the terminal.
-- New assessments are saved in the strict version-2 report format. The current
-  trace is shown for the live assessment but is not saved in report history.
-- There is no Telegram bot adapter or user-facing correction flow in the
-  repository yet.
-- `app/feedback.py` defines the immutable `Feedback` value object, and
-  `app/feedback_store.py` provides a separate JSON store with validation,
-  assessment-context capture, and filtering by assessment ID. It does not change
-  the version-2 assessment report format or store the original email body.
+- `phishreport/feedback/feedback.py` defines the immutable `Feedback` value object and validates feedback categories, optional comments, corrected priority, and the assessment context.
+- `phishreport/feedback/store.py` persists feedback separately in an atomic JSON file. It stores the assessment ID and snapshot fields (score, priority, reasons, and matched rule when available), without copying the original message into the feedback record.
+- `phishreport/feedback/service.py` creates and validates feedback submissions against the assessment result.
+- `phishreport/assessment.py` assigns each assessment a stable ID and saves new reports as schema version 3. `phishreport/data/validator.py` keeps older v1/v2 reports readable and validates v3 reports, including optional rule trace fields when provided.
+- `phishreport/io/manager.py` collects an optional CLI category, corrected priority, and comment. `phishreport/cli/main.py` submits these through the shared `FeedbackService`.
+- `phishreport/bot/feedback_ui.py` builds Telegram inline keyboards. `phishreport/bot/handlers.py` handles category, corrected-priority, comment, and submit/cancel steps for private chats. The correction button appears only after the report is saved.
+- `phishreport/bot/monitor.py` also puts a correction button on a saved Gmail phishing alert.
+- Both interfaces use `PHISHREPORT_FEEDBACK_PATH`; the default file is `feedback.json` and is ignored by Git.
 
-## Recommended implementation shape
+## User flow
 
-1. Add an `AssessmentService` class in its own file. Move the shared
-   AI-assessment, Logic Manager, and report-save flow behind this service so
-   both CLI and Telegram can submit the same record and receive the same result.
-2. Keep terminal prompts and printing in `io_manager.py`. The CLI should call
-   `AssessmentService` and pass the result to the existing renderer.
-3. Add a `TelegramBot` adapter in its own file. It should collect Telegram
-   message/action input, call `AssessmentService`, and format the JSON-safe
-   result for Telegram. Do not duplicate scoring rules or use terminal I/O from
-   the bot. Keep Telegram credentials in an environment variable such as
-   `TELEGRAM_BOT_TOKEN`; never commit the token or log it.
-4. Integrate the existing `FeedbackStore` through the shared application
-   service. Both interfaces should call the same service/store to submit and
-   retrieve feedback. Store feedback separately so a correction never overwrites
-   its original score or AI result.
-5. Give each new assessment a stable ID so feedback reliably points to the
-   correct report. The current version-2 reports do not have IDs. Recommended:
-   add an ID in a new report schema version, continue reading existing
-   version-2 and legacy reports, and define what the UI does when a user tries
-   to review an older report without an ID.
-6. Decide whether traces should remain live-only or be stored with new reports.
-   If stored, add trace validation and backward-compatible loading to the
-   Data Manager; do not silently change the strict version-2 schema.
+1. The user receives the completed assessment and can choose a feedback category.
+2. For an incorrect priority, the user selects the corrected priority.
+3. The user may send a short comment or submit without one.
+4. The system stores the feedback linked to the saved assessment. The original assessment remains unchanged.
 
-## Feedback record and flow
+Supported categories are false positive, false negative, incorrect priority, incorrect explanation, application bug, usability issue, and other.
 
-The current store accepts `false_positive`, `false_negative`,
-`incorrect_priority`, `incorrect_explanation`, `application_bug`,
-`usability_issue`, and `other`. Each feedback entry records its own ID, the
-assessment ID, an optional comment or corrected priority, and a small
-assessment snapshot (score, priority, reasons, and matched rule). It deliberately
-does not store the message or update the original report. The assessment ID
-must be supplied by the caller; the current CLI does not create one yet.
+## Scope and remaining review
 
-Suggested correction flow for the next implementation step:
-
-1. After showing a completed assessment, offer “Looks right” and “Suggest a
-   correction.” A positive response can be acknowledged without creating a
-   correction record unless the team wants agreement-rate analytics.
-2. If a correction is selected, collect one category from the store's supported
-   choices, then optionally collect the suggested priority and a short comment.
-   Keep this interaction brief in both CLI prompts and Telegram buttons/replies.
-3. Pass the active assessment ID and result snapshot to the shared application
-   service, which submits one `Feedback` record. Confirm the submission and keep
-   displaying the original result unchanged.
-4. Add a separate feedback-triage policy for review urgency. Base it on the
-   feedback category and assessment context, but keep “feedback urgency” distinct
-   from the email's assessment priority. For example, suspected false negatives
-   and assessment-blocking defects should reach reviewers before cosmetic
-   explanation suggestions. Agree on the exact rules with the team and cover
-   them with table-driven tests.
-5. Let a human review corrections and mark them reviewed/resolved in a later
-   step. Do not automatically change past scores or train/override the AI from
-   unreviewed feedback.
-
-The CLI and Telegram flows should collect equivalent feedback and use the same
-service and store. The Telegram adapter should associate feedback with the
-Telegram user ID only if the team needs that attribution, and should avoid
-collecting extra personal information.
-
-## Suggested file and test map
-
-- New `app/assessment_service.py`: shared assessment orchestration class.
-- `app/feedback.py`: immutable feedback value object.
-- `app/feedback_store.py`: feedback persistence class.
-- New `app/telegram_bot.py` (or a `telegram` package): Telegram interface
-  adapter; keep each class in its own file.
-- Update `app/main.py` and `app/io_manager.py` for the CLI service and feedback
-  prompts.
-- Update `app/data_manager.py` only if the report ID or trace is added to saved
-  reports; preserve readers for earlier report versions.
-- `tests/test_feedback_store.py`: offline tests for feedback validation and
-  persistence.
-- Add offline tests for both adapter flows, JSON serialization of assessment
-  results, old report compatibility, and the
-  unchanged scoring fixtures. Mock Telegram transport and AI calls; tests must
-  not require live credentials or network access.
-
-## Definition of done
-
-- CLI and Telegram use the same assessment and feedback services.
-- Both interfaces display the same score, priority, reasons, actions, matched
-  rule, and trace for a live assessment.
-- Feedback is persisted and linked to an assessment without changing its
-  original score or result; the current store tests pass.
-- Existing version-2 history remains readable.
-- Offline tests pass locally and in Docker, and CI passes.
-- The report documents the feedback feature and the Telegram bot as the chosen
-  advanced GUI feature.
+- Feedback records retain assessment priority and context for later review. A separate feedback-urgency ranking or review queue has not been defined, so none is inferred here.
+- Feedback does not re-score or overwrite prior reports. Reports without a v3 assessment ID cannot start this linked workflow.
+- Before merging, run the repository Ruff command and regression suite in the project's supported CI environment. On Windows, `tests/bot/test_gmail.py::test_store_keeps_the_password_private_and_round_trips` checks POSIX permission bits and can fail because Windows does not expose those bits the same way; Linux CI is the authoritative environment for that assertion.
+- Update the final project report to describe feedback review/correction as the meaningful feature and the Telegram bot as the GUI/advanced feature.

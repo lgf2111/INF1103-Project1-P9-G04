@@ -9,6 +9,7 @@ from phishreport.ai.errors import AIErrorTranslator
 from phishreport.assessment import AssessmentService
 from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
+from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logging_setup import AppLogging
@@ -61,6 +62,7 @@ class PhishReportApp:
         data_manager,
         env_loader=None,
         error_translator=None,
+        feedback_service=None,
     ):
         self._io_manager = io_manager
         self._ai_manager = ai_manager
@@ -68,6 +70,7 @@ class PhishReportApp:
         self._data_manager = data_manager
         self._env_loader = env_loader or EnvLoader()
         self._error_translator = error_translator or AIErrorTranslator()
+        self._feedback_service = feedback_service
 
     @property
     def _assessment(self):
@@ -79,7 +82,7 @@ class PhishReportApp:
 
         Collect input interactively when record is None; otherwise use the supplied
         record. Stop assessment on handled AI/validation failures. Save the
-        version-2 outcome locally, then display it even if persistence fails.
+        version-3 outcome locally, then display it even if persistence fails.
         """
         if record is None:
             record = self._io_manager.collect_input()
@@ -100,10 +103,12 @@ class PhishReportApp:
             self._io_manager.show_message("Sorry, the check failed: " + str(error))
             return
 
-        # Retain the original message and assessment in the agreed version-2 format.
+        # Retain the original message and assessment with an identifier for feedback.
         report = self._assessment.build_report(record, result)
+        report_saved = False
         try:
             self._data_manager.save(report)
+            report_saved = True
         except (OSError, ValueError):
             AppLogging.log_failure(logger, "Local report save failed")
             self._io_manager.show_message(
@@ -112,6 +117,27 @@ class PhishReportApp:
 
         # A storage failure does not discard an assessment already completed successfully.
         self._io_manager.display_result(result)
+        if report_saved and self._feedback_service is not None:
+            self._collect_feedback(result)
+
+    def _collect_feedback(self, result: dict) -> None:
+        """Store optional user feedback without changing the completed assessment."""
+        feedback = self._io_manager.collect_feedback()
+        if feedback is None:
+            return
+        try:
+            self._feedback_service.submit(
+                assessment_id=result["assessment_id"],
+                assessment_result=result,
+                **feedback,
+            )
+        except (OSError, ValueError):
+            AppLogging.log_failure(logger, "Saving assessment feedback failed")
+            self._io_manager.show_message(
+                "Could not save your feedback. The assessment result is unchanged."
+            )
+            return
+        self._io_manager.show_message("Thank you. Your feedback was saved for review.")
 
     def upload_file(self):
         """Parse uploaded email through the same I/O contract as folder imports."""
@@ -224,6 +250,9 @@ def main():
         ai_manager=AIManager(),
         logic_manager=LogicManager(),
         data_manager=DataManager(create_report_storage()),
+        feedback_service=FeedbackService(
+            FeedbackStore(os.environ.get("PHISHREPORT_FEEDBACK_PATH", "feedback.json"))
+        ),
     )
     app.run()
 

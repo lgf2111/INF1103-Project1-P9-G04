@@ -23,6 +23,7 @@ from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.monitor import EmailMonitor
 from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
+from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
 
@@ -77,14 +78,29 @@ def main() -> int:
 
     data_manager = DataManager(create_report_storage())
     assessment = AssessmentService(AIManager(), LogicManager())
-    manager = TelegramIOManager(data_manager, chat_id, assessment=assessment)
+    feedback_service = FeedbackService(
+        FeedbackStore(os.environ.get("PHISHREPORT_FEEDBACK_PATH", "feedback.json"))
+    )
+    manager = TelegramIOManager(
+        data_manager,
+        chat_id,
+        assessment=assessment,
+        feedback_service=feedback_service,
+    )
     store = AccountStore(os.environ.get("PHISHREPORT_GMAIL_PATH", "gmail_accounts.json"))
     gmail = GmailLinkHandlers(store, manager.is_allowed)
     AppLogging.setup()
 
     async def start_monitor(application: Application) -> None:
         await application.bot.set_my_commands(COMMANDS)
-        monitor = EmailMonitor(application.bot, store, assessment, data_manager, manager.save_lock)
+        monitor = EmailMonitor(
+            application.bot,
+            store,
+            assessment,
+            data_manager,
+            manager.save_lock,
+            feedback_service=feedback_service,
+        )
         application.bot_data["monitor"] = monitor
         application.bot_data["monitor_task"] = asyncio.create_task(monitor.run())
         print(startup_guide(application.bot.username), flush=True)
@@ -110,6 +126,9 @@ def main() -> int:
         application.add_handler(CommandHandler("unlinkgmail", gmail.unlink))
         application.add_handler(
             CallbackQueryHandler(manager.check_connection, pattern=rf"^{CHECK_CONNECTION}\Z")
+        )
+        application.add_handler(
+            CallbackQueryHandler(manager.handle_feedback_callback, pattern=r"^fb:")
         )
         application.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, manager.assess_message)

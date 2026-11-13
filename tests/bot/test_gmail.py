@@ -10,7 +10,8 @@ from phishreport.assessment import AssessmentService
 from phishreport.bot.gmail import AccountStore, EmailSource, LinkedAccount, MailboxError
 from phishreport.bot.gmail_handlers import GmailLinkHandlers
 from phishreport.bot.monitor import EmailMonitor
-from phishreport.data import DataManager
+from phishreport.data import DataManager, JsonReportStorage
+from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.logic import LogicManager
 
 PHISHING = {"suspicious": True, "credential_request": True, "insufficient_context": False}
@@ -135,6 +136,29 @@ def test_a_phishing_email_is_saved_and_alerted_and_marked_handled(tmp_path):
     assert sent["chat_id"] == 1
     assert data.save.call_args.args[0]["channel"] == "email"
     assert store.get(1).last_uid == 9
+
+
+def test_saved_gmail_alert_offers_feedback_for_its_report(tmp_path):
+    account_store = AccountStore(tmp_path / "g.json")
+    account_store.save(LinkedAccount(1, "a@gmail.com", "x", 5))
+    data_manager = DataManager(JsonReportStorage(tmp_path / "reports.json"))
+    feedback_service = FeedbackService(FeedbackStore(tmp_path / "feedback.json"))
+    bot = SimpleNamespace(send_message=AsyncMock())
+    monitor = EmailMonitor(
+        bot,
+        account_store,
+        AssessmentService(Mock(**{"assess.return_value": PHISHING}), LogicManager()),
+        data_manager,
+        asyncio.Lock(),
+        mailbox_factory=lambda address, password: FakeMailbox([(9, RAW)]),
+        feedback_service=feedback_service,
+    )
+
+    asyncio.run(monitor.poll_once())
+
+    [report] = data_manager.load(strict=True)
+    button = bot.send_message.call_args.kwargs["reply_markup"].inline_keyboard[0][0]
+    assert button.callback_data == f"fb:o:{report['assessment_id']}"
 
 
 def test_a_safe_email_is_saved_without_an_alert(tmp_path):

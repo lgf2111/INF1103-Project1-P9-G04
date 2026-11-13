@@ -48,6 +48,25 @@ def test_io_manager_ask_yes_no_reprompts_invalid_input(monkeypatch):
     assert result is True
 
 
+def test_io_manager_collect_feedback_returns_an_assessment_correction(monkeypatch):
+    answers = iter(["yes", "3", "low", "The message was an internal test."])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    feedback = io_manager.collect_feedback()
+
+    assert feedback == {
+        "category": "incorrect_priority",
+        "comment": "The message was an internal test.",
+        "corrected_priority": "LOW",
+    }
+
+
+def test_io_manager_collect_feedback_can_be_skipped(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "no")
+
+    assert io_manager.collect_feedback() is None
+
+
 @pytest.mark.parametrize("choice", ["1", "2", "3", "4", "5", "6"])
 def test_io_manager_main_menu_accepts_valid_choice(monkeypatch, choice):
     monkeypatch.setattr("builtins.input", lambda _: choice)

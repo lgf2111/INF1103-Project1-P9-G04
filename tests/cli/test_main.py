@@ -12,6 +12,7 @@ import pytest
 from phishreport.ai import GroqClient, groq_client
 from phishreport.cli import main, web_upload
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
+from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.logging_setup import AppLogging
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
@@ -110,6 +111,79 @@ def test_cli_app_uses_its_own_managers_for_each_assessment():
     first_saved = first_managers.data.save.call_args.args[0]
     first_shown = first_managers.io.display_result.call_args.args[0]
     assert first_saved["assessment_id"] == first_shown["assessment_id"]
+
+
+def test_cli_stores_optional_feedback_without_changing_the_assessment(tmp_path):
+    record = {"channel": "email", "message": "A fictional message asks for a password."}
+    io_manager = Mock()
+    io_manager.collect_feedback.return_value = {
+        "category": "incorrect_priority",
+        "comment": "This was an internal test message.",
+        "corrected_priority": "LOW",
+    }
+    ai_manager = Mock(**{"assess.return_value": {"suspicious": True}})
+    logic_manager = Mock(
+        **{
+            "evaluate.return_value": {
+                "score": 60,
+                "priority": "MEDIUM",
+                "reasons": ["The message asks for credentials."],
+                "checklist": ["Verify through a trusted channel."],
+            }
+        }
+    )
+    data_manager = DataManager(JsonReportStorage(tmp_path / "reports.json"))
+    feedback_store = FeedbackStore(tmp_path / "feedback.json")
+    app = main.PhishReportApp(
+        io_manager,
+        ai_manager,
+        logic_manager,
+        data_manager,
+        feedback_service=FeedbackService(feedback_store),
+    )
+
+    app.check_message(record)
+
+    [report] = data_manager.load(strict=True)
+    [feedback] = feedback_store.load()
+    assert report["result"]["score"] == 60
+    assert feedback.assessment_id == report["assessment_id"]
+    assert feedback.category == "incorrect_priority"
+    assert feedback.corrected_priority == "LOW"
+    assert feedback.assessment_score == report["result"]["score"]
+    assert "message" not in feedback.to_dict()
+    assert "saved for review" in io_manager.show_message.call_args.args[0]
+
+
+def test_cli_does_not_offer_feedback_when_the_report_could_not_be_saved():
+    io_manager = Mock()
+    ai_manager = Mock(**{"assess.return_value": {"suspicious": True}})
+    logic_manager = Mock(
+        **{
+            "evaluate.return_value": {
+                "score": 60,
+                "priority": "MEDIUM",
+                "reasons": ["The message asks for credentials."],
+                "checklist": [],
+            }
+        }
+    )
+    data_manager = Mock()
+    data_manager.save.side_effect = OSError("disk full")
+    feedback_service = Mock()
+    app = main.PhishReportApp(
+        io_manager,
+        ai_manager,
+        logic_manager,
+        data_manager,
+        feedback_service=feedback_service,
+    )
+
+    app.check_message({"channel": "email", "message": "A fictional message."})
+
+    io_manager.display_result.assert_called_once()
+    io_manager.collect_feedback.assert_not_called()
+    feedback_service.submit.assert_not_called()
 
 
 @pytest.fixture
