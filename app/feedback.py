@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from datetime import datetime
 
-
 FEEDBACK_CATEGORIES = frozenset(
     {
         "false_positive",
