@@ -240,7 +240,9 @@ class PhishReportApp:
                 self._io_manager.show_message("No saved reports found.")
             while True:
                 choice = self._io_manager.main_menu()
-                if choice == "1":
+                if choice.lstrip().startswith("/"):
+                    self.check_message(command_text=choice)
+                elif choice == "1":
                     # Manual Email, SMS or Chat input.
                     self.check_message()
                 elif choice == "2":
