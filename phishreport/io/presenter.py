@@ -19,6 +19,18 @@ class ReportPresenter:
         self._terminal.write("\n=== Assessment ===")
         self._terminal.write("Priority:", priority)
         self._terminal.write("Rule-based score:", result.get("score", "Unavailable"))
+        if result.get("matched_rule"):
+            self._terminal.write("Matched rule:", result["matched_rule"])
+
+        trace = result.get("trace") or []
+        if trace:
+            self._terminal.write("\nRule evaluation trace:")
+            for step in trace:
+                rule_name = step.get("rule_name", "Unknown rule")
+                status = "matched" if step.get("matched") else "not matched"
+                score = step.get("score")
+                score_text = f" (score: {score})" if score is not None else ""
+                self._terminal.write(f" - {rule_name}: {status}{score_text}")
 
         if result.get("reasons"):
             self._terminal.write("\nReasons:")

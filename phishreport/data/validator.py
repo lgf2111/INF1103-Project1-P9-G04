@@ -85,17 +85,24 @@ class ReportValidator:
         return record
 
     def _validate_result(self, result):
-        """Validate the exact score, priority, reasons and checklist fields.
+        """Validate assessment fields and an optional matched-rule trace.
 
         Return None on success; raise ValueError without changing the result on
-        failure. Empty guidance lists are accepted, but blank list entries are not.
+        failure. Four-field historical results remain valid. Empty guidance lists
+        are accepted, but blank list entries are not.
         """
-        if not isinstance(result, dict) or set(result) != {
+        required_fields = {
             "score",
             "priority",
             "reasons",
             "checklist",
-        }:
+        }
+        trace_fields = {"matched_rule", "trace"}
+        if (
+            not isinstance(result, dict)
+            or not required_fields.issubset(result)
+            or not set(result).issubset(required_fields | trace_fields)
+        ):
             raise ValueError("Invalid stored assessment.")
         if type(result["score"]) is not int or not 0 <= result["score"] <= 100:
             raise ValueError("Invalid stored score.")
@@ -107,6 +114,44 @@ class ReportValidator:
                 not isinstance(value, str) or not value.strip() for value in values
             ):
                 raise ValueError("Invalid stored text lists.")
+        if trace_fields.intersection(result):
+            if not trace_fields.issubset(result):
+                raise ValueError("Invalid stored rule trace.")
+            self._validate_rule_trace(result)
+
+    @staticmethod
+    def _validate_rule_trace(result):
+        """Check that the trace ends at the matching rule and score."""
+        matched_rule = result["matched_rule"]
+        trace = result["trace"]
+        if not isinstance(matched_rule, str) or not matched_rule.strip():
+            raise ValueError("Invalid matched rule.")
+        if not isinstance(trace, list) or not trace:
+            raise ValueError("Invalid stored rule trace.")
+
+        trace_fields = {"rule_name", "matched", "score"}
+        for step in trace:
+            if not isinstance(step, dict) or set(step) != trace_fields:
+                raise ValueError("Invalid stored rule trace step.")
+            if not isinstance(step["rule_name"], str) or not step["rule_name"].strip():
+                raise ValueError("Invalid stored rule name.")
+            if type(step["matched"]) is not bool:
+                raise ValueError("Invalid stored rule match flag.")
+            score = step["score"]
+            if step["matched"]:
+                if type(score) is not int or not 0 <= score <= 100:
+                    raise ValueError("Invalid stored rule score.")
+            elif score is not None:
+                raise ValueError("Non-matching rules cannot have a score.")
+
+        winning_step = trace[-1]
+        if (
+            any(step["matched"] for step in trace[:-1])
+            or not winning_step["matched"]
+            or winning_step["rule_name"] != matched_rule
+            or winning_step["score"] != result["score"]
+        ):
+            raise ValueError("Stored rule trace does not match its assessment.")
 
     def _validate_v2(self, record):
         """Validate the exact version-2 storage contract without changing values."""

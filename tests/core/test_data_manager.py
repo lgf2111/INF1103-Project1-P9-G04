@@ -56,6 +56,23 @@ def test_main_data_manager_instance_shares_adapter_reports(cli, data_manager_sto
     assert data_manager_for(data_manager_storage).load(strict=True) == [first, second]
 
 
+def test_data_manager_saves_and_reloads_rule_trace(data_manager_storage):
+    manager = data_manager_for(data_manager_storage)
+    report = data_manager_report()
+    report["result"].update(
+        {
+            "matched_rule": "DisclosureRule",
+            "trace": [
+                {"rule_name": "DisclosureRule", "matched": True, "score": 90},
+            ],
+        }
+    )
+
+    manager.save(report)
+
+    assert manager.load(strict=True) == [report]
+
+
 @pytest.mark.parametrize("state", ["missing", "empty", "populated"])
 def test_data_manager_startup(cli, data_manager_storage, monkeypatch, state):
     """Load all JSON records before the menu and identify empty history."""
