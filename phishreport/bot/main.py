@@ -20,6 +20,7 @@ from phishreport.assessment import AssessmentService
 from phishreport.bot.gmail import AccountStore
 from phishreport.bot.gmail_handlers import GmailLinkHandlers
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
+from phishreport.bot.messages import EXPOSURE_CALLBACK_PREFIX
 from phishreport.bot.monitor import EmailMonitor
 from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
@@ -131,7 +132,12 @@ def main() -> int:
             CallbackQueryHandler(manager.handle_feedback_callback, pattern=r"^fb:")
         )
         application.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, manager.assess_message)
+            CallbackQueryHandler(
+                manager.exposure_callback, pattern=rf"^{EXPOSURE_CALLBACK_PREFIX}:", block=False
+            )
+        )
+        application.add_handler(
+            MessageHandler(filters.TEXT & ~filters.COMMAND, manager.assess_message, block=False)
         )
         application.add_error_handler(_report_polling_error)
         application.run_polling(allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])

@@ -43,6 +43,7 @@ class ReportPresenter:
 
     def display_record(self, record: dict) -> None:
         """Display a validated saved record, preserving absent historical fields."""
+        is_exposure_report = record.get("schema_version") == 3
         self._terminal.write("\n=== Report details ===")
         channels = {"email": "Email", "sms": "SMS", "chat": "Chat"}
         self._terminal.write("Channel:", channels.get(record.get("channel"), "Unknown"))
@@ -50,16 +51,30 @@ class ReportPresenter:
         self._terminal.write("Message:")
         self._terminal.write(record.get("message") or "No message recorded.")
         self._terminal.write("Included link:", record.get("link") or "None reported")
-        self._terminal.write("Included file:", record.get("file_name") or "None reported")
+        file_label = record.get("file_name") or "None reported"
+        if is_exposure_report and record["has_file"] and record["file_name"] is None:
+            file_label = "Mentioned (filename unknown)"
+        self._terminal.write("Included file:", file_label)
 
-        answers = {True: "Yes", False: "No", None: "Not recorded"}
-        self._terminal.write("Clicked link:", answers[record.get("clicked")])
-        self._terminal.write("Downloaded file:", answers[record.get("downloaded")])
-        submitted = record.get("submitted_category")
+        exposure = record["exposure"] if is_exposure_report else record
+        answers = {
+            True: "Yes", False: "No",
+            None: "Unconfirmed" if is_exposure_report else "Not recorded",
+        }
+        self._terminal.write("Clicked link:", answers[exposure.get("clicked")])
+        self._terminal.write("Downloaded file:", answers[exposure.get("downloaded")])
+        submitted = exposure.get("submitted_category")
         labels = {"password": "Password", "otp": "One-time code"}
-        self._terminal.write(
-            "Information submitted:", labels.get(submitted, submitted or "None reported")
-        )
+        disclosure_label = labels.get(submitted, submitted or "None reported")
+        if is_exposure_report and not exposure["disclosure_answered"]:
+            disclosure_label = "Unconfirmed"
+        self._terminal.write("Information submitted:", disclosure_label)
+        if is_exposure_report and (
+            exposure["clicked"] is None
+            or exposure["downloaded"] is None
+            or not exposure["disclosure_answered"]
+        ):
+            self._terminal.write("Exposure unconfirmed")
 
         self.display_result(record.get("result") or {})
 

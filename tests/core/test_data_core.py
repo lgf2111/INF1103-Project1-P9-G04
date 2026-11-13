@@ -22,7 +22,7 @@ def v2_report():
     }
 
 
-def v3_report():
+def v3_feedback_report():
     """Return a version-3 report with a stable feedback-link identifier."""
     return {
         "schema_version": 3,
@@ -51,6 +51,230 @@ def v2_report_with_trace():
     )
     report["result"]["score"] = 10
     return report
+
+
+def v3_exposure_report():
+    return {
+        "schema_version": 3,
+        "channel": " telegram ",
+        "message": "  Original message\n",
+        "sender": " @original ",
+        "has_link": True,
+        "link": " https://example.test/path ",
+        "has_file": True,
+        "file_name": " notice.pdf ",
+        "exposure": {
+            "clicked": None,
+            "downloaded": None,
+            "submitted_category": None,
+            "disclosure_answered": False,
+        },
+        "result": {"score": 0, "priority": "LOW", "reasons": [], "checklist": []},
+    }
+
+
+@pytest.mark.parametrize(
+    "clicked,downloaded,category,answered",
+    [
+        (None, None, None, False),
+        (False, False, None, True),
+        (True, None, None, False),
+        (None, False, None, True),
+        (False, True, "password", True),
+        (None, None, "otp", True),
+    ],
+    ids=[
+        "unknown",
+        "confirmed-no",
+        "partial-clicked",
+        "partial-downloaded",
+        "password",
+        "otp",
+    ],
+)
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new", "validate_stored"])
+def test_v3_preserves_nullable_exposure_and_original_record(
+    clicked, downloaded, category, answered, method
+):
+    record = v3_exposure_report()
+    record["exposure"] = {
+        "clicked": clicked,
+        "downloaded": downloaded,
+        "submitted_category": category,
+        "disclosure_answered": answered,
+    }
+    before = deepcopy(record)
+    assert getattr(validator(), method)(record) is record
+    assert record == before
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {
+            "sender": None,
+            "has_link": False,
+            "link": None,
+            "has_file": False,
+            "file_name": None,
+        },
+        {"sender": "", "has_file": True, "file_name": None},
+    ],
+    ids=["no-metadata", "generic-attachment-blank-sender"],
+)
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new", "validate_stored"])
+def test_v3_accepts_absent_metadata_and_generic_attachment(metadata, method):
+    record = v3_exposure_report()
+    record.update(metadata)
+    before = deepcopy(record)
+    assert getattr(validator(), method)(record) is record
+    assert record == before
+
+
+@pytest.mark.parametrize("record", [None, [], "report"])
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new", "validate_stored"])
+def test_v3_rejects_nonobject_records(record, method):
+    before = deepcopy(record)
+    with pytest.raises(ValueError):
+        getattr(validator(), method)(record)
+    assert record == before
+
+
+@pytest.mark.parametrize("section", [None, "exposure", "result"])
+@pytest.mark.parametrize("extra", [False, True], ids=["missing", "extra"])
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new", "validate_stored"])
+def test_v3_requires_exact_fields(section, extra, method):
+    record = v3_exposure_report()
+    fields = record if section is None else record[section]
+    if extra:
+        fields["unknown"] = None
+    else:
+        # Removing schema_version intentionally selects historical loading.
+        key = (
+            "channel"
+            if section is None and method == "validate_stored"
+            else next(iter(fields))
+        )
+        del fields[key]
+    before = deepcopy(record)
+    with pytest.raises(ValueError):
+        getattr(validator(), method)(record)
+    assert record == before
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("schema_version", True),
+        ("schema_version", 3.0),
+        ("schema_version", "3"),
+        ("schema_version", 2),
+        ("assessment_id", " "),
+        ("assessment_id", None),
+        ("assessment_id", 1),
+        ("channel", " \n"),
+        ("channel", None),
+        ("message", "\t"),
+        ("message", 1),
+        ("sender", 1),
+        ("link", " "),
+        ("link", 1),
+        ("file_name", "\t"),
+        ("file_name", []),
+        ("has_link", 1),
+        ("has_file", 0),
+        ("has_file", None),
+        ("exposure", []),
+        ("exposure", None),
+        ("result", []),
+        ("has_link", False),
+        ("link", None),
+        ("has_file", False),
+    ],
+)
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new", "validate_stored"])
+def test_v3_rejects_invalid_root_fields_without_mutation(field, value, method):
+    record = v3_exposure_report()
+    record[field] = value
+    before = deepcopy(record)
+    with pytest.raises(ValueError):
+        getattr(validator(), method)(record)
+    assert record == before
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("clicked", 1),
+        ("downloaded", 0),
+        ("clicked", "yes"),
+        ("disclosure_answered", 1),
+        ("disclosure_answered", None),
+        ("submitted_category", "other"),
+        ("submitted_category", True),
+        ("submitted_category", []),
+        ("submitted_category", "password"),
+        ("submitted_category", "otp"),
+    ],
+)
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new", "validate_stored"])
+def test_v3_rejects_invalid_or_unanswered_disclosure_without_mutation(
+    field, value, method
+):
+    record = v3_exposure_report()
+    record["exposure"][field] = value
+    before = deepcopy(record)
+    with pytest.raises(ValueError):
+        getattr(validator(), method)(record)
+    assert record == before
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("score", True),
+        ("score", 101),
+        ("priority", "other"),
+        ("reasons", [" "]),
+        ("checklist", "text"),
+    ],
+)
+@pytest.mark.parametrize("method", ["_validate_v3", "validate_new", "validate_stored"])
+def test_v3_rejects_invalid_assessment_without_mutation(field, value, method):
+    record = v3_exposure_report()
+    record["result"][field] = value
+    before = deepcopy(record)
+    with pytest.raises(ValueError):
+        getattr(validator(), method)(record)
+    assert record == before
+
+
+@pytest.mark.parametrize(
+    "factory", [v2_report, v3_feedback_report, v3_exposure_report]
+)
+@pytest.mark.parametrize("version", [True, False, 2.0, 3.0, "3", None, [], {}, 0, 1, 4])
+def test_new_rejects_invalid_schema_versions_without_mutation(factory, version):
+    record = factory()
+    record["schema_version"] = version
+    before = deepcopy(record)
+    with pytest.raises(ValueError):
+        validator().validate_new(record)
+    assert record == before
+
+
+@pytest.mark.parametrize(
+    "factory", [v2_report, v3_feedback_report, v3_exposure_report]
+)
+@pytest.mark.parametrize(
+    "version", [True, False, 1.0, 2.0, 3.0, "3", None, [], {}, 0, 4]
+)
+def test_stored_rejects_invalid_schema_versions_without_mutation(factory, version):
+    record = factory()
+    record["schema_version"] = version
+    before = deepcopy(record)
+    with pytest.raises(ValueError):
+        validator().validate_stored(record)
+    assert record == before
 
 
 def v1_report():
@@ -99,7 +323,7 @@ def test_v2_returns_original_without_normalizing(method):
 
 @pytest.mark.parametrize("method", ["validate_new", "validate_stored"])
 def test_v3_returns_original_without_normalizing(method):
-    record = v3_report()
+    record = v3_feedback_report()
 
     before = deepcopy(record)
 
@@ -182,7 +406,7 @@ def test_stored_historical_records_keep_missing_and_unknown_fields(record):
 
 @pytest.mark.parametrize("version", [True, False, 2.0, "2", None, 0, 4])
 @pytest.mark.parametrize("method", ["validate_new", "validate_stored"])
-def test_unsupported_or_noninteger_schema_versions(version, method):
+def test_v2_shape_rejects_mismatched_or_noninteger_schema_versions(version, method):
     record = v2_report()
     record["schema_version"] = version
     with pytest.raises(ValueError):
@@ -201,7 +425,7 @@ def test_unsupported_or_noninteger_schema_versions(version, method):
 )
 @pytest.mark.parametrize("method", ["validate_new", "validate_stored"])
 def test_v3_rejects_invalid_identifier_and_text(field, value, method):
-    record = v3_report()
+    record = v3_feedback_report()
     record[field] = value
     before = deepcopy(record)
 
@@ -219,7 +443,7 @@ def test_v3_rejects_invalid_identifier_and_text(field, value, method):
     ],
 )
 def test_v3_requires_rule_identity_and_trace_together(field, value):
-    record = v3_report()
+    record = v3_feedback_report()
     record["result"][field] = value
 
     with pytest.raises(ValueError):
@@ -227,7 +451,7 @@ def test_v3_requires_rule_identity_and_trace_together(field, value):
 
 
 def test_v3_accepts_a_valid_rule_trace():
-    record = v3_report()
+    record = v3_feedback_report()
     record["result"].update(
         {
             "matched_rule": "DisclosureRule",
@@ -238,7 +462,9 @@ def test_v3_accepts_a_valid_rule_trace():
     assert validator().validate_new(record) is record
 
 
-@pytest.mark.parametrize("field", ["schema_version", "channel", "message", "result", "extra"])
+@pytest.mark.parametrize(
+    "field", ["schema_version", "channel", "message", "result", "extra"]
+)
 def test_new_v2_requires_exact_fields(field):
     record = v2_report()
     if field == "extra":
@@ -250,7 +476,8 @@ def test_new_v2_requires_exact_fields(field):
 
 
 @pytest.mark.parametrize(
-    "field,value", [("channel", " \n"), ("message", "\t"), ("channel", None), ("message", 1)]
+    "field,value",
+    [("channel", " \n"), ("message", "\t"), ("channel", None), ("message", 1)],
 )
 @pytest.mark.parametrize("method", ["validate_new", "validate_stored"])
 def test_v2_rejects_blank_or_nonstrings_without_mutation(field, value, method):
@@ -339,9 +566,142 @@ def storage(request, tmp_path):
     return request.param(tmp_path / ("reports" + suffix))
 
 
+@pytest.mark.parametrize(
+    "exposure,score,priority",
+    [
+        (
+            {
+                "clicked": None,
+                "downloaded": None,
+                "submitted_category": None,
+                "disclosure_answered": False,
+            },
+            60,
+            "MEDIUM",
+        ),
+        (
+            {
+                "clicked": False,
+                "downloaded": False,
+                "submitted_category": None,
+                "disclosure_answered": True,
+            },
+            60,
+            "MEDIUM",
+        ),
+        (
+            {
+                "clicked": True,
+                "downloaded": None,
+                "submitted_category": None,
+                "disclosure_answered": False,
+            },
+            80,
+            "HIGH",
+        ),
+        (
+            {
+                "clicked": False,
+                "downloaded": True,
+                "submitted_category": "password",
+                "disclosure_answered": True,
+            },
+            90,
+            "HIGH",
+        ),
+        (
+            {
+                "clicked": None,
+                "downloaded": None,
+                "submitted_category": "otp",
+                "disclosure_answered": True,
+            },
+            90,
+            "HIGH",
+        ),
+    ],
+    ids=["unknown", "confirmed-none", "partial-clicked", "password", "otp"],
+)
+def test_manager_v3_round_trip_preserves_mixed_history_and_independent_reads(
+    storage, exposure, score, priority
+):
+    history = [
+        {"unknown": {"retained": ["保留"]}},
+        summary_report(),
+        v1_report(),
+        v2_report(),
+    ]
+    storage.write_records(history)
+    report = v3_exposure_report()
+    report["exposure"] = exposure
+    report["result"] = {
+        "score": score,
+        "priority": priority,
+        "reasons": [" Original reason "],
+        "checklist": [" Original action "],
+    }
+    before = deepcopy(report)
+    expected = deepcopy([*history, report])
+    subject = manager(storage)
+    subject.save(report)
+    assert report == before
+    assert subject.load(strict=True) == expected
+
+    # A previously saved v3 must not prevent a subsequent legitimate append.
+    following = v2_report()
+    following["message"] = "Next legitimate report"
+    subject.save(following)
+    expected.append(deepcopy(following))
+    loaded = subject.load(strict=True)
+    assert loaded == expected
+    loaded[-2]["exposure"]["clicked"] = "Changed read"
+    loaded[-2]["result"]["reasons"].append("Changed read")
+    loaded[-2]["result"]["checklist"].clear()
+    assert subject.load(strict=True) == expected
+
+
+@pytest.mark.parametrize(
+    "section,field,value",
+    [
+        ("exposure", "clicked", 1),
+        ("exposure", "submitted_category", "password"),
+        ("result", "score", True),
+        (None, "link", None),
+    ],
+)
+def test_manager_corrupt_v3_history_blocks_append_without_changing_storage(
+    storage, section, field, value
+):
+    corrupt = v3_exposure_report()
+    target = corrupt if section is None else corrupt[section]
+    target[field] = value
+    history = [v1_report(), v2_report(), corrupt]
+    storage.write_records(history)
+    before = storage.read_records()
+    json_bytes = (
+        storage._path.read_bytes() if isinstance(storage, JsonReportStorage) else None
+    )
+    subject = manager(storage)
+    with pytest.raises(ValueError):
+        subject.load(strict=True)
+    with pytest.raises(ValueError):
+        subject.save(v3_exposure_report())
+    assert storage.read_records() == before
+    if json_bytes is not None:
+        assert storage._path.read_bytes() == json_bytes
+
+
 def test_storage_contract_round_trip_replacement_and_order(storage):
     assert storage.read_records() == []
-    records = [v2_report(), v3_report(), v1_report(), summary_report(), {}, {"unknown": "保留"}]
+    records = [
+        v2_report(),
+        v3_feedback_report(),
+        v3_exposure_report(),
+        v1_report(),
+        summary_report(),
+        {},
+        {"unknown": "保留"},
+    ]
     before = deepcopy(records)
     storage.write_records(records)
     assert records == before
@@ -376,9 +736,16 @@ def test_storage_interface_is_abstract():
     [
         b'[{"message":"first","message":"second"}]',
         b'[{"nested":{"a":1,"a":2}}]',
-        b'[{"score":NaN}]', b'[{"score":Infinity}]', b'[{"score":-Infinity}]',
-        b'[{"message":"\xff"}]', b'{' , b'{}', b'null', b'[1]', b'[{},null]',
-        pytest.param(b'[' * 2000 + b']' * 2000, id="deep-json"),
+        b'[{"score":NaN}]',
+        b'[{"score":Infinity}]',
+        b'[{"score":-Infinity}]',
+        b'[{"message":"\xff"}]',
+        b"{",
+        b"{}",
+        b"null",
+        b"[1]",
+        b"[{},null]",
+        pytest.param(b"[" * 2000 + b"]" * 2000, id="deep-json"),
     ],
 )
 def test_json_rejects_malformed_containers_without_changing_bytes(tmp_path, content):
@@ -407,7 +774,9 @@ def test_json_read_permission_error_propagates(tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize("stage", ["dump", "flush", "fsync", "replace"])
-def test_json_write_failure_preserves_bytes_and_cleans_temporary(tmp_path, monkeypatch, stage):
+def test_json_write_failure_preserves_bytes_and_cleans_temporary(
+    tmp_path, monkeypatch, stage
+):
     path = tmp_path / "reports.json"
     path.write_bytes(b"[{}]\n")
     backend = json_storage(path)
@@ -510,7 +879,9 @@ def test_json_successful_replace_needs_no_cleanup(tmp_path, monkeypatch):
 
 
 def manager(storage=None, validator=None):
-    return import_module("phishreport.data").DataManager(storage=storage, validator=validator)
+    return import_module("phishreport.data").DataManager(
+        storage=storage, validator=validator
+    )
 
 
 def test_manager_saves_v2_and_appends_mixed_history_unchanged(storage):
@@ -697,7 +1068,9 @@ def test_manager_defaults_follow_current_directory(tmp_path, monkeypatch):
 def test_data_core_exports_storage_and_validator_contracts():
     package = import_module("phishreport.data")
     assert package.ReportValidator is type(validator())
-    assert package.ReportStorage is import_module("phishreport.data.storage").ReportStorage
+    assert (
+        package.ReportStorage is import_module("phishreport.data.storage").ReportStorage
+    )
     json_storage = import_module("phishreport.data.json_storage")
     assert package.JsonReportStorage is json_storage.JsonReportStorage
 
@@ -711,7 +1084,9 @@ def test_class_shares_mixed_history_and_query(tmp_path):
     subject.save(v2_report())
     expected = [*history, v2_report()]
     assert subject.load(strict=True) == expected
-    assert subject.query(lambda record: record.get("schema_version") == 2) == [v2_report()]
+    assert subject.query(lambda record: record.get("schema_version") == 2) == [
+        v2_report()
+    ]
 
 
 def test_default_storage_uses_current_directory(tmp_path, monkeypatch):
@@ -728,7 +1103,7 @@ def test_default_storage_uses_current_directory(tmp_path, monkeypatch):
     assert not (second / "reports.json").exists()
 
 
-@pytest.mark.parametrize("content", [b'{broken', b'[{"score":true}]'])
+@pytest.mark.parametrize("content", [b"{broken", b'[{"score":true}]'])
 def test_class_error_handling_preserves_history(tmp_path, content):
     path = tmp_path / "reports.json"
     path.write_bytes(content)

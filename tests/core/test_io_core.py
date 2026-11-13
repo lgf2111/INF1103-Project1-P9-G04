@@ -1,4 +1,5 @@
 import os
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -94,6 +95,178 @@ def test_report_presenter_shortens_only_the_history_preview():
         "   0123456789 0123456789 0123456789 0123456789 012...",
     ]
     assert record == {"channel": "chat", "message": message, "priority": "review", "score": 0}
+
+
+@pytest.fixture
+def exposure_record():
+    return {
+        "schema_version": 3,
+        "channel": "chat",
+        "sender": " @original ",
+        "message": "  Original message\nKeep this text.  ",
+        "has_link": True,
+        "link": "https://example.test/verify?ref=original",
+        "has_file": True,
+        "file_name": "notice.pdf",
+        "exposure": {
+            "clicked": None,
+            "downloaded": None,
+            "submitted_category": None,
+            "disclosure_answered": False,
+        },
+        "result": {
+            "score": 60,
+            "priority": "MEDIUM",
+            "reasons": ["Saved reason."],
+            "checklist": ["Saved recommendation."],
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "clicked,downloaded,category,answered,score,priority,expected,unconfirmed",
+    [
+        (None, None, None, False, 60, "MEDIUM",
+         ["Unconfirmed", "Unconfirmed", "Unconfirmed"], True),
+        (False, False, None, True, 60, "MEDIUM",
+         ["No", "No", "None reported"], False),
+        (True, None, None, False, 80, "HIGH",
+         ["Yes", "Unconfirmed", "Unconfirmed"], True),
+        (None, True, "otp", True, 90, "HIGH",
+         ["Unconfirmed", "Yes", "One-time code"], True),
+        (True, False, "password", True, 90, "HIGH",
+         ["Yes", "No", "Password"], False),
+        (False, True, None, False, 80, "HIGH",
+         ["No", "Yes", "Unconfirmed"], True),
+    ],
+    ids=["unknown", "confirmed-none", "partial-clicked", "partial-otp", "password",
+         "unanswered-disclosure"],
+)
+def test_display_record_preserves_v3_exposure_and_saved_assessment(
+    exposure_record, clicked, downloaded, category, answered, score, priority,
+    expected, unconfirmed,
+):
+    from phishreport.io import ReportPresenter
+
+    record = exposure_record
+    record["exposure"] = {
+        "clicked": clicked,
+        "downloaded": downloaded,
+        "submitted_category": category,
+        "disclosure_answered": answered,
+    }
+    record["result"].update(score=score, priority=priority)
+    before = deepcopy(record)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_record(record)
+
+    assert terminal.lines[:7] == [
+        "\n=== Report details ===", "Channel: Chat", "Sender:  @original ", "Message:",
+        "  Original message\nKeep this text.  ",
+        "Included link: https://example.test/verify?ref=original", "Included file: notice.pdf",
+    ]
+    assert terminal.lines[7:10] == [
+        f"Clicked link: {expected[0]}", f"Downloaded file: {expected[1]}",
+        f"Information submitted: {expected[2]}",
+    ]
+    assert ("Exposure unconfirmed" in terminal.lines) is unconfirmed
+    assert terminal.lines[-7:] == [
+        "\n=== Assessment ===", f"Priority: {priority.title()}", f"Rule-based score: {score}",
+        "\nReasons:", " - Saved reason.", "\nRecommended actions:",
+        "1. Saved recommendation.",
+    ]
+    assert record == before
+
+
+@pytest.mark.parametrize(
+    "has_link,link,has_file,file_name,expected_link,expected_file",
+    [
+        (True, "https://example.test/path?a=1", True, None,
+         "https://example.test/path?a=1", "Mentioned (filename unknown)"),
+        (False, None, False, None, "None reported", "None reported"),
+    ],
+    ids=["extracted-link-generic-file", "no-link-or-file"],
+)
+def test_display_record_v3_describes_metadata_without_inventing_attachments(
+    exposure_record, has_link, link, has_file, file_name, expected_link, expected_file,
+):
+    from phishreport.io import ReportPresenter
+
+    exposure_record.update(has_link=has_link, link=link, has_file=has_file, file_name=file_name)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_record(exposure_record)
+
+    assert terminal.lines[5:7] == [
+        f"Included link: {expected_link}", f"Included file: {expected_file}",
+    ]
+
+
+@pytest.mark.parametrize("version", [None, 1, 2], ids=["unversioned", "v1", "v2"])
+def test_display_record_preserves_exact_historical_rendering(version):
+    from phishreport.io import ReportPresenter
+
+    record = {
+        "channel": "sms", "message": "Original message",
+        "result": {"score": 0, "priority": "LOW", "reasons": [], "checklist": []},
+    }
+    if version is not None:
+        record["schema_version"] = version
+    if version != 2:
+        record.update(sender="Original sender", link="https://example.test/old",
+                      file_name="old.pdf", clicked=True, downloaded=False,
+                      submitted_category="otp", has_link=True, has_file=True)
+    before = deepcopy(record)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_record(record)
+
+    assert terminal.lines == [
+        "\n=== Report details ===", "Channel: SMS",
+        "Sender: Unknown" if version == 2 else "Sender: Original sender",
+        "Message:", "Original message",
+        "Included link: None reported" if version == 2 else "Included link: https://example.test/old",
+        "Included file: None reported" if version == 2 else "Included file: old.pdf",
+        "Clicked link: Not recorded" if version == 2 else "Clicked link: Yes",
+        "Downloaded file: Not recorded" if version == 2 else "Downloaded file: No",
+        ("Information submitted: None reported" if version == 2
+         else "Information submitted: One-time code"),
+        "\n=== Assessment ===", "Priority: Low", "Rule-based score: 0",
+        "\nRecommended actions:",
+    ]
+    assert record == before
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_saved_v3_partial_exposure_displays_after_reload(tmp_path, backend, exposure_record):
+    from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
+    from phishreport.io import ReportPresenter
+
+    storage_type = JsonReportStorage if backend == "json" else SqliteReportStorage
+    path = tmp_path / f"reports.{backend}"
+    exposure_record["exposure"]["clicked"] = True
+    exposure_record["file_name"] = None
+    exposure_record["result"].update(score=80, priority="HIGH")
+    before = deepcopy(exposure_record)
+    DataManager(storage=storage_type(path)).save(exposure_record)
+
+    loaded = DataManager(storage=storage_type(path)).load(strict=True)
+    terminal = ScriptedTerminal()
+    ReportPresenter(terminal).display_record(loaded[0])
+
+    assert "Clicked link: Yes" in terminal.lines
+    assert "Downloaded file: Unconfirmed" in terminal.lines
+    assert "Information submitted: Unconfirmed" in terminal.lines
+    assert "Exposure unconfirmed" in terminal.lines
+    assert "Included link: https://example.test/verify?ref=original" in terminal.lines
+    assert "Included file: Mentioned (filename unknown)" in terminal.lines
+    assert "Priority: High" in terminal.lines
+    assert "Rule-based score: 80" in terminal.lines
+    assert "Sender:  @original " in terminal.lines
+    assert "  Original message\nKeep this text.  " in terminal.lines
+    assert loaded == [before]
+    assert exposure_record == before
 
 
 def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, monkeypatch):

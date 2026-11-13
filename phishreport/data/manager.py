@@ -23,7 +23,7 @@ class DataManager:
         self._validator = ReportValidator() if validator is None else validator
 
     def save(self, record: dict) -> None:
-        """Append a new v2 report only after validating the complete history.
+        """Append a new v2 or v3 report after validating the complete history.
 
         Validation and storage failures propagate without retrying. Storage
         replacement provides single-process semantics, not concurrent writes.

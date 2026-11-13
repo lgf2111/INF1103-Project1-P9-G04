@@ -33,11 +33,14 @@ class ReportValidator:
 
     def validate_new(self, record: dict) -> dict:
         """Return an unchanged valid v2 or v3 report, or raise ValueError."""
-        if isinstance(record, dict) and record.get("schema_version") == 2:
-            return self._validate_v2(record)
-        if isinstance(record, dict) and record.get("schema_version") == 3:
+        if not isinstance(record, dict):
+            raise ValueError("New reports must be objects.")
+        version = record.get("schema_version")
+        if type(version) is not int or version not in (2, 3):
+            raise ValueError("Unsupported new report version.")
+        if version == 3:
             return self._validate_v3(record)
-        raise ValueError("New reports must use schema version 2 or 3.")
+        return self._validate_v2(record)
 
     def validate_stored(self, record: dict) -> dict:
         """Validate supported history without inventing or normalizing data."""
@@ -52,10 +55,10 @@ class ReportValidator:
             or record["schema_version"] not in (1, 2, 3)
         ):
             raise ValueError("Unsupported report version.")
-        if record["schema_version"] == 2:
-            return self._validate_v2(record)
         if record["schema_version"] == 3:
             return self._validate_v3(record)
+        if record["schema_version"] == 2:
+            return self._validate_v2(record)
         return self._validate_v1(record)
 
     def _validate_summary(self, record):
@@ -181,28 +184,72 @@ class ReportValidator:
         self._validate_result(record["result"], allow_rule_trace=True)
         return record
 
-    def _validate_v3(self, record):
-        """Validate the feedback-link report contract without changing values."""
-        if not isinstance(record, dict) or set(record) != {
-            "schema_version",
-            "assessment_id",
-            "channel",
-            "message",
-            "result",
-        }:
-            raise ValueError("Version-3 reports must contain the agreed identifier and fields.")
-        if type(record["schema_version"]) is not int or record["schema_version"] != 3:
-            raise ValueError("New reports must use schema version 3.")
-        assessment_id = record["assessment_id"]
+    def _validate_v3(self, record: dict) -> dict:
+        """Validate feedback-linked or exposure reports without changing values.
+
+        The ten-field exposure form remains readable for existing reports. New
+        exposure reports also carry an assessment ID so users can leave feedback.
+        """
         if (
-            not isinstance(assessment_id, str)
-            or not assessment_id.strip()
-            or len(assessment_id) > 100
+            not isinstance(record, dict)
+            or type(record.get("schema_version")) is not int
+            or record["schema_version"] != 3
         ):
-            raise ValueError("Invalid assessment identifier.")
+            raise ValueError("Version-3 reports must use schema version 3.")
+        exposure_fields = {
+            "schema_version", "channel", "message", "result", "sender",
+            "has_link", "link", "has_file", "file_name", "exposure",
+        }
+        feedback_fields = {
+            "schema_version", "assessment_id", "channel", "message", "result",
+        }
+        fields = set(record)
+        is_exposure = fields in (exposure_fields, exposure_fields | {"assessment_id"})
+        if not is_exposure and fields != feedback_fields:
+            raise ValueError("Version-3 reports must match a supported report shape.")
+        if "assessment_id" in record:
+            assessment_id = record["assessment_id"]
+            if (
+                not isinstance(assessment_id, str)
+                or not assessment_id.strip()
+                or len(assessment_id) > 100
+            ):
+                raise ValueError("Invalid assessment identifier.")
         for key in ("channel", "message"):
             if not isinstance(record[key], str) or not record[key].strip():
                 raise ValueError("Invalid report text: " + key)
+        if not is_exposure:
+            self._validate_result(record["result"], allow_rule_trace=True)
+            return record
+
+        if record["sender"] is not None and not isinstance(record["sender"], str):
+            raise ValueError("Invalid report sender.")
+        for key in ("link", "file_name"):
+            value = record[key]
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError("Invalid report metadata: " + key)
+        for key in ("has_link", "has_file"):
+            if type(record[key]) is not bool:
+                raise ValueError("Invalid report metadata flag: " + key)
+        if record["has_link"] != (record["link"] is not None):
+            raise ValueError("Report link and flag must agree.")
+        if record["file_name"] is not None and not record["has_file"]:
+            raise ValueError("A report filename requires a file clue.")
+
+        exposure = record["exposure"]
+        if not isinstance(exposure, dict) or set(exposure) != {
+            "clicked", "downloaded", "submitted_category", "disclosure_answered",
+        }:
+            raise ValueError("Invalid report exposure fields.")
+        for key in ("clicked", "downloaded"):
+            if exposure[key] is not None and type(exposure[key]) is not bool:
+                raise ValueError("Invalid exposure action: " + key)
+        if type(exposure["disclosure_answered"]) is not bool:
+            raise ValueError("Invalid disclosure answer flag.")
+        if exposure["submitted_category"] not in (None, "password", "otp"):
+            raise ValueError("Invalid submitted category.")
+        if not exposure["disclosure_answered"] and exposure["submitted_category"] is not None:
+            raise ValueError("Unanswered disclosure must have no submitted category.")
         self._validate_result(record["result"], allow_rule_trace=True)
         return record
 

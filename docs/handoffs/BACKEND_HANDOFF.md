@@ -1,89 +1,127 @@
 # Backend handoff for Telegram
 
-The CLI and Telegram launcher run the shared Python managers in their own
-application process. Telegram currently calls `DataManager.load(strict=True)`
-for its connection check. Keep the CLI usable while extracting the shared
-assessment workflow from its terminal prompts and presentation.
+The CLI and Telegram launchers compose shared Python managers in their own
+processes. This is an in-process API, with no HTTP backend. The
+[Telegram run guide](../../README.md#telegram-bot) covers setup, exposure questions
+and the isolated-history demo. `/start`, connection checks and Gmail commands
+remain available; saved-report browsing and summaries use the CLI.
 
-The assessment and report contracts below are proposals for the next
-milestones. See the [Telegram run guide](../../README.md#telegram-connection-mvp)
-for the implemented connection check.
+## Implemented assessment boundary
 
-## In-process assessment service needed by the GUI (proposed)
+`phishreport.assessment.AssessmentService` accepts record dictionaries containing
+`channel`, `sender`, `message`, `has_link`, `link`, `has_file`, `file_name`,
+`clicked`, `downloaded`, and `submitted_category`. The shared logic validates the
+input and AI findings. `ChatRecordBuilder.build(text, sender=None)` creates a
+`chat` record and preserves the original message. It extracts the first supported
+HTTP/HTTPS/www URL and filename clue, excluding filenames inside URLs/email
+addresses. An attachment mention may give `has_file=True`, `file_name=None`.
+These are textual clues: no URL is fetched, no attachment is inspected, and no
+interaction is inferred. The current Telegram handler calls the builder without
+a sender. Initial scoring uses false interaction flags while session answers
+remain explicitly unknown.
 
-The frontend needs a typed Python service boundary for assessment. It must not
-call the CLI's interactive `check_message()` flow: that flow prompts on stdin
-and mixes application work with terminal presentation. Extract the workflow
-into reusable functions under `phishreport/` (for example `phishreport/services/`) and call
-them directly from the Telegram process. Keep Telegram and terminal I/O out
-of the service. Run slow AI or file operations off the bot's event loop.
+- `assess(record) -> dict`: existing one-AI-call assessment used by CLI/Gmail.
+- `assess_with_findings(record) -> AssessmentSnapshot`: one AI call; returns
+  independent `findings` and `result` dictionaries, retaining findings for Telegram.
+- `rescore(record, findings) -> dict`: logic only, with independent working copies;
+  explicit retained findings replace any stale `record["ai"]`. No AI call.
+- `build_report(record, result) -> dict`: constructs the four-field v2 report
+  (`schema_version`, `channel`, `message`, `result`) used by CLI/Gmail.
+- `build_exposure_report(record, result, exposure) -> dict`: constructs an
+  independent v3 report, selecting only the fields below. It performs no scoring
+  or validation; `DataManager.save` validates before writing.
 
-### Assess a message
+Here, one AI call means one initial AIManager assessment operation; existing
+provider retries/fallback may make multiple HTTP attempts. Answer changes and
+completed-save retries do not request fresh findings.
 
-Agree on a typed Python input model. An illustrative shape is:
+A result has exactly `score` (integer 0–100), `priority` (`LOW`, `MEDIUM`, `HIGH`),
+`reasons` and `checklist` (lists of nonblank strings, which may be empty). Scores
+are response priorities, not probabilities. Valid AI findings are required even
+when the user reports disclosure; findings are not bypassed to manufacture HIGH.
 
-```python
-AssessmentRequest(
-    channel="email",
-    message="Please review this unusual payment request.",
-    sender="billing@example.test",
-    has_link=True,
-    link="https://example.test/pay",
-    has_file=False,
-    file_name=None,
-    clicked=False,
-    downloaded=False,
-    submitted_category=None,
-)
+## Completed v3 report
+
+This JSON example shows the exact ten top-level fields and four exposure fields:
+
+```json
+{
+  "schema_version": 3,
+  "channel": "chat",
+  "message": "Please verify at https://example.test/account",
+  "result": {
+    "score": 80,
+    "priority": "HIGH",
+    "reasons": ["Suspicious message with a reported link click."],
+    "checklist": ["Contact the organisation through a known official channel."]
+  },
+  "sender": null,
+  "has_link": true,
+  "link": "https://example.test/account",
+  "has_file": false,
+  "file_name": null,
+  "exposure": {
+    "clicked": true,
+    "downloaded": false,
+    "submitted_category": null,
+    "disclosure_answered": false
+  }
+}
 ```
 
-The service may use a dataclass or another existing project convention; this
-is a contract example, not a required class name. `channel` is `email`,
-`sms`, or `chat`; `sender` is optional. `link` and
-`file_name` are optional and only meaningful when the corresponding
-`has_link`/`has_file` value is true. Ask the user about clicks/downloads only
-when applicable and transmit the answers explicitly. `submitted_category` is
-`password`, `otp`, or `null` after the user answers the question. The backend
-must reject contradictory or malformed combinations rather than silently
-rewriting the user's answers.
+`clicked` and `downloaded` are boolean or `null`: null means unanswered, false
+means explicitly no. `submitted_category` is `null`, `"password"` or `"otp"`.
+Null plus `disclosure_answered=false` is unknown; null plus true is confirmed no
+disclosure. A category with false is invalid. `has_link` must agree with a
+non-null link; a non-null filename requires `has_file=true`, while a generic file
+mention may have no filename. The v3 validator rejects extra/missing fields,
+invalid types and inconsistent combinations without changing the report.
 
-Return a validated report/result object using the existing domain fields:
+Only confirmed True values project into scoring and exposure counts. Unanswered
+fields display **Unconfirmed**, and any unanswered question adds **Exposure
+unconfirmed**. Cached AI findings are not persisted. `ReportValidator` accepts
+new v2/v3 reports and loads supported unversioned, v1, v2 and v3 history without
+reassessing or rewriting it. CLI history/presentation and summaries understand v3; existing
+CLI/Gmail assessment output remains v2.
 
-```python
-AssessmentResult(
-    score=45,
-    priority="MEDIUM",
-    reasons=["Example explanation from the assessment engine."],
-    checklist=["Verify the request using a known official contact method."],
-)
-```
+## Telegram lifecycle and callback ownership
 
-These names illustrate the contract; reuse existing model types where
-available. The result fields match the existing domain contract: integer `score`
-(0–100), `priority` (`LOW`, `MEDIUM`, or `HIGH`), and arrays of non-blank
-strings `reasons` and `checklist` (the arrays themselves may be empty). The
-score is a rule-based response-priority score, not a probability that the
-message is malicious. Do not make the frontend infer a result from a partial
-response.
+The initial reply is provisional and unsaved. One keyboard presents interaction
+choices **Clicked link**, **Downloaded file**, **Both**, **Neither** and disclosure
+choices **Password**, **One-time code**, **Neither password nor code**. Answer
+changes rescore retained findings only. **Finish and save** and **Skip unanswered**
+both freeze the current answers/result, preserving partial answers and unknowns.
+Only finalization writes. A failed write leaves the completed snapshot available
+for **Retry saving**, without another AI call. Success is announced only after
+storage confirms it; a later Telegram edit failure does not undo saved state.
 
-The GUI should show an in-progress state, prevent duplicate submissions, and
-remain responsive. Define validation/provider error types, timeouts, progress
-reporting, and whether an in-flight call can be cancelled. Do not have a
-worker send chat messages directly. Return results or errors to the handler
-so the Telegram I/O manager owns presentation. If retries can create duplicate saved reports, define
-how the service avoids that.
+`ExposureSession` binds an opaque token to originating chat/user/message IDs.
+Callbacks must also match the bot's question-reply message ID. The handler parses
+only the `exposure:<token>:<action>` namespace, acknowledges first, then checks
+private-chat authorization, token and ownership. Source delivery deduplication
+uses `(chat, user, message)` while cached; distinct source messages with identical
+text remain distinct assessments. Failed reply delivery retains its snapshot for
+redelivery without another AI call.
 
-### Report history (proposed, required only if Reports is enabled)
+Unfinished sessions expire after 30 minutes using monotonic time and lazy cleanup,
+or disappear unsaved on restart. Completed unsaved reports survive the pending
+timeout while the process lives. The cache limit is 1000 sessions: new sources may
+evict old unlocked saved sessions, but active pending, locked and completed
+unsaved sessions are retained; full active capacity returns a busy reply before
+AI work. Saved sessions can expire too, so replay protection lasts only while
+state is retained. Restart loses in-memory state, including unsaved completions.
 
-For the private bot, use local persistence through reusable data
-services. Agree on Python functions to list, load, and optionally delete
-reports, along with stable identifiers and timestamps if needed. The GUI
-should use the DataManager for history access and validation.
-
-Define ordering, missing/deleted record behavior, and whether a successful
-assessment is automatically saved. The existing CLI's local `reports.json`
-format has no stable ID or timestamp; preserve compatibility or migrate it
-deliberately rather than making the GUI assume a new schema.
+Message and exposure callback registrations use `block=False`, without changing
+global update concurrency or Gmail ordering. AI/storage run off the event loop;
+handlers never await a future answer. The initial-message lock serializes source
+assessment/delivery separately from callback saves. A per-session lock serializes
+answer changes/finalization and rendering. The save helper owns that lock; callers
+must not already hold it. The shared save lock also serializes Gmail report writes.
+Cancellation while waiting for the save lock starts no write; after a write starts,
+the helper shields/waits for its outcome while retaining locks and records success
+before propagating cancellation. Process termination cannot guarantee this outcome.
+Repeated finalization uses the cached report and saved flag; this is in-process
+deduplication, not durable distributed exactly-once delivery.
 
 ### Implemented report storage
 
@@ -123,55 +161,38 @@ Run it alongside `test_sqlite_storage.py`, `test_storage_factory.py` and
 offline Docker run and unprivileged POSIX permission checks before recording
 those checks as passed.
 
-### Errors and validation
+## Actual errors and input limits
 
-Use typed service errors with a stable code, safe message, and optional
-field-specific details. The frontend needs to distinguish:
+The service propagates standard exceptions: `ValueError` for invalid input or
+AI output, `RuntimeError` when the AI cannot complete, and `OSError` for storage
+operations. It defines no typed error-code protocol. AI failures produce no
+snapshot or fallback LOW result. Telegram translates provider RuntimeErrors with
+`AIErrorTranslator`; initial ValueErrors produce a failed-check reply. Callback
+ValueError/RuntimeError/OSError receive generic update/retry wording, with the
+completed-unsaved formatter showing Retry saving after a failed write.
+`DataManager.load(strict=True)` propagates read/validation failures; default
+`tolerant` load logs a fixed diagnostic and returns `[]`. Saving validates the new
+report and entire strict history before replacement, propagating failures.
 
-- invalid input or field validation;
-- message or email input exceeding a configured limit;
-- AI provider unavailable or timed out;
-- local persistence failure.
+The shared message-text limit is 50,000 characters. CLI `.eml` imports are limited
+to 2 MiB and parse supported text/HTML content, not attachments or embedded images.
+Those import paths and Gmail monitoring are independent of Telegram's text
+exposure-question flow.
 
-Never convert an AI, validation, or storage failure into a LOW result or an
-empty success. Avoid exposing provider details, stack traces, secrets, or
-submitted content in error messages.
+## Reproducible checks and remaining evidence
 
-## Email import and input limits
+Use the focused offline commands and isolated JSON/SQLite demo in the
+[README](../../README.md#check-the-exposure-flow-with-an-isolated-history).
+Offline fixtures mock AI/Telegram; actual `Application.process_update` tests
+exercise dispatch while AI or callback storage is paused. They do not establish
+live provider behavior, a mounted restart, or a remote CI pass.
 
-The existing CLI accepts `.eml` files up to 2 MiB and parses text and HTML
-email content. Attachments and embedded images are outside its analysis scope.
-Reuse the shared parser in-process and pass extracted fields to the assessment
-service. The current message-text limit is 50,000 characters.
-
-## Data handling, privacy, and operations
-
-Before enabling assessment, provide product-approved answers for the frontend
-to show near submission: whether the full message is sent to the AI provider,
-where it is processed, whether it is persisted locally or remotely, who can
-access it, the retention period, and how the user can delete it. Do not
-promise privacy, retention, or deletion behavior that the service does not
-enforce.
-
-- Gate report and assessment handlers on the configured private chat.
-- Keep message bodies, links, passwords, one-time codes, and bot tokens out of logs.
-- Validate channel, lengths, optional sender and link/file metadata, and
-  exposure answers in the service boundary.
-- Apply provider timeouts and bounded input sizes in the local service. Add
-  request rate limits only if an online service is adopted.
-- Return only validated assessment output; do not expose raw model prompts,
-  provider payloads, or internal exception details.
-- Persist reports locally according to an agreed retention policy; support
-  deletion consistently if that feature is provided.
-
-## Frontend integration checklist
-
-1. Agree on the in-process Python service signatures, result types, and typed
-   errors; implement them by reusing existing logic and data managers.
-2. Keep the service independent of Telegram and terminal input/output so both GUI
-   and CLI can call it.
-3. Decide local report persistence and migration behavior before enabling
-   Reports.
-4. Confirm email parsing, input limits, and user-facing data-handling copy.
-5. Test success, validation, timeout, provider outage, persistence failure,
-   and malformed results without live provider calls.
+The existing Telegram-image offline command uses `--network none`,
+`--user 65534:65534`, `--workdir /tmp` and pytest `--rootdir=/app`; see the
+[container instructions](../../README.md#run-docker-with-persistent-reports).
+CI/Docker currently use Python 3.14 while the local target is 3.12. Docker and
+`gh` were unavailable and WSL was not installed at this documentation checkpoint;
+no local container or matching remote CI result was observed. Record an observed
+CI run for the matching pushed revision separately. The prior local full suite
+reported 1630 passed, 18 skipped and the unchanged Windows Gmail `0600` versus
+`0666` permission assertion failure; do not treat it as a clean pass.

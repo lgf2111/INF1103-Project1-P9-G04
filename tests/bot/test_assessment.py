@@ -2,7 +2,6 @@
 
 import asyncio
 import threading
-import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -16,7 +15,7 @@ from phishreport.bot.messages import (
     ChatRecordBuilder,
     ResultFormatter,
 )
-from phishreport.data import DataManager, JsonReportStorage
+from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.logic import LogicManager
 
@@ -24,10 +23,15 @@ ALLOWED_CHAT_ID = 12345
 FINDINGS = {"suspicious": True, "credential_request": True, "insufficient_context": False}
 
 
-def update_with(text, chat_id=ALLOWED_CHAT_ID, chat_type="private"):
+def update_with(text, chat_id=ALLOWED_CHAT_ID, chat_type="private", message_id=100):
     return SimpleNamespace(
         effective_chat=SimpleNamespace(id=chat_id, type=chat_type),
-        effective_message=SimpleNamespace(text=text, reply_text=AsyncMock()),
+        effective_user=SimpleNamespace(id=42),
+        callback_query=None,
+        effective_message=SimpleNamespace(
+            text=text, message_id=message_id,
+            reply_text=AsyncMock(return_value=SimpleNamespace(message_id=message_id + 1000)),
+        ),
     )
 
 
@@ -50,7 +54,7 @@ def callback_with(data, chat_id=ALLOWED_CHAT_ID, chat_type="private"):
     )
 
 
-def test_a_text_message_is_assessed_saved_and_answered():
+def test_a_text_message_gets_provisional_questions_without_initial_save():
     manager, data_manager = build()
     update = update_with("Verify your password now")
 
@@ -63,12 +67,16 @@ def test_a_text_message_is_assessed_saved_and_answered():
     assert "Rule evaluation trace:" in reply
     assert "SuspiciousCredentialRule: matched (score: 60)" in reply
     assert reply.endswith(ResultFormatter.FOOTER)
-    (report,), _ = data_manager.save.call_args
-    assert report["schema_version"] == 3
-    assert report["assessment_id"]
-    assert report["channel"] == "chat"
-    assert report["message"] == "Verify your password now"
-    assert report["result"]["score"] == 60
+    assert "Provisional assessment" in reply
+    assert "Did you click the link / download the file?" in reply
+    assert "Did you enter a password or code?" in reply
+    assert "Exposure unconfirmed" in reply
+    data_manager.save.assert_not_called()
+    data_manager.load.assert_not_called()
+    session, = manager._sessions.values()
+    assert session.record["message"] == "Verify your password now"
+    assert session.reply_message_id == 1100
+    assert update.effective_message.reply_text.call_args.kwargs["reply_markup"] is not None
 
 
 def test_telegram_feedback_flow_saves_a_comment_for_the_original_assessment(tmp_path):
@@ -87,7 +95,10 @@ def test_telegram_feedback_flow_saves_a_comment_for_the_original_assessment(tmp_
         assessment_update = update_with("Verify your password now")
         await manager.assess_message(assessment_update, context)
 
-        keyboard = assessment_update.effective_message.reply_text.call_args.kwargs[
+        session, = manager._sessions.values()
+        save_update = callback_for(session, "finish")
+        await manager.exposure_callback(save_update, context)
+        keyboard = save_update.callback_query.edit_message_text.call_args.kwargs[
             "reply_markup"
         ]
         assert keyboard.inline_keyboard[0][0].callback_data.startswith("fb:o:")
@@ -125,6 +136,8 @@ def test_telegram_feedback_can_submit_a_corrected_priority_without_comment(tmp_p
         )
         context = SimpleNamespace(user_data={})
         await manager.assess_message(update_with("Verify your password now"), context)
+        session, = manager._sessions.values()
+        await manager.exposure_callback(callback_for(session, "finish"), context)
         assessment_id = data_manager.load(strict=True)[0]["assessment_id"]
 
         await manager.handle_feedback_callback(callback_with(f"fb:o:{assessment_id}"), context)
@@ -207,17 +220,32 @@ def test_an_invalid_ai_reply_is_reported_and_nothing_is_saved():
     data_manager.save.assert_not_called()
 
 
-def test_a_save_failure_still_delivers_the_assessment():
-    data_manager = Mock(spec=DataManager)
-    data_manager.save.side_effect = OSError("disk full")
-    manager, _ = build(data_manager=data_manager)
-    update = update_with("hello")
+def callback_for(session, action):
+    update = update_with(None, message_id=session.reply_message_id)
+    update.callback_query = SimpleNamespace(
+        data=f"exposure:{session.token}:{action}",
+        answer=AsyncMock(), edit_message_text=AsyncMock(),
+    )
+    return update
 
-    asyncio.run(manager.assess_message(update, None))
 
-    reply = reply_text(update)
-    assert "Priority: Medium" in reply
-    assert "could not be saved locally" in reply
+def test_a_final_save_failure_can_retry_without_reassessing():
+    manager, data = build()
+    data.save.side_effect = OSError("disk full")
+
+    async def scenario():
+        await manager.assess_message(update_with("hello"), None)
+        session, = manager._sessions.values()
+        await manager.exposure_callback(callback_for(session, "finish"), None)
+        assert session.completed and not session.saved
+        data.save.side_effect = None
+        await manager.exposure_callback(callback_for(session, "retry"), None)
+        assert session.saved
+        assert data.save.call_count == 2
+        assert data.save.call_args.args[0]["schema_version"] == 3
+
+    asyncio.run(scenario())
+    assert manager._assessment._ai_manager.assess.call_count == 1
 
 
 def test_the_blocking_ai_call_runs_off_the_event_loop_thread():
@@ -234,29 +262,229 @@ def test_the_blocking_ai_call_runs_off_the_event_loop_thread():
     assert seen["thread"] is not threading.main_thread()
 
 
-def test_overlapping_saves_take_turns():
-    active = {"now": 0, "peak": 0}
+@pytest.mark.parametrize("action,score", [("clicked", 80), ("downloaded", 80),
+                                         ("password", 90), ("otp", 90), ("skip", 60)])
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_initial_to_final_real_storage_keeps_answers_and_metadata(tmp_path, backend, action, score):
+    storage = (JsonReportStorage(tmp_path / "reports.json") if backend == "json"
+               else SqliteReportStorage(tmp_path / "reports.sqlite3"))
+    data = DataManager(storage)
+    ai = Mock(**{"assess.return_value": FINDINGS})
+    manager, _ = build(ai, data)
+    source = "Verify https://example.test/login and open invoice.pdf"
 
-    def save(report):
-        active["now"] += 1
-        active["peak"] = max(active["peak"], active["now"])
-        time.sleep(0.05)
-        active["now"] -= 1
+    async def scenario():
+        await manager.assess_message(update_with(source), None)
+        assert data.load(strict=True) == []
+        session, = manager._sessions.values()
+        await manager.exposure_callback(callback_for(session, action), None)
+        await manager.exposure_callback(callback_for(session, "finish"), None)
+        await manager.exposure_callback(callback_for(session, "skip"), None)
+        report, = data.load(strict=True)
+        assert report["schema_version"] == 3
+        assert report["assessment_id"]
+        assert report["message"] == source
+        assert report["link"] == "https://example.test/login"
+        assert report["file_name"] == "invoice.pdf"
+        assert report["result"]["score"] == score
+        assert report["result"]["priority"] == ("HIGH" if score >= 80 else "MEDIUM")
+        assert report["exposure"] == {
+            "clicked": True if action == "clicked" else False if action == "downloaded" else None,
+            "downloaded": (
+                True if action == "downloaded" else False if action == "clicked" else None
+            ),
+            "submitted_category": action if action in {"password", "otp"} else None,
+            "disclosure_answered": action in {"password", "otp"},
+        }
 
-    data_manager = Mock(spec=DataManager)
-    data_manager.save.side_effect = save
-    manager, _ = build(data_manager=data_manager)
+    asyncio.run(scenario())
+    ai.assess.assert_called_once()
 
-    async def two_messages():
-        await asyncio.gather(
-            manager.assess_message(update_with("one"), None),
-            manager.assess_message(update_with("two"), None),
+
+@pytest.mark.parametrize("concurrent", [False, True])
+def test_duplicate_source_deliveries_assess_and_reply_once(concurrent):
+    ai = Mock(**{"assess.return_value": FINDINGS})
+    manager, data = build(ai)
+    first, replay = update_with("hello"), update_with("hello")
+
+    async def scenario():
+        if concurrent:
+            await asyncio.gather(manager.assess_message(first, None),
+                                 manager.assess_message(replay, None))
+        else:
+            await manager.assess_message(first, None)
+            await manager.assess_message(replay, None)
+
+    asyncio.run(scenario())
+    ai.assess.assert_called_once()
+    assert (first.effective_message.reply_text.await_count
+            + replay.effective_message.reply_text.await_count) == 1
+    assert len(manager._sessions) == 1
+    data.save.assert_not_called()
+
+
+def test_equal_text_distinct_sources_are_independent_and_capacity_is_bounded():
+    ai = Mock(**{"assess.return_value": FINDINGS})
+    manager, _ = build(ai)
+    manager._session_limit = 2
+
+    async def scenario():
+        await asyncio.gather(*(manager.assess_message(update_with("same", message_id=i), None)
+                               for i in (100, 101)))
+        assert len(manager._sessions) == 2
+        busy = update_with("same", message_id=102)
+        await manager.assess_message(busy, None)
+        assert reply_text(busy) == (
+            "Too many pending assessments. Finish or skip an earlier one, then try again."
+        )
+        assert ai.assess.call_count == 2
+        oldest = min(manager._sessions.values(), key=lambda s: s.created_at)
+        await manager.exposure_callback(callback_for(oldest, "skip"), None)
+        await manager.assess_message(busy, None)
+        assert oldest.token not in manager._sessions
+        assert len(manager._sessions) == 2
+        assert ai.assess.call_count == 3
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("failure", ["error", "cancel", "missing_id", "bool_id"])
+def test_failed_delivery_reuses_cached_assessment(failure):
+    ai = Mock(**{"assess.return_value": FINDINGS})
+    manager, _ = build(ai)
+    incoming = update_with("hello")
+    reply = incoming.effective_message.reply_text
+    if failure in {"error", "cancel"}:
+        reply.side_effect = (
+            OSError("Telegram unavailable") if failure == "error" else asyncio.CancelledError()
+        )
+    else:
+        reply.return_value = (
+            SimpleNamespace() if failure == "missing_id" else SimpleNamespace(message_id=True)
         )
 
-    asyncio.run(two_messages())
+    async def scenario():
+        if failure in {"error", "cancel"}:
+            with pytest.raises(OSError if failure == "error" else asyncio.CancelledError):
+                await manager.assess_message(incoming, None)
+        else:
+            await manager.assess_message(incoming, None)
+        session, = manager._sessions.values()
+        assert session.reply_message_id is None
+        assert not session.lock.locked() and not manager._message_lock.locked()
+        retry = update_with("hello")
+        await manager.assess_message(retry, None)
+        assert session.reply_message_id == 1100
+        assert len(manager._sessions) == 1
 
-    assert data_manager.save.call_count == 2
-    assert active["peak"] == 1
+    asyncio.run(scenario())
+    ai.assess.assert_called_once()
+
+
+@pytest.mark.parametrize("field", ["effective_chat", "effective_user", "effective_message"])
+@pytest.mark.parametrize("value", [None, True, "12345", 1.0])
+def test_malformed_identity_is_ignored_before_authorization(field, value):
+    manager, data = build()
+    update = update_with("hello")
+    setattr(getattr(update, field), "message_id" if field == "effective_message" else "id", value)
+    manager.is_allowed = Mock(side_effect=AssertionError("Malformed update reached authorization"))
+    asyncio.run(manager.assess_message(update, None))
+    update.effective_message.reply_text.assert_not_called()
+    assert not manager._sessions and not manager._source_sessions
+    data.save.assert_not_called()
+
+
+@pytest.mark.parametrize("case", [
+    "missing_chat", "missing_user", "missing_message", "callback", "integer_text", "whitespace",
+])
+def test_malformed_envelopes_are_ignored(case):
+    ai = Mock(**{"assess.return_value": FINDINGS})
+    manager, _ = build(ai)
+    update = update_with("hello")
+    reply = update.effective_message.reply_text
+    if case.startswith("missing_"):
+        delattr(update, "effective_" + case.removeprefix("missing_"))
+    elif case == "callback":
+        update.callback_query = SimpleNamespace()
+    else:
+        update.effective_message.text = 123 if case == "integer_text" else "   "
+    asyncio.run(manager.assess_message(update, None))
+    reply.assert_not_called()
+    ai.assess.assert_not_called()
+    assert not manager._sessions
+
+
+def test_colliding_token_is_regenerated_without_overwriting_existing_session(monkeypatch):
+    manager, _ = build()
+
+    async def scenario():
+        await manager.assess_message(update_with("first"), None)
+        first, = manager._sessions.values()
+        tokens = iter([first.token, "A" * 16])
+        monkeypatch.setattr(
+            "phishreport.bot.exposure.secrets.token_urlsafe", lambda size: next(tokens),
+        )
+        await manager.assess_message(update_with("second", message_id=101), None)
+        assert manager._sessions[first.token] is first
+        assert len(manager._sessions) == 2
+        second = manager._sessions["A" * 16]
+        assert second.record["message"] == "second"
+        assert manager._source_sessions[(ALLOWED_CHAT_ID, 42, 101)] == second.token
+
+    asyncio.run(scenario())
+
+
+def test_expired_pending_source_is_assessed_again():
+    ai = Mock(**{"assess.return_value": FINDINGS})
+    manager, _ = build(ai)
+
+    async def scenario():
+        await manager.assess_message(update_with("hello"), None)
+        old, = manager._sessions.values()
+        old.expires_at = 0
+        await manager.assess_message(update_with("hello"), None)
+        assert old.token not in manager._sessions
+        assert len(manager._sessions) == 1
+
+    asyncio.run(scenario())
+    assert ai.assess.call_count == 2
+
+
+def test_callback_storage_does_not_block_new_assessment_and_saves_serialize():
+    started, release = threading.Event(), threading.Event()
+    reports = []
+
+    def save(report):
+        if not reports:
+            started.set()
+            assert release.wait(5)
+        reports.append(report)
+
+    manager, data = build()
+    data.save.side_effect = save
+
+    async def scenario():
+        await manager.assess_message(update_with("first"), None)
+        first, = manager._sessions.values()
+        saving = asyncio.create_task(manager.exposure_callback(callback_for(first, "skip"), None))
+        try:
+            assert await asyncio.to_thread(started.wait, 3)
+            incoming = update_with("second", message_id=101)
+            await asyncio.wait_for(manager.assess_message(incoming, None), 2)
+            assert "Provisional assessment" in reply_text(incoming)
+            second = next(s for s in manager._sessions.values() if s is not first)
+            second_save = asyncio.create_task(
+                manager.exposure_callback(callback_for(second, "skip"), None)
+            )
+            await asyncio.sleep(0)
+            assert data.save.call_count == 1
+        finally:
+            release.set()
+            await saving
+        await second_save
+        assert len(reports) == 2
+
+    asyncio.run(asyncio.wait_for(scenario(), 8))
 
 
 # --- Helpers ------------------------------------------------------------------------------
