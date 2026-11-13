@@ -31,6 +31,7 @@ from phishreport.data import DataManager
 from phishreport.io.check_command import CheckCommand
 from phishreport.io.commands import CommandRequest, CommandRouter
 from phishreport.io.help_command import HelpCommand
+from phishreport.io.status_command import StatusCommand
 
 CHECK_CONNECTION = "check_connection"
 
@@ -307,9 +308,31 @@ class TelegramIOManager:
                 assess_record=lambda record: self._assessment.assess_with_findings(record),
             )
             catalog = [check]
+            catalog.append(StatusCommand(
+                session_status=lambda request: status_label,
+                report_count=lambda: len(self._data_manager.load(strict=True)),
+            ))
             catalog.append(HelpCommand(catalog))
             router = CommandRouter(catalog)
             command = router.resolve(text)
+            if isinstance(command, StatusCommand):
+                # Snapshot owned live sessions on-loop before the history read.
+                now = time.monotonic()
+                count = sum(
+                    session.chat_id == chat_id and session.user_id == user_id
+                    and not session.completed and not session.saved and session.expires_at > now
+                    for session in self._sessions.values()
+                )
+                status_label = f"Active exposure sessions awaiting answers: {count}"
+                try:
+                    reply = await asyncio.to_thread(
+                        router.route, CommandRequest(text, "telegram"),
+                    )
+                except (OSError, ValueError):
+                    await message.reply_text("Could not read local history. Please try again.")
+                else:
+                    await message.reply_text(reply.text)
+                return
             if isinstance(command, HelpCommand):
                 reply = router.route(CommandRequest(text, "telegram"))
                 await message.reply_text(reply.text)

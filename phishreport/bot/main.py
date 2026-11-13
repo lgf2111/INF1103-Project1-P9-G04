@@ -27,6 +27,7 @@ from phishreport.data.factory import create_report_storage
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io.check_command import CheckCommand
 from phishreport.io.help_command import HelpCommand
+from phishreport.io.status_command import StatusCommand
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
 
@@ -37,6 +38,7 @@ COMMANDS = [
     BotCommand("unlinkgmail", "Unlink Gmail and delete the saved password"),
     BotCommand(CheckCommand.name, CheckCommand.help_text),
     BotCommand(HelpCommand.name, HelpCommand.help_text),
+    BotCommand(StatusCommand.name, StatusCommand.help_text),
 ]
 
 
