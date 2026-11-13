@@ -93,14 +93,47 @@ def test_io_manager_get_sender_allows_blank_input(monkeypatch):
     assert result is None
 
 
+
 def test_io_manager_get_message_reprompts_blank_input(monkeypatch):
-    answers = iter(["", "   ", "Suspicious message"])
+    answers = iter([
+        "",
+        "   ",
+        "END",
+        "Suspicious message",
+        "END"
+    ])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
     result = io_manager.get_message()
 
     assert result == "Suspicious message"
+
+def test_io_manager_collect_input_preserves_five_line_message(monkeypatch):
+    body = [
+        "Subject: Account Verification",
+        "",
+        "Dear Customer,",
+        "Your account requires verification.",
+        "Regards, Support"
+    ]
+
+    answers = iter([
+        "Email",
+        "sender@example.com",
+        *body,
+        "END",
+        "no",
+        "no",
+        "no"
+    ])
+
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    record = io_manager.collect_input()
+
+    assert record["message"] == "\n".join(body)
+    assert record["message"].count("\n") == 4
 
 
 def test_io_manager_get_link_information_reprompts_blank_link(monkeypatch):
@@ -183,17 +216,19 @@ def test_io_manager_collect_user_actions_without_link_or_file(monkeypatch):
 
 def test_io_manager_collect_input_returns_complete_record(monkeypatch):
     answers = iter(
-        [
-            "Email",
-            "update@micr0soft.com",
-            "Download Update.exe immediately.",
-            "no",
-            "yes",
-            "Update.exe",
-            "yes",
-            "no",
-        ]
-    )
+    [
+        "Email",
+        "update@micr0soft.com",
+        "Download Update.exe immediately.",
+        "END",
+        "no",
+        "yes",
+        "Update.exe",
+        "yes",
+        "no",
+    ]
+)
+
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 

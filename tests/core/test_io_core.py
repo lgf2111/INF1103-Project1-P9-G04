@@ -108,7 +108,8 @@ def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, mo
         [
             " EMAIL ",
             " fictional@example.test ",
-            " Verify your account. ",
+            "Verify your account.",
+            "END",
             *exposure_answers,
             "1",
             *exposure_answers,
@@ -145,13 +146,17 @@ def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, mo
     assert terminal.prompts == [
         "Enter channel (Email/SMS/Chat): ",
         "Enter sender information (press Enter if unknown): ",
-        "Enter the suspicious message: ",
+        "Enter the suspicious message: ", "",
         *exposure_prompts,
         "Enter a number to pick a file, or 'c' to cancel: ",
         *exposure_prompts,
         *exposure_prompts,
     ]
-    assert terminal.lines == ["1. message.eml", "Email loaded successfully."]
+    assert terminal.lines == [
+    "Paste your message. Type END on its own line to finish.",
+    "1. message.eml",
+    "Email loaded successfully.",
+]
 
 
 @pytest.mark.parametrize(
