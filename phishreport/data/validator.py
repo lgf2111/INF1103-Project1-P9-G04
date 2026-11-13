@@ -32,7 +32,14 @@ class ReportValidator:
     """Own report schema rules independently of persistence and logging."""
 
     def validate_new(self, record: dict) -> dict:
-        """Return an unchanged valid v2 report, or raise ValueError."""
+        """Return an unchanged valid v2 or v3 report, or raise ValueError."""
+        if not isinstance(record, dict):
+            raise ValueError("New reports must be objects.")
+        version = record.get("schema_version")
+        if type(version) is not int or version not in (2, 3):
+            raise ValueError("Unsupported new report version.")
+        if version == 3:
+            return self._validate_v3(record)
         return self._validate_v2(record)
 
     def validate_stored(self, record: dict) -> dict:
@@ -43,8 +50,10 @@ class ReportValidator:
             if set(record) == REPORT_FIELDS:
                 return self._validate_summary(record)
             return self._validate_legacy(record)
-        if type(record["schema_version"]) is not int or record["schema_version"] not in (1, 2):
+        if type(record["schema_version"]) is not int or record["schema_version"] not in (1, 2, 3):
             raise ValueError("Unsupported report version.")
+        if record["schema_version"] == 3:
+            return self._validate_v3(record)
         if record["schema_version"] == 2:
             return self._validate_v2(record)
         return self._validate_v1(record)
@@ -168,6 +177,53 @@ class ReportValidator:
             if not isinstance(record[key], str) or not record[key].strip():
                 raise ValueError("Invalid report text: " + key)
         # Keep the original message intact; validation never strips or truncates it.
+        self._validate_result(record["result"])
+        return record
+
+    def _validate_v3(self, record: dict) -> dict:
+        """Return an unchanged v3 report with explicit nullable exposure answers.
+
+        Raise ValueError for malformed fields or inconsistent metadata/answers.
+        Validation preserves unknown answers and never reassesses stored results.
+        """
+        if not isinstance(record, dict) or set(record) != {
+            "schema_version", "channel", "message", "result", "sender",
+            "has_link", "link", "has_file", "file_name", "exposure",
+        }:
+            raise ValueError("Version-3 reports must contain exactly the ten agreed fields.")
+        if type(record["schema_version"]) is not int or record["schema_version"] != 3:
+            raise ValueError("Exposure reports must use schema version 3.")
+        for key in ("channel", "message"):
+            if not isinstance(record[key], str) or not record[key].strip():
+                raise ValueError("Invalid report text: " + key)
+        if record["sender"] is not None and not isinstance(record["sender"], str):
+            raise ValueError("Invalid report sender.")
+        for key in ("link", "file_name"):
+            value = record[key]
+            if value is not None and (not isinstance(value, str) or not value.strip()):
+                raise ValueError("Invalid report metadata: " + key)
+        for key in ("has_link", "has_file"):
+            if type(record[key]) is not bool:
+                raise ValueError("Invalid report metadata flag: " + key)
+        if record["has_link"] != (record["link"] is not None):
+            raise ValueError("Report link and flag must agree.")
+        if record["file_name"] is not None and not record["has_file"]:
+            raise ValueError("A report filename requires a file clue.")
+
+        exposure = record["exposure"]
+        if not isinstance(exposure, dict) or set(exposure) != {
+            "clicked", "downloaded", "submitted_category", "disclosure_answered",
+        }:
+            raise ValueError("Invalid report exposure fields.")
+        for key in ("clicked", "downloaded"):
+            if exposure[key] is not None and type(exposure[key]) is not bool:
+                raise ValueError("Invalid exposure action: " + key)
+        if type(exposure["disclosure_answered"]) is not bool:
+            raise ValueError("Invalid disclosure answer flag.")
+        if exposure["submitted_category"] not in (None, "password", "otp"):
+            raise ValueError("Invalid submitted category.")
+        if not exposure["disclosure_answered"] and exposure["submitted_category"] is not None:
+            raise ValueError("Unanswered disclosure must have no submitted category.")
         self._validate_result(record["result"])
         return record
 

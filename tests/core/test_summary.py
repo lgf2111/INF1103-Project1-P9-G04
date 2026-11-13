@@ -1,11 +1,13 @@
 """Report summary: filter criteria, pluggable metrics, presentation and the CLI flow."""
 
+from copy import deepcopy
 from unittest.mock import Mock
 
 import pytest
 
+from phishreport.assessment import AssessmentService
 from phishreport.cli.main import PhishReportApp
-from phishreport.data import DataManager
+from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
 from phishreport.data.storage import ReportStorage
 from phishreport.io import IOManager
 from phishreport.logic import LogicManager, ReportFilter, ReportSummarizer, SummaryMetric
@@ -84,6 +86,139 @@ def test_stored_report_ignores_malformed_values_instead_of_guessing():
     report = StoredReport({"channel": 7, "result": {"score": True, "priority": None}})
 
     assert (report.channel, report.priority, report.score) == (None, None, None)
+
+
+def _exposure_report(clicked=None, downloaded=None, category=None, answered=False):
+    return AssessmentService.build_exposure_report(
+        {"channel": "chat", "message": "Original message", "sender": "@sender",
+         "has_link": True, "link": "https://example.test", "has_file": True,
+         "file_name": None},
+        {"score": 80, "priority": "HIGH", "reasons": [], "checklist": []},
+        {"clicked": clicked, "downloaded": downloaded, "submitted_category": category,
+         "disclosure_answered": answered},
+    )
+
+
+@pytest.mark.parametrize(
+    "answers,expected",
+    [
+        ((None, None, None, False), (False, False, False)),
+        ((False, False, None, True), (False, False, False)),
+        ((True, None, None, False), (True, False, False)),
+        ((None, True, None, False), (False, True, False)),
+        ((True, False, "password", True), (True, False, True)),
+        ((False, True, "otp", True), (False, True, True)),
+        ((1, "true", "password", 1), (False, False, False)),
+        ((True, True, "otp", False), (True, True, False)),
+    ],
+    ids=["unknown", "confirmed-no", "partial-click", "partial-download", "password",
+         "otp", "truthy-not-confirmed", "unconfirmed-disclosure"],
+)
+def test_stored_report_v3_uses_confirmed_nested_answers_over_stale_root(answers, expected):
+    record = _exposure_report(*answers)
+    record.update(clicked=not expected[0], downloaded=not expected[1],
+                  submitted_category=None if expected[2] else "password")
+    # Nested extras must not replace saved metadata or the original assessment.
+    record["exposure"].update(channel="email", message="replacement",
+                              result={"score": 0, "priority": "LOW"})
+    before = deepcopy(record)
+
+    report = StoredReport(record)
+
+    assert (report.clicked, report.downloaded, report.submitted_credentials) == expected
+    assert (report.channel, report.priority, report.score) == ("chat", "HIGH", 80)
+    assert ReportFilter(channel="chat", priority="HIGH", min_score=80).matches(record)
+    assert record == before
+
+
+@pytest.mark.parametrize("exposure", [None, [], "unknown", 1, {}])
+def test_stored_report_v3_malformed_exposure_never_falls_back_to_root(exposure):
+    record = _exposure_report()
+    record.update(exposure=exposure, clicked=True, downloaded=True, submitted_category="otp")
+    before = deepcopy(record)
+
+    report = StoredReport(record)
+
+    assert (report.clicked, report.downloaded, report.submitted_credentials) == (
+        False, False, False,
+    )
+    assert record == before
+
+
+def test_stored_report_v3_missing_exposure_never_falls_back_to_root():
+    record = {"schema_version": 3, "clicked": True, "downloaded": True,
+              "submitted_category": "password"}
+
+    report = StoredReport(record)
+
+    assert (report.clicked, report.downloaded, report.submitted_credentials) == (
+        False, False, False,
+    )
+
+
+@pytest.mark.parametrize("category", ["password", "otp", ["password"], {"category": "otp"}])
+def test_stored_report_v3_unanswered_disclosure_ignores_even_malformed_category(category):
+    report = StoredReport(_exposure_report(category=category))
+
+    assert report.submitted_credentials is False
+
+
+@pytest.mark.parametrize("version", [None, 1, 2], ids=["unversioned", "v1", "v2"])
+def test_stored_report_historical_root_actions_ignore_nested_exposure(version):
+    record = {"clicked": True, "downloaded": True, "submitted_category": "otp",
+              "channel": "SMS", "score": 90, "priority": "high",
+              "exposure": {"clicked": False, "downloaded": False}}
+    if version is not None:
+        record["schema_version"] = version
+    before = deepcopy(record)
+
+    report = StoredReport(record)
+
+    assert (report.clicked, report.downloaded, report.submitted_credentials) == (True, True, True)
+    assert (report.channel, report.priority, report.score) == ("sms", "HIGH", 90)
+    assert record == before
+
+
+def test_mixed_history_summary_counts_nested_actions_and_preserves_other_metrics():
+    records = [*deepcopy(RECORDS), _exposure_report(True), _exposure_report(downloaded=True),
+               _exposure_report(category="otp", answered=True), _exposure_report()]
+
+    summary = LogicManager().summarize(records)
+    sections = {section.title: dict(section.rows) for section in summary.sections}
+
+    assert summary.total == 7
+    assert sections["Reported exposure"] == {
+        "Clicked a link": "2", "Downloaded a file": "1", "Submitted a password or code": "2",
+    }
+    assert sections["Reports by priority"] == {"High": "5", "Medium": "1", "Low": "1"}
+    assert sections["Reports by channel"] == {"Email": "1", "SMS": "1", "Chat": "5"}
+    assert sections["Rule-based score"] == {"Average": "66.4", "Highest": "90", "Lowest": "10"}
+
+
+@pytest.mark.parametrize("storage_type", [JsonReportStorage, SqliteReportStorage])
+def test_saved_v3_answers_survive_real_reload_and_summary(tmp_path, storage_type):
+    path = tmp_path / "history"
+    records = [_exposure_report(), _exposure_report(False, False, None, True),
+               _exposure_report(True), _exposure_report(downloaded=True),
+               _exposure_report(category="password", answered=True),
+               _exposure_report(category="otp", answered=True)]
+    before = deepcopy(records)
+    manager = DataManager(storage=storage_type(path))
+    for record in records:
+        manager.save(record)
+
+    loaded = DataManager(storage=storage_type(path)).load(strict=True)
+    summary = LogicManager().summarize(loaded)
+    sections = {section.title: dict(section.rows) for section in summary.sections}
+
+    assert loaded == records == before
+    assert summary.total == 6
+    assert sections["Reported exposure"] == {
+        "Clicked a link": "1", "Downloaded a file": "1", "Submitted a password or code": "2",
+    }
+    assert sections["Reports by priority"] == {"High": "6", "Medium": "0", "Low": "0"}
+    assert sections["Reports by channel"] == {"Email": "0", "SMS": "0", "Chat": "6"}
+    assert sections["Rule-based score"] == {"Average": "80.0", "Highest": "80", "Lowest": "80"}
 
 
 # --- ReportFilter ------------------------------------------------------------------------
