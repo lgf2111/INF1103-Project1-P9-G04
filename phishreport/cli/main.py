@@ -11,6 +11,8 @@ from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
+from phishreport.io.check_command import CheckCommand
+from phishreport.io.commands import CommandRequest
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
@@ -77,18 +79,34 @@ class PhishReportApp:
         """Build the shared assessment workflow from the app's current managers."""
         return AssessmentService(self._ai_manager, self._logic_manager)
 
-    def check_message(self, record=None):
+    def check_message(self, record=None, *, command_text: str | None = None):
         """Validate one combined AI response before assessment, saving or display.
 
         Collect input interactively when record is None; otherwise use the supplied
-        record. Stop assessment on handled AI/validation failures. Save the
+        record. Explicit command_text uses the shared pasted-message command.
+        Stop assessment on handled AI/validation failures. Save the
         version-3 outcome locally, then display it even if persistence fails.
         """
-        if record is None:
+        if command_text is None and record is None:
             record = self._io_manager.collect_input()
 
         try:
-            result = self._assessment.assess(record)
+            if command_text is None:
+                result = self._assessment.assess(record)
+            else:
+                command = CheckCommand(
+                    prepare_record=lambda request: self._io_manager.build_record_from_message(
+                        request.text, channel="chat"
+                    ),
+                    assess_record=self._assessment.assess,
+                )
+                request = CommandRequest(command_text, "cli")
+                reply = command.execute(request)
+                if reply.kind == "usage":
+                    self._io_manager.show_message(reply.text)
+                    return
+                outcome = request.session["check_outcome"]
+                record, result = outcome.record, outcome.result
 
         # RuntimeError: the AI could not complete after its retries (service down,
         # offline, rate limited). Show an actionable message; the AI is never bypassed.
