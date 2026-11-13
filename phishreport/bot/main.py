@@ -25,6 +25,8 @@ from phishreport.bot.monitor import EmailMonitor
 from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
 from phishreport.feedback import FeedbackService, FeedbackStore
+from phishreport.io.check_command import CheckCommand
+from phishreport.io.help_command import HelpCommand
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
 
@@ -33,6 +35,8 @@ COMMANDS = [
     BotCommand("linkgmail", "Link Gmail to watch for phishing emails"),
     BotCommand("checkmail", "Check all unread emails for phishing now"),
     BotCommand("unlinkgmail", "Unlink Gmail and delete the saved password"),
+    BotCommand(CheckCommand.name, CheckCommand.help_text),
+    BotCommand(HelpCommand.name, HelpCommand.help_text),
 ]
 
 
@@ -137,7 +141,7 @@ def main() -> int:
             )
         )
         application.add_handler(
-            MessageHandler(filters.TEXT & ~filters.COMMAND, manager.assess_message, block=False)
+            MessageHandler(filters.TEXT, manager.assess_message, block=False)
         )
         application.add_error_handler(_report_polling_error)
         application.run_polling(allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])

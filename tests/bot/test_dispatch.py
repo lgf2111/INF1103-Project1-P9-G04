@@ -5,7 +5,7 @@ import json
 import threading
 from copy import deepcopy
 from importlib import import_module
-from unittest.mock import Mock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from telegram import Update
@@ -15,6 +15,8 @@ from telegram.request import BaseRequest
 from phishreport.bot.main import main
 from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
+from phishreport.io.check_command import CheckCommand
+from phishreport.io.help_command import HelpCommand
 
 CHAT = {"id": 12345, "type": "private"}
 USER = {"id": 42, "is_bot": False, "first_name": "Reporter"}
@@ -71,7 +73,8 @@ def message(bot, message_id, text=TEXT):
         "message_id": message_id, "date": 1, "chat": CHAT, "from": USER, "text": text,
     }
     if text.startswith("/"):
-        payload["entities"] = [{"type": "bot_command", "offset": 0, "length": len(text)}]
+        token_length = len(text.split(maxsplit=1)[0].encode("utf-16-le")) // 2
+        payload["entities"] = [{"type": "bot_command", "offset": 0, "length": token_length}]
     return Update.de_json({"update_id": message_id, "message": payload}, bot)
 
 
@@ -424,5 +427,137 @@ def test_main_dispatch_malformed_exposure_is_acknowledged_and_rejected(
         assert not app.running
         assert not errors and ai.assess.call_count == 1
         assert not manager._data_manager.load(strict=True)
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+@pytest.mark.parametrize("prefix", ["", "/check   ", "/unknown "])
+def test_main_shared_command_dispatch_preserves_content_and_exposure_save(
+    monkeypatch, tmp_path, backend, prefix,
+):
+    async def scenario():
+        app, manager, ai, request, errors = offline_application(monkeypatch, tmp_path, backend)
+        pasted = "Mixed CASE https://example.test/login  "
+        raw = prefix + pasted
+        expected = pasted if prefix.startswith("/check") else raw
+        await app.initialize()
+        await app.start()
+        try:
+            await app.process_update(message(app.bot, 100, raw))
+            await request.until(lambda: any(e == "sendMessage" for e, _ in request.calls))
+            session, = manager._sessions.values()
+            assert session.record["message"] == expected
+            assert "Exposure unconfirmed" in next(
+                data["text"] for endpoint, data in request.calls if endpoint == "sendMessage"
+            )
+            await app.process_update(callback(app.bot, session, "clicked", 1))
+            await request.until(lambda: any(e == "editMessageText" for e, _ in request.calls))
+            assert session.result["score"] == 80
+            await app.process_update(callback(app.bot, session, "finish", 2))
+            await request.until(lambda: sum(e == "editMessageText" for e, _ in request.calls) == 2)
+            [saved] = manager._data_manager.load(strict=True)
+            assert saved["message"] == expected
+            assert saved["exposure"]["clicked"] is True
+            assert saved["result"]["priority"] == "HIGH"
+            ai.assess.assert_called_once()
+        finally:
+            await app.stop()
+            await app.shutdown()
+        assert not errors
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+
+
+def test_main_help_dispatch_uses_shared_metadata_without_assessment(monkeypatch, tmp_path):
+    async def scenario():
+        module = import_module("phishreport.bot.main")
+        catalog = {command.command: command.description for command in module.COMMANDS}
+        assert catalog[CheckCommand.name] == CheckCommand.help_text
+        assert catalog[HelpCommand.name] == HelpCommand.help_text
+        app, manager, ai, request, errors = offline_application(monkeypatch, tmp_path, "json")
+        await app.initialize()
+        await app.start()
+        try:
+            await app.process_update(message(app.bot, 100, "/help"))
+            await request.until(lambda: any(e == "sendMessage" for e, _ in request.calls))
+            reply = next(data["text"] for e, data in request.calls if e == "sendMessage")
+            assert "/check:" in reply and "/help:" in reply
+            assert not manager._sessions and not manager._data_manager.load(strict=True)
+            ai.assess.assert_not_called()
+        finally:
+            await app.stop()
+            await app.shutdown()
+        assert not errors
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+
+
+@pytest.mark.parametrize("name", ["start", "linkgmail", "checkmail", "unlinkgmail"])
+def test_main_existing_command_handlers_keep_precedence(monkeypatch, tmp_path, name):
+    async def scenario():
+        app, manager, ai, request, errors = offline_application(monkeypatch, tmp_path, "json")
+        handler = next(item for item in app.handlers[0] if name in getattr(item, "commands", ()))
+        original = handler.callback
+        handler.callback = AsyncMock(wraps=original)
+        await app.initialize()
+        await app.start()
+        try:
+            update = message(app.bot, 100, "/" + name)
+            await app.process_update(update)
+            handler.callback.assert_awaited_once()
+            ai.assess.assert_not_called()
+            assert not manager._sessions
+        finally:
+            await app.stop()
+            await app.shutdown()
+        assert not errors
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+
+
+@pytest.mark.parametrize("text", ["/help", "/check Feedback comment"])
+def test_main_pending_feedback_keeps_shared_commands_as_comments(monkeypatch, tmp_path, text):
+    async def scenario():
+        app, manager, ai, request, errors = offline_application(monkeypatch, tmp_path, "json")
+        pending = {"assessment_id": "existing"}
+        app.user_data[USER["id"]]["pending_feedback"] = pending
+        submitted = asyncio.Event()
+
+        async def submit(*args):
+            submitted.set()
+
+        manager._submit_feedback = AsyncMock(side_effect=submit)
+        await app.initialize()
+        await app.start()
+        try:
+            await app.process_update(message(app.bot, 100, text))
+            await asyncio.wait_for(submitted.wait(), 3)
+            assert manager._submit_feedback.await_args.args[2:] == (pending, text)
+            ai.assess.assert_not_called()
+            assert not manager._sessions
+        finally:
+            await app.stop()
+            await app.shutdown()
+        assert not errors
+
+    asyncio.run(asyncio.wait_for(scenario(), 10))
+
+
+def test_main_shared_commands_ignore_disallowed_chat(monkeypatch, tmp_path):
+    async def scenario():
+        app, manager, ai, request, errors = offline_application(monkeypatch, tmp_path, "json")
+        await app.initialize()
+        await app.start()
+        try:
+            update = message(app.bot, 100, "/check Content").to_dict()
+            update["message"]["chat"]["id"] = 999
+            await app.process_update(Update.de_json(update, app.bot))
+        finally:
+            await app.stop()
+            await app.shutdown()
+        ai.assess.assert_not_called()
+        assert not manager._sessions and not errors
+        assert not any(e == "sendMessage" for e, _ in request.calls)
 
     asyncio.run(asyncio.wait_for(scenario(), 10))
