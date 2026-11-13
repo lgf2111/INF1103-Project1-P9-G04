@@ -22,6 +22,7 @@ __pycache__/
 
 # Reports and logs created while running the app
 reports.json
+feedback.json
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
