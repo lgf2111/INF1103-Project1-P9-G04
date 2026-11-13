@@ -14,6 +14,7 @@ from phishreport.io import IOManager
 from phishreport.io.check_command import CheckCommand
 from phishreport.io.commands import CommandRequest, CommandRouter
 from phishreport.io.help_command import HelpCommand
+from phishreport.io.status_command import StatusCommand
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
@@ -103,9 +104,24 @@ class PhishReportApp:
                     assess_record=self._assessment.assess,
                 )
                 catalog = [command]
+                catalog.append(StatusCommand(
+                    session_status=lambda request: "CLI conversation active",
+                    report_count=lambda: len(self._data_manager.load(strict=True)),
+                ))
                 catalog.append(HelpCommand(catalog))
                 request = CommandRequest(command_text, "cli")
-                reply = CommandRouter(catalog).route(request)
+                router = CommandRouter(catalog)
+                resolved = router.resolve(command_text)
+                try:
+                    reply = router.route(request)
+                except (OSError, ValueError):
+                    if not isinstance(resolved, StatusCommand):
+                        raise
+                    AppLogging.log_failure(logger, "Reading local report history failed")
+                    self._io_manager.show_message(
+                        "Could not load local report history; existing file preserved."
+                    )
+                    return
                 if reply is None:
                     self._io_manager.show_message("Please choose 1, 2, 3, 4, 5 or 6.")
                     return
