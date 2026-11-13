@@ -11,15 +11,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: astral-sh/setup-uv@v6
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-
-      - name: Install ruff
-        run: pip install ruff
+          python-version: "3.14"
 
       - name: Check code style
-        run: ruff check .
+        run: uvx ruff check .
 
   # Job 1: run the offline tests on plain Python.
   test:
@@ -27,15 +26,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: astral-sh/setup-uv@v6
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install requirements
-        run: pip install -r requirements.txt
+        run: uv pip install --system -r requirements.txt
 
-      - name: Run tests
-        run: pytest
+      - name: Show shared JSON and SQLite storage contracts
+        run: >-
+          python -m pytest -vv
+          tests/core/test_data_core.py
+          tests/core/test_sqlite_storage.py
+          tests/core/test_storage_factory.py
+          tests/core/test_storage_migration.py
+
+      - name: Run offline tests
+        run: python -m pytest
 
   # Job 2: build the Docker image and run the tests inside it.
   # This proves the container works, which is part of the grade.
@@ -47,5 +56,17 @@ jobs:
       - name: Build the Docker image
         run: docker build -t phishreport .
 
-      - name: Run the tests inside the container
-        run: docker run --rm --network none phishreport pytest
+      - name: Build the Telegram image
+        run: docker build --target telegram -t phishreport-telegram .
+
+      - name: Check the Telegram data directory exists
+        run: >-
+          docker run --rm --network none --user 65534:65534 --workdir /tmp
+          phishreport-telegram python -c "from pathlib import Path; assert Path('/data').is_dir()"
+
+      - name: Run offline tests inside the Telegram image
+        # Run unprivileged so the POSIX permission tests exercise real failures.
+        # /tmp holds runtime writes; /app is the test root for shared conftest fixtures.
+        run: >-
+          docker run --rm --network none --user 65534:65534 --workdir /tmp
+          phishreport-telegram python -m pytest --rootdir=/app /app/tests -p no:cacheprovider

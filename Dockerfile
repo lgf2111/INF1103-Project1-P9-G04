@@ -1,20 +1,27 @@
-# Runs the app in Docker so it works the same on everyone's laptop.
-FROM python:3.12-slim
+# CLI image remains the default build target.
+FROM python:3.14-slim AS base
 
 WORKDIR /app
+# The CLI runs from /data, so the package must be importable from /app.
+ENV PYTHONPATH=/app
 
-# install the requirements first
+COPY --from=ghcr.io/astral-sh/uv:0.12.16 /uv /uvx /bin/
+
+# Install the project dependencies first for better Docker layer caching.
 COPY requirements.txt .
-RUN pip install -r requirements.txt
+RUN uv pip install --system --no-cache -r requirements.txt
 
-# copy the code in
 COPY . .
 
-# The file-upload option serves a one-shot page on port 8000; publish it so the
-# host browser can reach it: docker run -p 8000:8000 ...
-EXPOSE 8000
+FROM base AS telegram
+RUN mkdir -p /data
+ENV PHISHREPORT_REPORTS_PATH=/data/reports.json \
+    PHISHREPORT_GMAIL_PATH=/data/gmail_accounts.json \
+    PYTHONUNBUFFERED=1
+CMD ["python", "-m", "phishreport.bot"]
 
-# run the app by default. pass your key and publish the upload port like:
-#   docker run --rm -it -p 8000:8000 -e GROQ_API_KEY=xxx phishreport
-# to run the tests instead:  docker run --rm phishreport pytest
-CMD ["python", "app/main.py"]
+FROM base AS cli
+
+# The file-upload option serves a one-shot page on port 8000.
+EXPOSE 8000
+CMD ["python", "-m", "phishreport.cli"]
