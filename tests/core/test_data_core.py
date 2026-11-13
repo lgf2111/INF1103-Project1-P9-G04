@@ -22,6 +22,22 @@ def v2_report():
     }
 
 
+def v3_report():
+    """Return a version-3 report with a stable feedback-link identifier."""
+    return {
+        "schema_version": 3,
+        "assessment_id": "assessment-123",
+        "channel": "email",
+        "message": "Original message",
+        "result": {
+            "score": 60,
+            "priority": "MEDIUM",
+            "reasons": ["Reason."],
+            "checklist": [],
+        },
+    }
+
+
 def v1_report():
     return {
         "schema_version": 1,
@@ -66,6 +82,15 @@ def test_v2_returns_original_without_normalizing(method):
     assert record == before
 
 
+@pytest.mark.parametrize("method", ["validate_new", "validate_stored"])
+def test_v3_returns_original_without_normalizing(method):
+    record = v3_report()
+    before = deepcopy(record)
+
+    assert getattr(validator(), method)(record) is record
+    assert record == before
+
+
 @pytest.mark.parametrize(
     "record",
     [
@@ -91,13 +116,62 @@ def test_stored_historical_records_keep_missing_and_unknown_fields(record):
     assert record == before
 
 
-@pytest.mark.parametrize("version", [True, False, 2.0, "2", None, 0, 3])
+@pytest.mark.parametrize("version", [True, False, 2.0, "2", None, 0, 4])
 @pytest.mark.parametrize("method", ["validate_new", "validate_stored"])
 def test_unsupported_or_noninteger_schema_versions(version, method):
     record = v2_report()
     record["schema_version"] = version
     with pytest.raises(ValueError):
         getattr(validator(), method)(record)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("assessment_id", " "),
+        ("assessment_id", None),
+        ("assessment_id", 1),
+        ("channel", " "),
+        ("message", " "),
+    ],
+)
+@pytest.mark.parametrize("method", ["validate_new", "validate_stored"])
+def test_v3_rejects_invalid_identifier_and_text(field, value, method):
+    record = v3_report()
+    record[field] = value
+    before = deepcopy(record)
+
+    with pytest.raises(ValueError):
+        getattr(validator(), method)(record)
+
+    assert record == before
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("matched_rule", "DisclosureRule"),
+        ("trace", []),
+    ],
+)
+def test_v3_requires_rule_identity_and_trace_together(field, value):
+    record = v3_report()
+    record["result"][field] = value
+
+    with pytest.raises(ValueError):
+        validator().validate_new(record)
+
+
+def test_v3_accepts_a_valid_rule_trace():
+    record = v3_report()
+    record["result"].update(
+        {
+            "matched_rule": "DisclosureRule",
+            "trace": [{"rule_name": "DisclosureRule", "matched": True, "score": 60}],
+        }
+    )
+
+    assert validator().validate_new(record) is record
 
 
 @pytest.mark.parametrize("field", ["schema_version", "channel", "message", "result", "extra"])
@@ -203,7 +277,7 @@ def storage(request, tmp_path):
 
 def test_storage_contract_round_trip_replacement_and_order(storage):
     assert storage.read_records() == []
-    records = [v2_report(), v1_report(), summary_report(), {}, {"unknown": "保留"}]
+    records = [v2_report(), v3_report(), v1_report(), summary_report(), {}, {"unknown": "保留"}]
     before = deepcopy(records)
     storage.write_records(records)
     assert records == before

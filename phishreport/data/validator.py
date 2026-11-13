@@ -32,8 +32,12 @@ class ReportValidator:
     """Own report schema rules independently of persistence and logging."""
 
     def validate_new(self, record: dict) -> dict:
-        """Return an unchanged valid v2 report, or raise ValueError."""
-        return self._validate_v2(record)
+        """Return an unchanged valid v2 or v3 report, or raise ValueError."""
+        if isinstance(record, dict) and record.get("schema_version") == 2:
+            return self._validate_v2(record)
+        if isinstance(record, dict) and record.get("schema_version") == 3:
+            return self._validate_v3(record)
+        raise ValueError("New reports must use schema version 2 or 3.")
 
     def validate_stored(self, record: dict) -> dict:
         """Validate supported history without inventing or normalizing data."""
@@ -43,10 +47,15 @@ class ReportValidator:
             if set(record) == REPORT_FIELDS:
                 return self._validate_summary(record)
             return self._validate_legacy(record)
-        if type(record["schema_version"]) is not int or record["schema_version"] not in (1, 2):
+        if (
+            type(record["schema_version"]) is not int
+            or record["schema_version"] not in (1, 2, 3)
+        ):
             raise ValueError("Unsupported report version.")
         if record["schema_version"] == 2:
             return self._validate_v2(record)
+        if record["schema_version"] == 3:
+            return self._validate_v3(record)
         return self._validate_v1(record)
 
     def _validate_summary(self, record):
@@ -84,18 +93,26 @@ class ReportValidator:
             raise ValueError("Invalid stored priority.")
         return record
 
-    def _validate_result(self, result):
-        """Validate the exact score, priority, reasons and checklist fields.
+    def _validate_result(self, result, *, allow_rule_trace=False):
+        """Validate the score, priority, guidance and permitted explanation fields.
 
         Return None on success; raise ValueError without changing the result on
         failure. Empty guidance lists are accepted, but blank list entries are not.
         """
-        if not isinstance(result, dict) or set(result) != {
+        required_fields = {
             "score",
             "priority",
             "reasons",
             "checklist",
-        }:
+        }
+        optional_fields = {"matched_rule", "trace"} if allow_rule_trace else set()
+        fields = set(result) if isinstance(result, dict) else set()
+        if (
+            not isinstance(result, dict)
+            or not required_fields.issubset(fields)
+            or not fields.issubset(required_fields | optional_fields)
+            or (bool(fields.intersection(optional_fields)) and not optional_fields.issubset(fields))
+        ):
             raise ValueError("Invalid stored assessment.")
         if type(result["score"]) is not int or not 0 <= result["score"] <= 100:
             raise ValueError("Invalid stored score.")
@@ -107,6 +124,41 @@ class ReportValidator:
                 not isinstance(value, str) or not value.strip() for value in values
             ):
                 raise ValueError("Invalid stored text lists.")
+        if optional_fields and optional_fields.issubset(fields):
+            self._validate_rule_trace(result)
+
+    @staticmethod
+    def _validate_rule_trace(result):
+        """Check that an optional trace ends at the recorded winning rule."""
+        matched_rule = result["matched_rule"]
+        trace = result["trace"]
+        if not isinstance(matched_rule, str) or not matched_rule.strip():
+            raise ValueError("Invalid matched rule.")
+        if not isinstance(trace, list) or not trace:
+            raise ValueError("Invalid stored rule trace.")
+        trace_fields = {"rule_name", "matched", "score"}
+        for step in trace:
+            if not isinstance(step, dict) or set(step) != trace_fields:
+                raise ValueError("Invalid stored rule trace step.")
+            if not isinstance(step["rule_name"], str) or not step["rule_name"].strip():
+                raise ValueError("Invalid stored rule name.")
+            if type(step["matched"]) is not bool:
+                raise ValueError("Invalid stored rule match flag.")
+            score = step["score"]
+            if step["matched"]:
+                if type(score) is not int or not 0 <= score <= 100:
+                    raise ValueError("Invalid stored rule score.")
+            elif score is not None:
+                raise ValueError("Non-matching rules cannot have a score.")
+
+        winning_step = trace[-1]
+        if (
+            any(step["matched"] for step in trace[:-1])
+            or not winning_step["matched"]
+            or winning_step["rule_name"] != matched_rule
+            or winning_step["score"] != result["score"]
+        ):
+            raise ValueError("Stored rule trace does not match its assessment.")
 
     def _validate_v2(self, record):
         """Validate the exact version-2 storage contract without changing values."""
@@ -124,6 +176,31 @@ class ReportValidator:
                 raise ValueError("Invalid report text: " + key)
         # Keep the original message intact; validation never strips or truncates it.
         self._validate_result(record["result"])
+        return record
+
+    def _validate_v3(self, record):
+        """Validate the feedback-link report contract without changing values."""
+        if not isinstance(record, dict) or set(record) != {
+            "schema_version",
+            "assessment_id",
+            "channel",
+            "message",
+            "result",
+        }:
+            raise ValueError("Version-3 reports must contain the agreed identifier and fields.")
+        if type(record["schema_version"]) is not int or record["schema_version"] != 3:
+            raise ValueError("New reports must use schema version 3.")
+        assessment_id = record["assessment_id"]
+        if (
+            not isinstance(assessment_id, str)
+            or not assessment_id.strip()
+            or len(assessment_id) > 100
+        ):
+            raise ValueError("Invalid assessment identifier.")
+        for key in ("channel", "message"):
+            if not isinstance(record[key], str) or not record[key].strip():
+                raise ValueError("Invalid report text: " + key)
+        self._validate_result(record["result"], allow_rule_trace=True)
         return record
 
     def _validate_legacy(self, record):

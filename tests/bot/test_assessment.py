@@ -52,7 +52,8 @@ def test_a_text_message_is_assessed_saved_and_answered():
     assert "Rule-based score: 60" in reply
     assert reply.endswith(ResultFormatter.FOOTER)
     (report,), _ = data_manager.save.call_args
-    assert report["schema_version"] == 2
+    assert report["schema_version"] == 3
+    assert report["assessment_id"]
     assert report["channel"] == "chat"
     assert report["message"] == "Verify your password now"
     assert report["result"]["score"] == 60

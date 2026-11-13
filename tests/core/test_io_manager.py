@@ -954,8 +954,14 @@ def test_io_display_check_new_message_displays_full_record(cli, monkeypatch, cap
     assert len(saved) == 1
     assert saved[0]["channel"] == "sms"
     assert saved[0]["message"] == message
-    assert set(saved[0]) == {"schema_version", "channel", "message", "result"}
-    assert saved[0]["schema_version"] == 2
+    assert set(saved[0]) == {
+        "schema_version",
+        "assessment_id",
+        "channel",
+        "message",
+        "result",
+    }
+    assert saved[0]["schema_version"] == 3
     assert set(saved[0]["result"]) == {"score", "priority", "reasons", "checklist"}
 
     assert len(api_calls) == 1
