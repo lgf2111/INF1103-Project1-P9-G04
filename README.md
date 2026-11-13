@@ -183,6 +183,39 @@ current and historical layouts, each metric (including unclassifiable values),
 a custom metric subclass, an empty history, an unreadable history file, the filter prompts, the printed
 summary and the menu flow. No AI service is needed.
 
+### Shared conversation commands
+
+Enter these commands at the CLI menu or in the bot's private chat. CLI choices
+**1–6** remain unchanged.
+
+| Command | CLI | Telegram |
+| --- | --- | --- |
+| `/check <text>` | Assess pasted chat text using the existing link, file and exposure prompts; save and display the result. | Assess the text once, then answer the existing exposure questions before finishing or skipping to save. Answers reuse the original AI findings. |
+| `/help` | List the shared commands. | List the shared commands; the Gmail commands below remain available. |
+| `/status` | Show that the CLI conversation is active and count saved reports. | Count the requesting user's active exposure sessions awaiting answers and count saved reports. |
+
+Status counts reports from the configured history backend using strict loading;
+a read failure shows an error rather than a zero count. It does not request AI
+findings or save a report. Telegram's active-session count excludes other users
+and chats, expired sessions, and completed or saved assessments. It does not
+remove cached sessions or completed reports awaiting a save retry.
+
+Command names are exact and case-sensitive. `/check` without text shows usage.
+Bot-addressed forms such as `/check@botname` are not recognized by the shared
+router and follow Telegram's default content path.
+The router accepts leading whitespace and preserves the argument's internal and
+trailing whitespace. Ordinary pasted Telegram text still takes the default
+assessment path. Unknown slash input also takes that path in Telegram; the CLI
+instead shows its invalid-choice message. While Telegram is collecting a feedback
+comment, text reaching this handler, including `/check`, `/help` and `/status`,
+is treated as that comment. The existing Start and Gmail handlers retain priority.
+
+`phishreport/io/commands.py` defines the `Command` ABC, request/reply models and
+router. Check, Help and Status implement that contract in separate files and use
+injected services; the I/O package imports neither Telegram nor the bot package.
+Both transports execute the same command implementations, while input collection,
+presentation, exposure follow-up and persistence remain adapter responsibilities.
+
 ### Telegram bot
 
 The bot opens **PhishReport** on `/start` and shows one **Check connection**
@@ -379,12 +412,22 @@ or enter/send any real password or one-time code.
 A live SMS demo, mounted container restart, and remote CI each require their own
 observed evidence; offline tests alone do not establish those results.
 
-#### Add the next handler
+#### Extend commands or add a transport-specific handler
 
-Add an async method to `TelegramIOManager` in `phishreport/bot/handlers.py`.
-Use the same private-chat check before accessing app data. Register the method
-in `phishreport/bot/main.py` and test it with fake updates in `tests/bot/`.
-Report browsing and summaries still run through the CLI.
+For a shared operation, implement `Command` in a new I/O module and register an
+instance with the required services in both adapters' command catalogs. Integrate
+its reply kind and lifecycle with the adapters: Telegram currently handles Help
+and Status separately and expects other recognized commands to produce an
+assessment outcome. The router dispatch logic does not need to change, but
+registration alone does not enable an arbitrary operation. Adding a file alone
+does not discover or enable a command. Update Telegram's command-menu metadata
+separately when the command should appear there.
+
+For Telegram-only interactions, add an async method to `TelegramIOManager` in
+`phishreport/bot/handlers.py`, keep the private-chat check, and register its handler
+in `phishreport/bot/main.py`. Test shared commands with fake services and verify
+adapter dispatch with offline updates. Report browsing and summaries remain in
+the CLI.
 
 ### Offline tests
 
@@ -407,6 +450,15 @@ The application suite uses fake completion clients and mocked Groq HTTP calls
 to check prompt handling, retries, response validation and CLI behavior.
 The Telegram tests use fake updates and temporary data. Neither suite needs
 credentials once dependencies are installed.
+
+For the shared-command contract, import-direction and transport checks in an
+activated Python 3.12 environment, run:
+
+```text
+python -m pytest tests/core/test_commands.py tests/core/test_check_command.py tests/core/test_help_command.py tests/core/test_status_command.py -q
+python -m pytest tests/cli/test_cli_check_command.py tests/cli/test_cli_menu_commands.py tests/cli/test_cli_status_command.py -q
+python -m pytest tests/bot/test_bot_shared_commands.py tests/bot/test_bot_status_command.py tests/bot/test_dispatch.py -q
+```
 
 For focused exposure and persistence checks in an activated Python 3.12
 environment, run:
