@@ -69,12 +69,12 @@ required integration points, and decisions to settle before implementation.
 ## Feedback record and flow
 
 The current store accepts `false_positive`, `false_negative`,
-`incorrect_priority`, `incorrect_explanation`, and `other`. Each feedback entry
-records its own ID, the assessment ID, an optional comment or corrected
-priority, and a small assessment snapshot (score, priority, reasons, and matched
-rule). It deliberately does not store the message or update the original
-report. The assessment ID must be supplied by the caller; the current CLI does
-not create one yet.
+`incorrect_priority`, `incorrect_explanation`, `application_bug`,
+`usability_issue`, and `other`. Each feedback entry records its own ID, the
+assessment ID, an optional comment or corrected priority, and a small
+assessment snapshot (score, priority, reasons, and matched rule). It deliberately
+does not store the message or update the original report. The assessment ID
+must be supplied by the caller; the current CLI does not create one yet.
 
 Suggested correction flow for the next implementation step:
 

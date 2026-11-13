@@ -10,6 +10,8 @@ FEEDBACK_CATEGORIES = frozenset(
         "false_negative",
         "incorrect_priority",
         "incorrect_explanation",
+        "application_bug",
+        "usability_issue",
         "other",
     }
 )

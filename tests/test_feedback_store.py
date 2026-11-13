@@ -57,6 +57,23 @@ def test_feedback_store_filters_by_assessment(tmp_path, assessment_result):
     assert store.for_assessment("assessment-missing") == []
 
 
+@pytest.mark.parametrize("category", ["application_bug", "usability_issue"])
+def test_feedback_store_accepts_product_feedback_categories(
+    tmp_path, assessment_result, category
+):
+    store = FeedbackStore(tmp_path / "feedback.json")
+
+    feedback = store.submit(
+        assessment_id="assessment-123",
+        assessment_result=assessment_result,
+        category=category,
+        comment="The assessment screen did not explain what to do next.",
+    )
+
+    assert store.load() == [feedback]
+    assert feedback.category == category
+
+
 def test_feedback_store_leaves_report_data_and_assessment_result_unchanged(
     tmp_path, assessment_result
 ):
