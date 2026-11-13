@@ -22,6 +22,20 @@ def v2_report():
     }
 
 
+def v2_report_with_trace():
+    """Return a version-2 report with the optional rule explanation fields."""
+    report = v2_report()
+    report["result"].update(
+        {
+            "matched_rule": "DisclosureRule",
+            "trace": [
+                {"rule_name": "DisclosureRule", "matched": True, "score": 0},
+            ],
+        }
+    )
+    return report
+
+
 def v1_report():
     return {
         "schema_version": 1,
@@ -63,6 +77,54 @@ def test_v2_returns_original_without_normalizing(method):
     record = v2_report()
     before = deepcopy(record)
     assert getattr(validator(), method)(record) is record
+    assert record == before
+
+
+@pytest.mark.parametrize("method", ["validate_new", "validate_stored"])
+def test_v2_accepts_and_retains_a_rule_trace(method):
+    record = v2_report_with_trace()
+    before = deepcopy(record)
+
+    assert getattr(validator(), method)(record) is record
+    assert record == before
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"matched_rule": "DisclosureRule"},
+        {"trace": []},
+        {"matched_rule": " ", "trace": []},
+        {"matched_rule": "DisclosureRule", "trace": "not a list"},
+        {
+            "matched_rule": "DisclosureRule",
+            "trace": [{"rule_name": "DisclosureRule", "matched": True, "score": True}],
+        },
+        {
+            "matched_rule": "DisclosureRule",
+            "trace": [{"rule_name": "DisclosureRule", "matched": False, "score": 0}],
+        },
+        {
+            "matched_rule": "OtherRule",
+            "trace": [{"rule_name": "DisclosureRule", "matched": True, "score": 0}],
+        },
+        {
+            "matched_rule": "DisclosureRule",
+            "trace": [
+                {"rule_name": "DisclosureRule", "matched": True, "score": 0},
+                {"rule_name": "OtherRule", "matched": True, "score": 0},
+            ],
+        },
+    ],
+)
+def test_v2_rejects_invalid_rule_trace(change):
+    record = v2_report()
+    record["result"].update(change)
+    before = deepcopy(record)
+
+    with pytest.raises(ValueError):
+        validator().validate_new(record)
+
     assert record == before
 
 

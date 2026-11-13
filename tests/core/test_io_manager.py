@@ -810,6 +810,10 @@ def test_io_display_display_result_shows_assessment(capsys):
         {
             "priority": "insufficient_information",
             "score": 30,
+            "matched_rule": "InsufficientContextRule",
+            "trace": [
+                {"rule_name": "InsufficientContextRule", "matched": True, "score": 30}
+            ],
             "reasons": ["More context is required."],
             "checklist": ["Give more details."],
         }
@@ -817,6 +821,9 @@ def test_io_display_display_result_shows_assessment(capsys):
     output = capsys.readouterr().out
     assert "Priority: Insufficient Information" in output
     assert "Rule-based score: 30" in output
+    assert "Matched rule: InsufficientContextRule" in output
+    assert "Rule evaluation trace:" in output
+    assert "InsufficientContextRule: matched (score: 30)" in output
     assert "More context is required." in output
     assert "1. Give more details." in output
 
@@ -956,7 +963,14 @@ def test_io_display_check_new_message_displays_full_record(cli, monkeypatch, cap
     assert saved[0]["message"] == message
     assert set(saved[0]) == {"schema_version", "channel", "message", "result"}
     assert saved[0]["schema_version"] == 2
-    assert set(saved[0]["result"]) == {"score", "priority", "reasons", "checklist"}
+    assert set(saved[0]["result"]) == {
+        "score",
+        "priority",
+        "reasons",
+        "checklist",
+        "matched_rule",
+        "trace",
+    }
 
     assert len(api_calls) == 1
 
