@@ -38,6 +38,7 @@ def test_assess_applies_the_business_rules_to_the_ai_findings():
     result = service.assess(RECORD)
 
     assert (result["score"], result["priority"]) == (60, "MEDIUM")
+    assert result["assessment_id"]
     ai_manager.assess.assert_called_once_with(RECORD)
 
 
@@ -66,10 +67,11 @@ def test_build_report_keeps_the_message_and_its_assessment():
     report = AssessmentService.build_report(RECORD, result)
 
     assert report == {
-        "schema_version": 2,
+        "schema_version": 3,
+        "assessment_id": result["assessment_id"],
         "channel": "chat",
         "message": RECORD["message"],
-        "result": result,
+        "result": {key: value for key, value in result.items() if key != "assessment_id"},
     }
 
 
@@ -100,6 +102,8 @@ def test_build_exposure_report_preserves_exact_v3_shape_and_nullable_answers(
 
     report = AssessmentService.build_exposure_report(record, result, exposure)
 
+    assessment_id = report.pop("assessment_id")
+    assert isinstance(assessment_id, str) and assessment_id
     assert report == {
         "schema_version": 3,
         "channel": "chat",

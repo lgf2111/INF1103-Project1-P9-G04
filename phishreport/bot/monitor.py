@@ -7,6 +7,7 @@ from telegram import Bot
 from telegram.constants import ParseMode
 
 from phishreport.ai.errors import AIErrorTranslator
+from phishreport.bot.feedback_ui import assessment_feedback_keyboard
 from phishreport.bot.gmail import (
     AccountStore,
     EmailSource,
@@ -40,6 +41,7 @@ class EmailMonitor:
         mailbox_factory: Callable[[str, str], GmailMailbox] = GmailMailbox,
         reader: EmlReader | None = None,
         formatter: PhishingAlertFormatter | None = None,
+        feedback_service=None,
     ) -> None:
         self._bot = bot
         self._store = store
@@ -50,6 +52,7 @@ class EmailMonitor:
         self._mailbox_factory = mailbox_factory
         self._reader = reader or EmlReader()
         self._formatter = formatter or PhishingAlertFormatter()
+        self._feedback_service = feedback_service
         self._builder = ChatRecordBuilder()
         self._errors = AIErrorTranslator()
 
@@ -151,11 +154,13 @@ class EmailMonitor:
             AppLogging.log_failure(logger, "Skipped an email the AI could not assess")
             self._say("Skipped an email the AI could not assess.")
             return SKIPPED
+        saved = False
         try:
             async with self._save_lock:
                 await asyncio.to_thread(
                     self._data_manager.save, self._assessment.build_report(record, result)
                 )
+            saved = True
         except (OSError, ValueError):
             AppLogging.log_failure(logger, "Could not save an email report")
         alert = result["priority"] in ALERT_PRIORITIES
@@ -169,16 +174,24 @@ class EmailMonitor:
                 self._formatter.format(
                     result, sender, source.subject, source.gmail_url(account.address)
                 ),
+                reply_markup=(
+                    assessment_feedback_keyboard(result["assessment_id"])
+                    if saved and self._feedback_service is not None
+                    else None
+                ),
             )
         return FLAGGED if alert else CLEAN
 
-    async def _send(self, chat_id: int, text: str) -> None:
+    async def _send(self, chat_id: int, text: str, reply_markup=None) -> None:
         try:
-            await self._bot.send_message(
-                chat_id=chat_id,
-                text=text,
-                parse_mode=ParseMode.HTML,
-                disable_web_page_preview=True,
-            )
+            options = {
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": ParseMode.HTML,
+                "disable_web_page_preview": True,
+            }
+            if reply_markup is not None:
+                options["reply_markup"] = reply_markup
+            await self._bot.send_message(**options)
         except Exception:
             AppLogging.log_failure(logger, "Could not send a Telegram alert")

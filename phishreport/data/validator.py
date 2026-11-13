@@ -50,7 +50,10 @@ class ReportValidator:
             if set(record) == REPORT_FIELDS:
                 return self._validate_summary(record)
             return self._validate_legacy(record)
-        if type(record["schema_version"]) is not int or record["schema_version"] not in (1, 2, 3):
+        if (
+            type(record["schema_version"]) is not int
+            or record["schema_version"] not in (1, 2, 3)
+        ):
             raise ValueError("Unsupported report version.")
         if record["schema_version"] == 3:
             return self._validate_v3(record)
@@ -93,12 +96,13 @@ class ReportValidator:
             raise ValueError("Invalid stored priority.")
         return record
 
-    def _validate_result(self, result):
-        """Validate assessment fields and an optional matched-rule trace.
+    def _validate_result(self, result, *, allow_rule_trace=False):
+        """Validate the score, priority, guidance and permitted explanation fields.
 
         Return None on success; raise ValueError without changing the result on
-        failure. Four-field historical results remain valid. Empty guidance lists
-        are accepted, but blank list entries are not.
+        failure. Four-field historical results remain valid. Newer v2 and v3
+        reports may also carry the matched-rule trace. Empty guidance lists are
+        accepted, but blank list entries are not.
         """
         required_fields = {
             "score",
@@ -106,11 +110,13 @@ class ReportValidator:
             "reasons",
             "checklist",
         }
-        trace_fields = {"matched_rule", "trace"}
+        optional_fields = {"matched_rule", "trace"} if allow_rule_trace else set()
+        fields = set(result) if isinstance(result, dict) else set()
         if (
             not isinstance(result, dict)
-            or not required_fields.issubset(result)
-            or not set(result).issubset(required_fields | trace_fields)
+            or not required_fields.issubset(fields)
+            or not fields.issubset(required_fields | optional_fields)
+            or (bool(fields.intersection(optional_fields)) and not optional_fields.issubset(fields))
         ):
             raise ValueError("Invalid stored assessment.")
         if type(result["score"]) is not int or not 0 <= result["score"] <= 100:
@@ -123,21 +129,18 @@ class ReportValidator:
                 not isinstance(value, str) or not value.strip() for value in values
             ):
                 raise ValueError("Invalid stored text lists.")
-        if trace_fields.intersection(result):
-            if not trace_fields.issubset(result):
-                raise ValueError("Invalid stored rule trace.")
+        if optional_fields and optional_fields.issubset(fields):
             self._validate_rule_trace(result)
 
     @staticmethod
     def _validate_rule_trace(result):
-        """Check that the trace ends at the matching rule and score."""
+        """Check that an optional trace ends at the recorded winning rule."""
         matched_rule = result["matched_rule"]
         trace = result["trace"]
         if not isinstance(matched_rule, str) or not matched_rule.strip():
             raise ValueError("Invalid matched rule.")
         if not isinstance(trace, list) or not trace:
             raise ValueError("Invalid stored rule trace.")
-
         trace_fields = {"rule_name", "matched", "score"}
         for step in trace:
             if not isinstance(step, dict) or set(step) != trace_fields:
@@ -177,25 +180,48 @@ class ReportValidator:
             if not isinstance(record[key], str) or not record[key].strip():
                 raise ValueError("Invalid report text: " + key)
         # Keep the original message intact; validation never strips or truncates it.
-        self._validate_result(record["result"])
+        # The merged RuleOutcome workflow writes traces to v2 reports too.
+        self._validate_result(record["result"], allow_rule_trace=True)
         return record
 
     def _validate_v3(self, record: dict) -> dict:
-        """Return an unchanged v3 report with explicit nullable exposure answers.
+        """Validate feedback-linked or exposure reports without changing values.
 
-        Raise ValueError for malformed fields or inconsistent metadata/answers.
-        Validation preserves unknown answers and never reassesses stored results.
+        The ten-field exposure form remains readable for existing reports. New
+        exposure reports also carry an assessment ID so users can leave feedback.
         """
-        if not isinstance(record, dict) or set(record) != {
+        if (
+            not isinstance(record, dict)
+            or type(record.get("schema_version")) is not int
+            or record["schema_version"] != 3
+        ):
+            raise ValueError("Version-3 reports must use schema version 3.")
+        exposure_fields = {
             "schema_version", "channel", "message", "result", "sender",
             "has_link", "link", "has_file", "file_name", "exposure",
-        }:
-            raise ValueError("Version-3 reports must contain exactly the ten agreed fields.")
-        if type(record["schema_version"]) is not int or record["schema_version"] != 3:
-            raise ValueError("Exposure reports must use schema version 3.")
+        }
+        feedback_fields = {
+            "schema_version", "assessment_id", "channel", "message", "result",
+        }
+        fields = set(record)
+        is_exposure = fields in (exposure_fields, exposure_fields | {"assessment_id"})
+        if not is_exposure and fields != feedback_fields:
+            raise ValueError("Version-3 reports must match a supported report shape.")
+        if "assessment_id" in record:
+            assessment_id = record["assessment_id"]
+            if (
+                not isinstance(assessment_id, str)
+                or not assessment_id.strip()
+                or len(assessment_id) > 100
+            ):
+                raise ValueError("Invalid assessment identifier.")
         for key in ("channel", "message"):
             if not isinstance(record[key], str) or not record[key].strip():
                 raise ValueError("Invalid report text: " + key)
+        if not is_exposure:
+            self._validate_result(record["result"], allow_rule_trace=True)
+            return record
+
         if record["sender"] is not None and not isinstance(record["sender"], str):
             raise ValueError("Invalid report sender.")
         for key in ("link", "file_name"):
@@ -224,7 +250,7 @@ class ReportValidator:
             raise ValueError("Invalid submitted category.")
         if not exposure["disclosure_answered"] and exposure["submitted_category"] is not None:
             raise ValueError("Unanswered disclosure must have no submitted category.")
-        self._validate_result(record["result"])
+        self._validate_result(record["result"], allow_rule_trace=True)
         return record
 
     def _validate_legacy(self, record):
