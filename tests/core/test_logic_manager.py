@@ -2,13 +2,24 @@
 # Uses fake AI answers (no real API), so it runs anywhere, including Docker.
 # Run with:  pytest
 
+import json
 from copy import deepcopy
+from dataclasses import FrozenInstanceError
 
 import pytest
 
-from phishreport.logic import LogicManager
+from phishreport.logic import LogicManager, RuleOutcome, RuleTrace
 from phishreport.logic.rule_engine import PriorityRuleEngine
-from phishreport.logic.rules import DefaultRule, SuspiciousRule
+from phishreport.logic.rules import (
+    CredentialRequestRule,
+    DefaultRule,
+    DisclosureRule,
+    InsufficientContextRule,
+    ReportedInteractionRule,
+    SuspiciousCredentialRule,
+    SuspiciousInteractionRule,
+    SuspiciousRule,
+)
 
 manager = LogicManager()
 
@@ -157,6 +168,14 @@ def test_class_based_manager_evaluates_ai_enriched_record():
 
     assert result["score"] == 60
     assert result["priority"] == "MEDIUM"
+    assert result["matched_rule"] == "SuspiciousCredentialRule"
+    assert [step["rule_name"] for step in result["trace"]] == [
+        "DisclosureRule",
+        "SuspiciousInteractionRule",
+        "SuspiciousCredentialRule",
+    ]
+    assert [step["matched"] for step in result["trace"]] == [False, False, True]
+    assert result["trace"][-1]["score"] == 60
     assert result["reasons"] and result["checklist"]
     assert record == original
 
@@ -171,6 +190,48 @@ def test_rule_engine_uses_injected_rules_in_order():
 
     # The shared rule contract lets the engine use different concrete rules
     # without adding rule-specific branches to the engine.
+    assert manager.score(record) == 45
+
+
+@pytest.mark.parametrize(
+    "rule_type, changes, expected_score",
+    [
+        (DisclosureRule, {"submitted_category": "password"}, 90),
+        (SuspiciousInteractionRule, {"findings": {"suspicious": True}, "clicked": True}, 80),
+        (
+            SuspiciousCredentialRule,
+            {"findings": {"suspicious": True, "credential_request": True}},
+            60,
+        ),
+        (SuspiciousRule, {"findings": {"suspicious": True}}, 45),
+        (CredentialRequestRule, {"findings": {"credential_request": True}}, 40),
+        (ReportedInteractionRule, {"downloaded": True}, 35),
+        (InsufficientContextRule, {"findings": {"insufficient_context": True}}, 20),
+        (DefaultRule, {}, 10),
+    ],
+)
+def test_each_priority_rule_returns_an_immutable_outcome(rule_type, changes, expected_score):
+    outcome = rule_type().evaluate(_assessment_record(**deepcopy(changes)))
+
+    assert outcome == RuleOutcome(rule_name=rule_type.__name__, score=expected_score)
+    with pytest.raises(FrozenInstanceError):
+        outcome.score = 0
+
+
+def test_logic_manager_exposes_rule_outcome_without_changing_score_api():
+    record = _assessment_record(findings={"suspicious": True})
+    manager = LogicManager()
+
+    outcome = manager.rule_outcome(record)
+
+    assert outcome.rule_name == "SuspiciousRule"
+    assert outcome.score == 45
+    assert outcome.trace == (
+        RuleTrace("DisclosureRule", False),
+        RuleTrace("SuspiciousInteractionRule", False),
+        RuleTrace("SuspiciousCredentialRule", False),
+        RuleTrace("SuspiciousRule", True, 45),
+    )
     assert manager.score(record) == 45
 
 
@@ -228,27 +289,35 @@ def test_priority_thresholds(monkeypatch, logic_target, value, priority, operati
         calls.append(received)
         return value
 
-    monkeypatch.setattr(logic_target, "score", fixed_score)
+    if operation == "route":
+        monkeypatch.setattr(logic_target, "score", fixed_score)
+    else:
+        def fixed_outcome(received):
+            """Record the outcome call and supply the requested boundary value."""
+            calls.append(received)
+            return RuleOutcome("BoundaryRule", value)
+
+        monkeypatch.setattr(logic_target, "rule_outcome", fixed_outcome)
     result = getattr(logic_target, operation)(record)
     assert result["score"] == value
     assert result["priority"] == priority
     assert calls == [record]
 
 
-def test_evaluate_scores_once(monkeypatch, logic_target):
-    """Check real scoring and validation run once without changing the record."""
+def test_evaluate_gets_one_rule_outcome(monkeypatch, logic_target):
+    """Check evaluation calculates its rule outcome once without changing input."""
     record = _assessment_record(submitted_category="password")
     original = deepcopy(record)
-    original_score = logic_target.score
+    original_outcome = logic_target.rule_outcome
     calls = []
 
-    def track_score(received):
-        """Count scoring calls while preserving actual validation and rules."""
+    def track_outcome(received):
+        """Count rule outcome calls while preserving validation and rules."""
         calls.append(received)
-        return original_score(received)
+        return original_outcome(received)
 
-    # Wrap real scoring so this regression also exercises record validation.
-    monkeypatch.setattr(logic_target, "score", track_score)
+    # Wrap real rule evaluation so this regression exercises validation and rules.
+    monkeypatch.setattr(logic_target, "rule_outcome", track_outcome)
     result = logic_target.evaluate(record)
 
     assert len(calls) == 1
@@ -258,26 +327,43 @@ def test_evaluate_scores_once(monkeypatch, logic_target):
     assert record == original
 
 
-def test_evaluate_routes_once(monkeypatch, logic_target):
-    """Check evaluation calls route once and uses its returned outcome."""
+def test_evaluate_uses_one_rule_outcome_for_routing_trace_and_guidance(monkeypatch, logic_target):
+    """Check routing, trace, and guidance share one rule outcome value."""
     record = _assessment_record()
     original = deepcopy(record)
     calls = []
+    expected_trace = (RuleTrace("SyntheticRule", True, 80),)
 
-    def fixed_route(received):
-        """Track routing and return an outcome distinct from this record's score."""
+    def fixed_outcome(received):
+        """Return an outcome distinct from this record's default rule."""
         calls.append(received)
-        return {"score": 80, "priority": "HIGH"}
+        return RuleOutcome("SyntheticRule", 80, expected_trace)
 
-    # A distinct outcome detects evaluation bypassing or discarding routing.
-    monkeypatch.setattr(logic_target, "route", fixed_route)
+    monkeypatch.setattr(logic_target, "rule_outcome", fixed_outcome)
     result = logic_target.evaluate(record)
 
     assert len(calls) == 1
     assert calls[0] is record
     assert result["score"] == 80
     assert result["priority"] == "HIGH"
+    assert result["matched_rule"] == "SyntheticRule"
+    assert result["trace"] == [step.as_dict() for step in expected_trace]
     assert record == original
+
+
+def test_evaluation_result_is_json_serializable_for_interfaces():
+    result = LogicManager().evaluate(
+        _assessment_record(findings={"suspicious": True, "credential_request": True})
+    )
+
+    serialized = json.loads(json.dumps(result))
+
+    assert serialized["matched_rule"] == "SuspiciousCredentialRule"
+    assert serialized["trace"][-1] == {
+        "rule_name": "SuspiciousCredentialRule",
+        "matched": True,
+        "score": 60,
+    }
 
 
 @pytest.mark.parametrize(

@@ -54,6 +54,9 @@ def test_a_text_message_gets_provisional_questions_without_initial_save():
     reply = reply_text(update)
     assert "Priority: Medium" in reply
     assert "Rule-based score: 60" in reply
+    assert "Matched rule: SuspiciousCredentialRule" in reply
+    assert "Rule evaluation trace:" in reply
+    assert "SuspiciousCredentialRule: matched (score: 60)" in reply
     assert reply.endswith(ResultFormatter.FOOTER)
     assert "Provisional assessment" in reply
     assert "Did you click the link / download the file?" in reply
@@ -512,3 +515,21 @@ def test_result_formatter_keeps_long_results_within_the_chat_limit():
 
     assert len(text) <= MAX_REPLY_CHARS + len(ResultFormatter.FOOTER) + 2
     assert text.endswith(ResultFormatter.FOOTER)
+
+
+def test_telegram_assessment_renders_the_rule_trace():
+    result = {
+        "priority": "HIGH",
+        "score": 80,
+        "matched_rule": "SuspiciousInteractionRule",
+        "trace": [
+            {"rule_name": "DisclosureRule", "matched": False, "score": None},
+            {"rule_name": "SuspiciousInteractionRule", "matched": True, "score": 80},
+        ],
+    }
+
+    text = ResultFormatter().format(result)
+
+    assert "Matched rule: SuspiciousInteractionRule" in text
+    assert "DisclosureRule: not matched" in text
+    assert "SuspiciousInteractionRule: matched (score: 80)" in text
