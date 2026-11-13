@@ -16,6 +16,7 @@ from phishreport.bot.messages import (
     ResultFormatter,
 )
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
+from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.logic import LogicManager
 
 ALLOWED_CHAT_ID = 12345
@@ -45,6 +46,14 @@ def reply_text(update):
     return update.effective_message.reply_text.call_args.args[0]
 
 
+def callback_with(data, chat_id=ALLOWED_CHAT_ID, chat_type="private"):
+    return SimpleNamespace(
+        effective_chat=SimpleNamespace(id=chat_id, type=chat_type),
+        effective_message=SimpleNamespace(reply_text=AsyncMock()),
+        callback_query=SimpleNamespace(data=data, answer=AsyncMock()),
+    )
+
+
 def test_a_text_message_gets_provisional_questions_without_initial_save():
     manager, data_manager = build()
     update = update_with("Verify your password now")
@@ -69,6 +78,85 @@ def test_a_text_message_gets_provisional_questions_without_initial_save():
     assert session.reply_message_id == 1100
     assert update.effective_message.reply_text.call_args.kwargs["reply_markup"] is not None
 
+
+def test_telegram_feedback_flow_saves_a_comment_for_the_original_assessment(tmp_path):
+    async def run_flow():
+        ai_manager = Mock(**{"assess.return_value": FINDINGS})
+        data_manager = DataManager(JsonReportStorage(tmp_path / "reports.json"))
+        feedback_store = FeedbackStore(tmp_path / "feedback.json")
+        service = AssessmentService(ai_manager, LogicManager())
+        manager = TelegramIOManager(
+            data_manager,
+            ALLOWED_CHAT_ID,
+            assessment=service,
+            feedback_service=FeedbackService(feedback_store),
+        )
+        context = SimpleNamespace(user_data={})
+        assessment_update = update_with("Verify your password now")
+        await manager.assess_message(assessment_update, context)
+
+        session, = manager._sessions.values()
+        save_update = callback_for(session, "finish")
+        await manager.exposure_callback(save_update, context)
+        keyboard = save_update.callback_query.edit_message_text.call_args.kwargs[
+            "reply_markup"
+        ]
+        assert keyboard.inline_keyboard[0][0].callback_data.startswith("fb:o:")
+        report = data_manager.load(strict=True)[0]
+        assessment_id = report["assessment_id"]
+
+        await manager.handle_feedback_callback(callback_with(f"fb:o:{assessment_id}"), context)
+        await manager.handle_feedback_callback(
+            callback_with(f"fb:c:fn:{assessment_id}"), context
+        )
+        await manager.assess_message(update_with("The message impersonated my bank."), context)
+
+        [feedback] = feedback_store.load()
+        assert feedback.assessment_id == assessment_id
+        assert feedback.category == "false_negative"
+        assert feedback.comment == "The message impersonated my bank."
+        assert feedback.assessment_score == report["result"]["score"]
+        assert "message" not in feedback.to_dict()
+        assert data_manager.load(strict=True) == [report]
+        ai_manager.assess.assert_called_once()
+
+    asyncio.run(run_flow())
+
+
+def test_telegram_feedback_can_submit_a_corrected_priority_without_comment(tmp_path):
+    async def run_flow():
+        ai_manager = Mock(**{"assess.return_value": FINDINGS})
+        data_manager = DataManager(JsonReportStorage(tmp_path / "reports.json"))
+        feedback_store = FeedbackStore(tmp_path / "feedback.json")
+        manager = TelegramIOManager(
+            data_manager,
+            ALLOWED_CHAT_ID,
+            assessment=AssessmentService(ai_manager, LogicManager()),
+            feedback_service=FeedbackService(feedback_store),
+        )
+        context = SimpleNamespace(user_data={})
+        await manager.assess_message(update_with("Verify your password now"), context)
+        session, = manager._sessions.values()
+        await manager.exposure_callback(callback_for(session, "finish"), context)
+        assessment_id = data_manager.load(strict=True)[0]["assessment_id"]
+
+        await manager.handle_feedback_callback(callback_with(f"fb:o:{assessment_id}"), context)
+        await manager.handle_feedback_callback(
+            callback_with(f"fb:c:ip:{assessment_id}"), context
+        )
+        await manager.handle_feedback_callback(
+            callback_with(f"fb:p:L:{assessment_id}"), context
+        )
+        await manager.handle_feedback_callback(callback_with(f"fb:s:{assessment_id}"), context)
+
+        [feedback] = feedback_store.load()
+        assert feedback.category == "incorrect_priority"
+        assert feedback.corrected_priority == "LOW"
+        assert feedback.comment is None
+        assert data_manager.load(strict=True)[0]["result"]["priority"] == "MEDIUM"
+        assert context.user_data == {}
+
+    asyncio.run(run_flow())
 
 
 @pytest.mark.parametrize(
@@ -194,6 +282,7 @@ def test_initial_to_final_real_storage_keeps_answers_and_metadata(tmp_path, back
         await manager.exposure_callback(callback_for(session, "skip"), None)
         report, = data.load(strict=True)
         assert report["schema_version"] == 3
+        assert report["assessment_id"]
         assert report["message"] == source
         assert report["link"] == "https://example.test/login"
         assert report["file_name"] == "invoice.pdf"

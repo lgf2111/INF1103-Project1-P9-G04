@@ -22,21 +22,38 @@ def v2_report():
     }
 
 
+def v3_feedback_report():
+    """Return a version-3 report with a stable feedback-link identifier."""
+    return {
+        "schema_version": 3,
+        "assessment_id": "assessment-123",
+        "channel": "email",
+        "message": "Original message",
+        "result": {
+            "score": 60,
+            "priority": "MEDIUM",
+            "reasons": ["Reason."],
+            "checklist": [],
+        },
+    }
+
+
 def v2_report_with_trace():
     """Return a version-2 report with the optional rule explanation fields."""
     report = v2_report()
     report["result"].update(
         {
-            "matched_rule": "DisclosureRule",
+            "matched_rule": "DefaultRule",
             "trace": [
-                {"rule_name": "DisclosureRule", "matched": True, "score": 0},
+                {"rule_name": "DefaultRule", "matched": True, "score": 10},
             ],
         }
     )
+    report["result"]["score"] = 10
     return report
 
 
-def v3_report():
+def v3_exposure_report():
     return {
         "schema_version": 3,
         "channel": " telegram ",
@@ -79,7 +96,7 @@ def v3_report():
 def test_v3_preserves_nullable_exposure_and_original_record(
     clicked, downloaded, category, answered, method
 ):
-    record = v3_report()
+    record = v3_exposure_report()
     record["exposure"] = {
         "clicked": clicked,
         "downloaded": downloaded,
@@ -107,7 +124,7 @@ def test_v3_preserves_nullable_exposure_and_original_record(
 )
 @pytest.mark.parametrize("method", ["_validate_v3", "validate_new", "validate_stored"])
 def test_v3_accepts_absent_metadata_and_generic_attachment(metadata, method):
-    record = v3_report()
+    record = v3_exposure_report()
     record.update(metadata)
     before = deepcopy(record)
     assert getattr(validator(), method)(record) is record
@@ -127,7 +144,7 @@ def test_v3_rejects_nonobject_records(record, method):
 @pytest.mark.parametrize("extra", [False, True], ids=["missing", "extra"])
 @pytest.mark.parametrize("method", ["_validate_v3", "validate_new", "validate_stored"])
 def test_v3_requires_exact_fields(section, extra, method):
-    record = v3_report()
+    record = v3_exposure_report()
     fields = record if section is None else record[section]
     if extra:
         fields["unknown"] = None
@@ -152,6 +169,9 @@ def test_v3_requires_exact_fields(section, extra, method):
         ("schema_version", 3.0),
         ("schema_version", "3"),
         ("schema_version", 2),
+        ("assessment_id", " "),
+        ("assessment_id", None),
+        ("assessment_id", 1),
         ("channel", " \n"),
         ("channel", None),
         ("message", "\t"),
@@ -174,7 +194,7 @@ def test_v3_requires_exact_fields(section, extra, method):
 )
 @pytest.mark.parametrize("method", ["_validate_v3", "validate_new", "validate_stored"])
 def test_v3_rejects_invalid_root_fields_without_mutation(field, value, method):
-    record = v3_report()
+    record = v3_exposure_report()
     record[field] = value
     before = deepcopy(record)
     with pytest.raises(ValueError):
@@ -201,7 +221,7 @@ def test_v3_rejects_invalid_root_fields_without_mutation(field, value, method):
 def test_v3_rejects_invalid_or_unanswered_disclosure_without_mutation(
     field, value, method
 ):
-    record = v3_report()
+    record = v3_exposure_report()
     record["exposure"][field] = value
     before = deepcopy(record)
     with pytest.raises(ValueError):
@@ -221,7 +241,7 @@ def test_v3_rejects_invalid_or_unanswered_disclosure_without_mutation(
 )
 @pytest.mark.parametrize("method", ["_validate_v3", "validate_new", "validate_stored"])
 def test_v3_rejects_invalid_assessment_without_mutation(field, value, method):
-    record = v3_report()
+    record = v3_exposure_report()
     record["result"][field] = value
     before = deepcopy(record)
     with pytest.raises(ValueError):
@@ -229,7 +249,9 @@ def test_v3_rejects_invalid_assessment_without_mutation(field, value, method):
     assert record == before
 
 
-@pytest.mark.parametrize("factory", [v2_report, v3_report])
+@pytest.mark.parametrize(
+    "factory", [v2_report, v3_feedback_report, v3_exposure_report]
+)
 @pytest.mark.parametrize("version", [True, False, 2.0, 3.0, "3", None, [], {}, 0, 1, 4])
 def test_new_rejects_invalid_schema_versions_without_mutation(factory, version):
     record = factory()
@@ -240,7 +262,9 @@ def test_new_rejects_invalid_schema_versions_without_mutation(factory, version):
     assert record == before
 
 
-@pytest.mark.parametrize("factory", [v2_report, v3_report])
+@pytest.mark.parametrize(
+    "factory", [v2_report, v3_feedback_report, v3_exposure_report]
+)
 @pytest.mark.parametrize(
     "version", [True, False, 1.0, 2.0, 3.0, "3", None, [], {}, 0, 4]
 )
@@ -298,6 +322,16 @@ def test_v2_returns_original_without_normalizing(method):
 
 
 @pytest.mark.parametrize("method", ["validate_new", "validate_stored"])
+def test_v3_returns_original_without_normalizing(method):
+    record = v3_feedback_report()
+
+    before = deepcopy(record)
+
+    assert getattr(validator(), method)(record) is record
+    assert record == before
+
+
+@pytest.mark.parametrize("method", ["validate_new", "validate_stored"])
 def test_v2_accepts_and_retains_a_rule_trace(method):
     record = v2_report_with_trace()
     before = deepcopy(record)
@@ -314,22 +348,22 @@ def test_v2_accepts_and_retains_a_rule_trace(method):
         {"matched_rule": " ", "trace": []},
         {"matched_rule": "DisclosureRule", "trace": "not a list"},
         {
-            "matched_rule": "DisclosureRule",
-            "trace": [{"rule_name": "DisclosureRule", "matched": True, "score": True}],
+            "matched_rule": "DefaultRule",
+            "trace": [{"rule_name": "DefaultRule", "matched": True, "score": True}],
         },
         {
-            "matched_rule": "DisclosureRule",
-            "trace": [{"rule_name": "DisclosureRule", "matched": False, "score": 0}],
+            "matched_rule": "DefaultRule",
+            "trace": [{"rule_name": "DefaultRule", "matched": False, "score": 10}],
         },
         {
             "matched_rule": "OtherRule",
-            "trace": [{"rule_name": "DisclosureRule", "matched": True, "score": 0}],
+            "trace": [{"rule_name": "DefaultRule", "matched": True, "score": 10}],
         },
         {
-            "matched_rule": "DisclosureRule",
+            "matched_rule": "DefaultRule",
             "trace": [
-                {"rule_name": "DisclosureRule", "matched": True, "score": 0},
-                {"rule_name": "OtherRule", "matched": True, "score": 0},
+                {"rule_name": "DefaultRule", "matched": True, "score": 10},
+                {"rule_name": "OtherRule", "matched": True, "score": 10},
             ],
         },
     ],
@@ -370,13 +404,62 @@ def test_stored_historical_records_keep_missing_and_unknown_fields(record):
     assert record == before
 
 
-@pytest.mark.parametrize("version", [True, False, 2.0, "2", None, 0, 3])
+@pytest.mark.parametrize("version", [True, False, 2.0, "2", None, 0, 4])
 @pytest.mark.parametrize("method", ["validate_new", "validate_stored"])
 def test_v2_shape_rejects_mismatched_or_noninteger_schema_versions(version, method):
     record = v2_report()
     record["schema_version"] = version
     with pytest.raises(ValueError):
         getattr(validator(), method)(record)
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("assessment_id", " "),
+        ("assessment_id", None),
+        ("assessment_id", 1),
+        ("channel", " "),
+        ("message", " "),
+    ],
+)
+@pytest.mark.parametrize("method", ["validate_new", "validate_stored"])
+def test_v3_rejects_invalid_identifier_and_text(field, value, method):
+    record = v3_feedback_report()
+    record[field] = value
+    before = deepcopy(record)
+
+    with pytest.raises(ValueError):
+        getattr(validator(), method)(record)
+
+    assert record == before
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("matched_rule", "DisclosureRule"),
+        ("trace", []),
+    ],
+)
+def test_v3_requires_rule_identity_and_trace_together(field, value):
+    record = v3_feedback_report()
+    record["result"][field] = value
+
+    with pytest.raises(ValueError):
+        validator().validate_new(record)
+
+
+def test_v3_accepts_a_valid_rule_trace():
+    record = v3_feedback_report()
+    record["result"].update(
+        {
+            "matched_rule": "DisclosureRule",
+            "trace": [{"rule_name": "DisclosureRule", "matched": True, "score": 60}],
+        }
+    )
+
+    assert validator().validate_new(record) is record
 
 
 @pytest.mark.parametrize(
@@ -549,7 +632,7 @@ def test_manager_v3_round_trip_preserves_mixed_history_and_independent_reads(
         v2_report(),
     ]
     storage.write_records(history)
-    report = v3_report()
+    report = v3_exposure_report()
     report["exposure"] = exposure
     report["result"] = {
         "score": score,
@@ -589,7 +672,7 @@ def test_manager_v3_round_trip_preserves_mixed_history_and_independent_reads(
 def test_manager_corrupt_v3_history_blocks_append_without_changing_storage(
     storage, section, field, value
 ):
-    corrupt = v3_report()
+    corrupt = v3_exposure_report()
     target = corrupt if section is None else corrupt[section]
     target[field] = value
     history = [v1_report(), v2_report(), corrupt]
@@ -602,7 +685,7 @@ def test_manager_corrupt_v3_history_blocks_append_without_changing_storage(
     with pytest.raises(ValueError):
         subject.load(strict=True)
     with pytest.raises(ValueError):
-        subject.save(v3_report())
+        subject.save(v3_exposure_report())
     assert storage.read_records() == before
     if json_bytes is not None:
         assert storage._path.read_bytes() == json_bytes
@@ -610,7 +693,15 @@ def test_manager_corrupt_v3_history_blocks_append_without_changing_storage(
 
 def test_storage_contract_round_trip_replacement_and_order(storage):
     assert storage.read_records() == []
-    records = [v2_report(), v1_report(), summary_report(), {}, {"unknown": "保留"}]
+    records = [
+        v2_report(),
+        v3_feedback_report(),
+        v3_exposure_report(),
+        v1_report(),
+        summary_report(),
+        {},
+        {"unknown": "保留"},
+    ]
     before = deepcopy(records)
     storage.write_records(records)
     assert records == before

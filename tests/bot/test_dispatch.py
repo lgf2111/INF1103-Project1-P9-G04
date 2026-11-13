@@ -208,7 +208,8 @@ def test_main_dispatch_exposure_acceptance(
             assert session.completed and session.saved
             report, = writes
             assert report == {
-                "schema_version": 3, "channel": "chat", "message": TEXT, "sender": None,
+                "schema_version": 3, "assessment_id": report["assessment_id"],
+                "channel": "chat", "message": TEXT, "sender": None,
                 "has_link": True, "link": "https://example.test/login",
                 "has_file": True, "file_name": "invoice.pdf",
                 "exposure": expected_exposure, "result": session.result,
@@ -224,7 +225,9 @@ def test_main_dispatch_exposure_acceptance(
             unconfirmed = clicked is None or downloaded is None or not disclosure_answered
             assert ("Unconfirmed" in final_edit["text"]) is unconfirmed
             assert ("Exposure unconfirmed" in final_edit["text"]) is unconfirmed
-            assert final_edit.get("reply_markup") is None
+            assert final_edit["reply_markup"]["inline_keyboard"][0][0]["callback_data"] == (
+                f"fb:o:{report['assessment_id']}"
+            )
 
             frozen_report = deepcopy(report)
             frozen_result = deepcopy(session.result)
@@ -338,6 +341,7 @@ def test_main_dispatch_stays_responsive_during_exposure_storage(monkeypatch, tmp
         assert len(writes) == 1 and ai.assess.call_count == 2
         report, = manager._data_manager.load(strict=True)
         assert report["schema_version"] == 3
+        assert report["assessment_id"]
         assert report["channel"] == "chat" and report["message"] == TEXT
         assert report["has_link"] and report["link"] == "https://example.test/login"
         assert report["has_file"] and report["file_name"] == "invoice.pdf"

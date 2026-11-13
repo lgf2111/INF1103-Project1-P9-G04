@@ -8,6 +8,7 @@ here means both interfaces share one definition of an assessment.
 
 from copy import deepcopy
 from dataclasses import dataclass
+from uuid import uuid4
 
 
 @dataclass
@@ -34,7 +35,8 @@ class AssessmentService:
         """
         findings = self._ai_manager.assess(record)
         # Enrich a new dictionary only after every AI check passes.
-        return self._logic_manager.evaluate({**record, "ai": findings})
+        result = self._logic_manager.evaluate({**record, "ai": findings})
+        return {**result, "assessment_id": str(uuid4())}
 
     def assess_with_findings(self, record: dict) -> AssessmentSnapshot:
         """Assess once and retain independent copies of findings and result.
@@ -61,12 +63,17 @@ class AssessmentService:
 
     @staticmethod
     def build_report(record: dict, result: dict) -> dict:
-        """Return the version-2 report that keeps the message and its assessment."""
+        """Return a version-3 report with a stable identifier for feedback links."""
+        assessment_id = result.get("assessment_id")
+        if not isinstance(assessment_id, str) or not assessment_id.strip():
+            raise ValueError("Assessment result is missing its identifier.")
+        saved_result = {key: value for key, value in result.items() if key != "assessment_id"}
         return {
-            "schema_version": 2,
+            "schema_version": 3,
+            "assessment_id": assessment_id,
             "channel": record["channel"],
             "message": record["message"],
-            "result": result,
+            "result": saved_result,
         }
 
     @staticmethod
@@ -79,6 +86,7 @@ class AssessmentService:
         return deepcopy(
             {
                 "schema_version": 3,
+                "assessment_id": str(uuid4()),
                 "channel": record["channel"],
                 "message": record["message"],
                 "result": result,

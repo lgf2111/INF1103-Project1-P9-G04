@@ -113,6 +113,54 @@ class IOManager:
 
         return answer in ("y", "yes")
 
+    def collect_feedback(self) -> dict | None:
+        """Collect one optional correction about the assessment just displayed."""
+        if not self.ask_yes_no(
+            "Would you like to leave feedback about this assessment? (yes/no): "
+        ):
+            return None
+
+        categories = {
+            "1": "false_positive",
+            "2": "false_negative",
+            "3": "incorrect_priority",
+            "4": "incorrect_explanation",
+            "5": "application_bug",
+            "6": "usability_issue",
+            "7": "other",
+        }
+        self._terminal.write("1. False positive (this looks safe)")
+        self._terminal.write("2. False negative (this looks suspicious)")
+        self._terminal.write("3. Incorrect priority")
+        self._terminal.write("4. Incorrect explanation")
+        self._terminal.write("5. Application bug")
+        self._terminal.write("6. Usability issue")
+        self._terminal.write("7. Other")
+        choice = self.get_valid_choice(
+            "Choose a feedback category (1-7): ",
+            tuple(categories),
+            "Invalid category. Please choose 1-7: ",
+        )
+        category = categories[choice]
+        corrected_priority = None
+        if category == "incorrect_priority":
+            corrected_priority = self.get_valid_choice(
+                "What should the priority be (high/medium/low)? ",
+                ("high", "medium", "low"),
+                "Please choose high, medium, or low: ",
+            ).upper()
+
+        comment = self._terminal.read("Additional details (press Enter to skip): ")
+        while len(comment) > 2000:
+            comment = self._terminal.read(
+                "Details must be at most 2000 characters. Please try again: "
+            )
+        return {
+            "category": category,
+            "comment": comment or None,
+            "corrected_priority": corrected_priority,
+        }
+
     def get_channel(self):
         """Return the user-selected channel: email, sms or chat."""
         return self.get_valid_choice(

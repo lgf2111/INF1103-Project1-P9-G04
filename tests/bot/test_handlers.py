@@ -1085,7 +1085,7 @@ def test_launcher_registers_welcome_and_button_handlers_for_polling(monkeypatch)
 
     (app,) = polling.call_args.args
     polling.assert_called_once_with(app, allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])
-    start, link, checkmail, unlink, check, exposure, text = app.handlers[0]
+    start, link, checkmail, unlink, check, feedback, exposure, text = app.handlers[0]
     assert isinstance(start, CommandHandler)
     assert start.commands == {"start"}
     assert link.commands == {"linkgmail"}
@@ -1096,6 +1096,9 @@ def test_launcher_registers_welcome_and_button_handlers_for_polling(monkeypatch)
     assert not check.pattern.match(CHECK_CONNECTION + "\n")
     assert check.callback.__name__ == "check_connection"
     assert check.block
+    assert isinstance(feedback, CallbackQueryHandler)
+    assert feedback.pattern.match("fb:o:assessment-123")
+    assert not feedback.pattern.match("other:assessment-123")
     assert isinstance(exposure, CallbackQueryHandler)
     assert exposure.callback.__self__ is check.callback.__self__
     assert exposure.callback.__name__ == "exposure_callback"

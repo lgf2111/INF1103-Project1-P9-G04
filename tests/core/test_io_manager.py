@@ -48,6 +48,25 @@ def test_io_manager_ask_yes_no_reprompts_invalid_input(monkeypatch):
     assert result is True
 
 
+def test_io_manager_collect_feedback_returns_an_assessment_correction(monkeypatch):
+    answers = iter(["yes", "3", "low", "The message was an internal test."])
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    feedback = io_manager.collect_feedback()
+
+    assert feedback == {
+        "category": "incorrect_priority",
+        "comment": "The message was an internal test.",
+        "corrected_priority": "LOW",
+    }
+
+
+def test_io_manager_collect_feedback_can_be_skipped(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "no")
+
+    assert io_manager.collect_feedback() is None
+
+
 @pytest.mark.parametrize("choice", ["1", "2", "3", "4", "5", "6"])
 def test_io_manager_main_menu_accepts_valid_choice(monkeypatch, choice):
     monkeypatch.setattr("builtins.input", lambda _: choice)
@@ -991,13 +1010,20 @@ def test_io_display_check_new_message_displays_full_record(cli, monkeypatch, cap
     assert "Priority:" in output
     assert "Rule-based score:" in output  # Changed from "Score:"
     assert "Recommended actions:" in output
+    assert "Rule evaluation trace:" in output
 
     # Verify the saved data structure
     assert len(saved) == 1
     assert saved[0]["channel"] == "sms"
     assert saved[0]["message"] == message
-    assert set(saved[0]) == {"schema_version", "channel", "message", "result"}
-    assert saved[0]["schema_version"] == 2
+    assert set(saved[0]) == {
+        "schema_version",
+        "assessment_id",
+        "channel",
+        "message",
+        "result",
+    }
+    assert saved[0]["schema_version"] == 3
     assert set(saved[0]["result"]) == {
         "score",
         "priority",
@@ -1005,6 +1031,12 @@ def test_io_display_check_new_message_displays_full_record(cli, monkeypatch, cap
         "checklist",
         "matched_rule",
         "trace",
+    }
+    assert saved[0]["result"]["matched_rule"] == "DefaultRule"
+    assert saved[0]["result"]["trace"][-1] == {
+        "rule_name": "DefaultRule",
+        "matched": True,
+        "score": 10,
     }
 
     assert len(api_calls) == 1

@@ -5,13 +5,14 @@ import json
 import logging
 import urllib.error
 from pathlib import Path
-from unittest.mock import MagicMock, Mock, call
+from unittest.mock import ANY, MagicMock, Mock, call
 
 import pytest
 
 from phishreport.ai import GroqClient, groq_client
 from phishreport.cli import main, web_upload
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
+from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.logging_setup import AppLogging
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
@@ -88,8 +89,16 @@ def test_cli_app_uses_its_own_managers_for_each_assessment():
             call.io.collect_input(),
             call.ai.assess(record),
             call.logic.evaluate({**record, "ai": findings}),
-            call.data.save({"schema_version": 2, **record, "result": result}),
-            call.io.display_result(result),
+            call.data.save(
+                {
+                    "schema_version": 3,
+                    "assessment_id": ANY,
+                    "channel": record["channel"],
+                    "message": record["message"],
+                    "result": result,
+                }
+            ),
+            call.io.display_result({**result, "assessment_id": ANY}),
         ]
         return app, collaborators, expected
 
@@ -99,6 +108,82 @@ def test_cli_app_uses_its_own_managers_for_each_assessment():
     second.check_message()
     assert first_managers.mock_calls == first_calls
     assert second_managers.mock_calls == second_calls
+    first_saved = first_managers.data.save.call_args.args[0]
+    first_shown = first_managers.io.display_result.call_args.args[0]
+    assert first_saved["assessment_id"] == first_shown["assessment_id"]
+
+
+def test_cli_stores_optional_feedback_without_changing_the_assessment(tmp_path):
+    record = {"channel": "email", "message": "A fictional message asks for a password."}
+    io_manager = Mock()
+    io_manager.collect_feedback.return_value = {
+        "category": "incorrect_priority",
+        "comment": "This was an internal test message.",
+        "corrected_priority": "LOW",
+    }
+    ai_manager = Mock(**{"assess.return_value": {"suspicious": True}})
+    logic_manager = Mock(
+        **{
+            "evaluate.return_value": {
+                "score": 60,
+                "priority": "MEDIUM",
+                "reasons": ["The message asks for credentials."],
+                "checklist": ["Verify through a trusted channel."],
+            }
+        }
+    )
+    data_manager = DataManager(JsonReportStorage(tmp_path / "reports.json"))
+    feedback_store = FeedbackStore(tmp_path / "feedback.json")
+    app = main.PhishReportApp(
+        io_manager,
+        ai_manager,
+        logic_manager,
+        data_manager,
+        feedback_service=FeedbackService(feedback_store),
+    )
+
+    app.check_message(record)
+
+    [report] = data_manager.load(strict=True)
+    [feedback] = feedback_store.load()
+    assert report["result"]["score"] == 60
+    assert feedback.assessment_id == report["assessment_id"]
+    assert feedback.category == "incorrect_priority"
+    assert feedback.corrected_priority == "LOW"
+    assert feedback.assessment_score == report["result"]["score"]
+    assert "message" not in feedback.to_dict()
+    assert "saved for review" in io_manager.show_message.call_args.args[0]
+
+
+def test_cli_does_not_offer_feedback_when_the_report_could_not_be_saved():
+    io_manager = Mock()
+    ai_manager = Mock(**{"assess.return_value": {"suspicious": True}})
+    logic_manager = Mock(
+        **{
+            "evaluate.return_value": {
+                "score": 60,
+                "priority": "MEDIUM",
+                "reasons": ["The message asks for credentials."],
+                "checklist": [],
+            }
+        }
+    )
+    data_manager = Mock()
+    data_manager.save.side_effect = OSError("disk full")
+    feedback_service = Mock()
+    app = main.PhishReportApp(
+        io_manager,
+        ai_manager,
+        logic_manager,
+        data_manager,
+        feedback_service=feedback_service,
+    )
+
+    app.check_message({"channel": "email", "message": "A fictional message."})
+
+    io_manager.display_result.assert_called_once()
+    io_manager.collect_feedback.assert_not_called()
+    feedback_service.submit.assert_not_called()
 
 
 @pytest.fixture
@@ -229,7 +314,12 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
         assert "https://credential.example.test/login" in message
         assert "<p>" not in message and "Content-Type:" not in message
         assert records[0]["result"]["score"] == expected_score
-        cli.io_manager.display_result.assert_called_once_with(records[0]["result"])
+        cli.io_manager.display_result.assert_called_once()
+        displayed = cli.io_manager.display_result.call_args.args[0]
+        assert displayed["assessment_id"] == records[0]["assessment_id"]
+        assert {
+            key: value for key, value in displayed.items() if key != "assessment_id"
+        } == records[0]["result"]
 
 
 @pytest.mark.parametrize(
@@ -311,7 +401,12 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
         assert len(records) == 1
         assert records[0]["message"] == "Subject: Fictional request\n\n" + body
         assert records[0]["result"]["score"] == 60
-        cli.io_manager.display_result.assert_called_once_with(records[0]["result"])
+        cli.io_manager.display_result.assert_called_once()
+        displayed = cli.io_manager.display_result.call_args.args[0]
+        assert displayed["assessment_id"] == records[0]["assessment_id"]
+        assert {
+            key: value for key, value in displayed.items() if key != "assessment_id"
+        } == records[0]["result"]
 
 
 @pytest.mark.parametrize("failure", ["input", "timeout", "http", "incomplete", "json", "schema"])
@@ -376,10 +471,15 @@ def test_main_successful_assessment_reaches_real_logic_and_storage(
     saved = DataManager().load()
     assert saved == [
         {
-            "schema_version": 2,
+            "schema_version": 3,
+            "assessment_id": cli.io_manager.display_result.call_args.args[0]["assessment_id"],
             "channel": record["channel"],
             "message": record["message"],
-            "result": cli.io_manager.display_result.call_args.args[0],
+            "result": {
+                key: value
+                for key, value in cli.io_manager.display_result.call_args.args[0].items()
+                if key != "assessment_id"
+            },
         }
     ]
     assert record == original
@@ -531,13 +631,19 @@ def test_main_combined_caller_passes_validated_findings_to_logic_once(
     evaluate.assert_called_once_with({**record, "ai": data})
     assert "ai" not in record
     save.assert_called_once()
-    assert save.call_args.args[0] == {
-        "schema_version": 2,
+    saved_report = save.call_args.args[0]
+    displayed_result = cli.io_manager.display_result.call_args.args[0]
+    assert saved_report == {
+        "schema_version": 3,
+        "assessment_id": displayed_result["assessment_id"],
         "channel": record["channel"],
         "message": record["message"],
-        "result": result,
+        "result": {key: value for key, value in displayed_result.items() if key != "assessment_id"},
     }
-    cli.io_manager.display_result.assert_called_once_with(result)
+    displayed_assessment = {
+        key: value for key, value in displayed_result.items() if key != "assessment_id"
+    }
+    assert displayed_assessment == result
     main_app_boundary.assert_called_once()
 
 
@@ -585,10 +691,15 @@ def test_main_recovered_timeout_saves_and_displays_only_one_assessment(
     saved = DataManager().load()
     assert len(saved) == 1
     assert saved[0] == {
-        "schema_version": 2,
+        "schema_version": 3,
+        "assessment_id": cli.io_manager.display_result.call_args.args[0]["assessment_id"],
         "channel": record["channel"],
         "message": record["message"],
-        "result": cli.io_manager.display_result.call_args.args[0],
+        "result": {
+            key: value
+            for key, value in cli.io_manager.display_result.call_args.args[0].items()
+            if key != "assessment_id"
+        },
     }
     cli.io_manager.display_result.assert_called_once()
     cli.io_manager.show_message.assert_not_called()
@@ -609,10 +720,15 @@ def test_main_timeout_fallback_reaches_real_logic_and_saves_once(
     saved = DataManager().load()
     assert saved == [
         {
-            "schema_version": 2,
+            "schema_version": 3,
+            "assessment_id": cli.io_manager.display_result.call_args.args[0]["assessment_id"],
             "channel": main_record()["channel"],
             "message": main_record()["message"],
-            "result": cli.io_manager.display_result.call_args.args[0],
+            "result": {
+                key: value
+                for key, value in cli.io_manager.display_result.call_args.args[0].items()
+                if key != "assessment_id"
+            },
         }
     ]
     cli.io_manager.display_result.assert_called_once()
