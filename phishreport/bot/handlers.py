@@ -11,6 +11,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from phishreport.ai.errors import AIErrorTranslator
+from phishreport.assessment import AssessmentSnapshot
 from phishreport.bot.exposure import ExposureSession
 from phishreport.bot.feedback_ui import (
     CATEGORY_CODES,
@@ -27,6 +28,9 @@ from phishreport.bot.messages import (
     build_exposure_keyboard,
 )
 from phishreport.data import DataManager
+from phishreport.io.check_command import CheckCommand
+from phishreport.io.commands import CommandRequest, CommandRouter
+from phishreport.io.help_command import HelpCommand
 
 CHECK_CONNECTION = "check_connection"
 
@@ -296,6 +300,21 @@ class TelegramIOManager:
             await self._submit_feedback(update, context, pending, text)
             return
 
+        command = None
+        if text.lstrip().startswith("/"):
+            check = CheckCommand(
+                prepare_record=lambda request: self._record_builder.build(request.text),
+                assess_record=lambda record: self._assessment.assess_with_findings(record),
+            )
+            catalog = [check]
+            catalog.append(HelpCommand(catalog))
+            router = CommandRouter(catalog)
+            command = router.resolve(text)
+            if isinstance(command, HelpCommand):
+                reply = router.route(CommandRequest(text, "telegram"))
+                await message.reply_text(reply.text)
+                return
+
         # Initialize before the first await, so concurrent ingress shares one
         # lock. This lock never waits for callback storage or future answers.
         if not hasattr(self, "_message_lock"):
@@ -313,12 +332,23 @@ class TelegramIOManager:
                         "Finish or skip an earlier one, then try again."
                     )
                     return
-                record = self._record_builder.build(text)
+                if command is None:
+                    record = self._record_builder.build(text)
                 try:
-                    # Retain findings for later answers; AI work stays off-loop.
-                    snapshot = await asyncio.to_thread(
-                        self._assessment.assess_with_findings, record,
-                    )
+                    if command is not None:
+                        request = CommandRequest(text, "telegram")
+                        reply = await asyncio.to_thread(router.route, request)
+                        if reply.kind != "assessment":
+                            await message.reply_text(reply.text)
+                            return
+                        outcome = request.session["check_outcome"]
+                        record = outcome.record
+                        snapshot = AssessmentSnapshot(outcome.findings, outcome.result)
+                    else:
+                        # Retain findings for later answers; AI work stays off-loop.
+                        snapshot = await asyncio.to_thread(
+                            self._assessment.assess_with_findings, record,
+                        )
                 except RuntimeError as error:
                     await message.reply_text(self._error_translator.translate(error))
                     return
