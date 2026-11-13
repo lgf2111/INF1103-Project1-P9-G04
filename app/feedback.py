@@ -46,7 +46,8 @@ class Feedback:
 
     def __post_init__(self):
         """Reject invalid feedback before it can enter the local store."""
-        for name, value in (("feedback_id", self.feedback_id), ("assessment_id", self.assessment_id)):
+        for name, value in (("feedback_id", self.feedback_id), ("assessment_id", 
+                                                                self.assessment_id)):
             if not isinstance(value, str) or not value.strip() or len(value) > 100:
                 raise ValueError("Invalid feedback identifier: " + name)
         if not isinstance(self.category, str) or self.category not in FEEDBACK_CATEGORIES:
