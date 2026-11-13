@@ -34,8 +34,12 @@ required integration points, and decisions to settle before implementation.
   directly because it collects terminal input and prints to the terminal.
 - New assessments are saved in the strict version-2 report format. The current
   trace is shown for the live assessment but is not saved in report history.
-- There is no Telegram bot adapter, `FeedbackStore`, or correction workflow in
-  the repository yet.
+- There is no Telegram bot adapter or user-facing correction flow in the
+  repository yet.
+- `app/feedback.py` defines the immutable `Feedback` value object, and
+  `app/feedback_store.py` provides a separate JSON store with validation,
+  assessment-context capture, and filtering by assessment ID. It does not change
+  the version-2 assessment report format or store the original email body.
 
 ## Recommended implementation shape
 
@@ -49,9 +53,10 @@ required integration points, and decisions to settle before implementation.
    result for Telegram. Do not duplicate scoring rules or use terminal I/O from
    the bot. Keep Telegram credentials in an environment variable such as
    `TELEGRAM_BOT_TOKEN`; never commit the token or log it.
-4. Add a `FeedbackStore` class in its own file. Both interfaces should call the
-   same class to save and retrieve feedback. Store feedback separately from the
-   original assessment so a correction never overwrites its score or AI result.
+4. Integrate the existing `FeedbackStore` through the shared application
+   service. Both interfaces should call the same service/store to submit and
+   retrieve feedback. Store feedback separately so a correction never overwrites
+   its original score or AI result.
 5. Give each new assessment a stable ID so feedback reliably points to the
    correct report. The current version-2 reports do not have IDs. Recommended:
    add an ID in a new report schema version, continue reading existing
@@ -63,29 +68,55 @@ required integration points, and decisions to settle before implementation.
 
 ## Feedback record and flow
 
-Agree on the correction choices before coding. At minimum, each entry should
-identify the assessment, record whether the user agrees with the result, and
-allow an optional correction/comment. Keep the original report immutable.
-Avoid storing the entire message again in `feedback.json`; use the stable
-assessment ID and only the feedback fields needed by the project.
+The current store accepts `false_positive`, `false_negative`,
+`incorrect_priority`, `incorrect_explanation`, and `other`. Each feedback entry
+records its own ID, the assessment ID, an optional comment or corrected
+priority, and a small assessment snapshot (score, priority, reasons, and matched
+rule). It deliberately does not store the message or update the original
+report. The assessment ID must be supplied by the caller; the current CLI does
+not create one yet.
 
-The CLI and Telegram flows should collect equivalent feedback and call the same
-`FeedbackStore` API. The Telegram adapter should associate feedback with the
+Suggested correction flow for the next implementation step:
+
+1. After showing a completed assessment, offer “Looks right” and “Suggest a
+   correction.” A positive response can be acknowledged without creating a
+   correction record unless the team wants agreement-rate analytics.
+2. If a correction is selected, collect one category from the store's supported
+   choices, then optionally collect the suggested priority and a short comment.
+   Keep this interaction brief in both CLI prompts and Telegram buttons/replies.
+3. Pass the active assessment ID and result snapshot to the shared application
+   service, which submits one `Feedback` record. Confirm the submission and keep
+   displaying the original result unchanged.
+4. Add a separate feedback-triage policy for review urgency. Base it on the
+   feedback category and assessment context, but keep “feedback urgency” distinct
+   from the email's assessment priority. For example, suspected false negatives
+   and assessment-blocking defects should reach reviewers before cosmetic
+   explanation suggestions. Agree on the exact rules with the team and cover
+   them with table-driven tests.
+5. Let a human review corrections and mark them reviewed/resolved in a later
+   step. Do not automatically change past scores or train/override the AI from
+   unreviewed feedback.
+
+The CLI and Telegram flows should collect equivalent feedback and use the same
+service and store. The Telegram adapter should associate feedback with the
 Telegram user ID only if the team needs that attribution, and should avoid
 collecting extra personal information.
 
 ## Suggested file and test map
 
 - New `app/assessment_service.py`: shared assessment orchestration class.
-- New `app/feedback_store.py`: feedback persistence class.
+- `app/feedback.py`: immutable feedback value object.
+- `app/feedback_store.py`: feedback persistence class.
 - New `app/telegram_bot.py` (or a `telegram` package): Telegram interface
   adapter; keep each class in its own file.
 - Update `app/main.py` and `app/io_manager.py` for the CLI service and feedback
   prompts.
 - Update `app/data_manager.py` only if the report ID or trace is added to saved
   reports; preserve readers for earlier report versions.
-- Add offline tests for feedback validation/persistence, both adapter flows,
-  JSON serialization of assessment results, old report compatibility, and the
+- `tests/test_feedback_store.py`: offline tests for feedback validation and
+  persistence.
+- Add offline tests for both adapter flows, JSON serialization of assessment
+  results, old report compatibility, and the
   unchanged scoring fixtures. Mock Telegram transport and AI calls; tests must
   not require live credentials or network access.
 
@@ -95,7 +126,7 @@ collecting extra personal information.
 - Both interfaces display the same score, priority, reasons, actions, matched
   rule, and trace for a live assessment.
 - Feedback is persisted and linked to an assessment without changing its
-  original score or result.
+  original score or result; the current store tests pass.
 - Existing version-2 history remains readable.
 - Offline tests pass locally and in Docker, and CI passes.
 - The report documents the feedback feature and the Telegram bot as the chosen
