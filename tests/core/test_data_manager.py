@@ -356,6 +356,35 @@ def test_data_manager_saved_result_display(cli, data_manager_storage, capsys):
     assert "Change the affected password." in output
 
 
+def test_data_manager_replaces_one_saved_report_without_duplicating_it(data_manager_storage):
+    records = [data_manager_report(), data_manager_report()]
+    records[1]["message"] = "A second fictional message"
+    data_manager_storage.write_text(json.dumps(records))
+    updated = deepcopy(records[1])
+    updated["result"]["score"] = 80
+    updated["result"]["priority"] = "HIGH"
+
+    replaced = data_manager_for(data_manager_storage).replace(
+        lambda stored: stored["message"] == "A second fictional message", updated
+    )
+
+    assert replaced is True
+    saved = json.loads(data_manager_storage.read_text())
+    assert len(saved) == 2
+    assert saved[1]["result"]["priority"] == "HIGH"
+    assert saved[0] == records[0]
+
+
+def test_data_manager_replace_reports_when_nothing_matched(data_manager_storage):
+    data_manager_for(data_manager_storage).save(data_manager_report())
+
+    replaced = data_manager_for(data_manager_storage).replace(
+        lambda stored: stored["message"] == "not in history", data_manager_report()
+    )
+
+    assert replaced is False
+
+
 def test_data_manager_saved_reports_are_visible(cli, data_manager_storage, monkeypatch):
     shared = data_manager_report()
     local_only = deepcopy(shared)

@@ -50,7 +50,8 @@ def test_a_text_message_is_assessed_saved_and_answered():
     reply = reply_text(update)
     assert "Priority: Medium" in reply
     assert "Rule-based score: 60" in reply
-    assert reply.endswith(ResultFormatter.FOOTER)
+    assert ResultFormatter.FOOTER in reply
+    assert "Exposure: not confirmed" in reply
     (report,), _ = data_manager.save.call_args
     assert report["schema_version"] == 2
     assert report["channel"] == "chat"

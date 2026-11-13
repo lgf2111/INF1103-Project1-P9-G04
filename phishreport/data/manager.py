@@ -54,3 +54,18 @@ class DataManager:
     def query(self, filter_fn: Callable[[dict], bool]) -> list[dict]:
         """Filter tolerant history in order; propagate predicate exceptions."""
         return [record for record in self.load() if filter_fn(record)]
+
+    def replace(self, match: Callable[[dict], bool], record: dict) -> bool:
+        """Replace the first stored report matching `match` with a validated record.
+
+        Used when a follow-up answer changes an assessment that was already saved,
+        so history keeps one record per message instead of a duplicate.
+        """
+        self._validator.validate_new(record)
+        records = self.load(strict=True)
+        for index, stored in enumerate(records):
+            if match(stored):
+                records[index] = record
+                self._storage.write_records(records)
+                return True
+        return False

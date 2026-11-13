@@ -1,16 +1,28 @@
 """Handle the Telegram welcome, connection check and message assessment."""
 
 import asyncio
+import secrets
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
+from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from phishreport.ai.errors import AIErrorTranslator
-from phishreport.bot.messages import ChatRecordBuilder, ResultFormatter
+from phishreport.bot.messages import (
+    ChatRecordBuilder,
+    ResultFormatter,
+    apply_exposure,
+    exposure_note,
+)
 from phishreport.data import DataManager
 
 CHECK_CONNECTION = "check_connection"
+EXPOSURE_PREFIX = "exposure:"
+EXPOSURE_PROMPT = (
+    "\n\nExposure: not confirmed. If you interacted with this message, answer below "
+    "so the score reflects what happened."
+)
 
 
 class TelegramIOManager:
@@ -37,6 +49,28 @@ class TelegramIOManager:
         self._error_translator = error_translator or AIErrorTranslator()
         # Reports are saved by read-modify-write, so overlapping saves must take turns.
         self._save_lock = asyncio.Lock()
+        # One unanswered exposure question per token, holding the findings of the
+        # assessment it belongs to so answering never calls the AI again.
+        self._pending: dict[str, tuple[dict, dict]] = {}
+
+    def exposure_keyboard(self, token: str) -> InlineKeyboardMarkup:
+        """Offer the exposure answers that change an assessment's score."""
+        choices = [
+            ("I clicked or downloaded something", "interacted"),
+            ("I entered a password", "password"),
+            ("I entered a one-time code", "otp"),
+            ("Neither — I did not interact", "none"),
+        ]
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        label, callback_data=f"{EXPOSURE_PREFIX}{token}:{choice}"
+                    )
+                ]
+                for label, choice in choices
+            ]
+        )
 
     @property
     def save_lock(self) -> asyncio.Lock:
@@ -86,10 +120,14 @@ class TelegramIOManager:
             await message.reply_text("Message assessment is not available right now.")
             return
 
-        record = self._record_builder.build(message.text)
+        record = self._record_builder.build(
+            message.text, document=getattr(message, "document", None)
+        )
         try:
             # The AI call blocks, so run it on a worker thread to keep the bot responsive.
-            result = await asyncio.to_thread(self._assessment.assess, record)
+            result, findings = await asyncio.to_thread(
+                self._assessment.assess_with_findings, record
+            )
         except RuntimeError as error:
             await message.reply_text(self._error_translator.translate(error))
             return
@@ -105,4 +143,53 @@ class TelegramIOManager:
                 )
         except (OSError, ValueError):
             note = "\n\n(This report could not be saved locally.)"
-        await message.reply_text(self._formatter.format(result) + note)
+        token = secrets.token_hex(4)
+        self._pending[token] = (record, findings)
+        await message.reply_text(
+            self._formatter.format(result) + note + EXPOSURE_PROMPT,
+            reply_markup=self.exposure_keyboard(token),
+        )
+
+    async def exposure_answer(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Re-score an assessment with the exposure answer the user tapped."""
+        query = update.callback_query
+        if not self.is_allowed(update) or query is None or self._assessment is None:
+            return
+        data = query.data or ""
+        if not data.startswith(EXPOSURE_PREFIX):
+            return
+        await query.answer()
+        token, _, choice = data[len(EXPOSURE_PREFIX) :].partition(":")
+        pending = self._pending.pop(token, None)
+        message = update.effective_message
+        if pending is None:
+            if message is not None:
+                await message.reply_text(
+                    "That exposure question has expired. Send the message again to re-check it."
+                )
+            return
+
+        record, findings = pending
+        updated = apply_exposure(record, choice)
+        result = await asyncio.to_thread(self._assessment.reassess, updated, findings)
+        note = ""
+        try:
+            async with self._save_lock:
+                report = self._assessment.build_report(updated, result)
+                message_text = report["message"]
+                replaced = await asyncio.to_thread(
+                    self._data_manager.replace,
+                    lambda stored: stored.get("message") == message_text,
+                    report,
+                )
+                if not replaced:
+                    await asyncio.to_thread(self._data_manager.save, report)
+        except (OSError, ValueError):
+            note = "\n\n(This report could not be saved locally.)"
+
+        text = self._formatter.format(result) + exposure_note(choice) + note
+        try:
+            await query.edit_message_text(text)
+        except BadRequest:
+            # The text can be unchanged (answering "neither" twice); the reply stands.
+            pass

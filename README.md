@@ -132,8 +132,13 @@ bot builds a chat record, runs the shared `AssessmentService` (AI findings, then
 rule-based score) and replies with the priority, score, reasons and recommended
 actions. It saves each assessment to the same `reports.json` the CLI uses, so
 **View saved reports** and **Summarize saved reports** in the CLI include them.
-A chat message carries no attachment or interaction details, so nothing is recorded as
-clicked, downloaded or submitted; the score reflects the AI findings only. AI calls
+The first link in the message is recorded, and an attached document is recorded as a
+file. Under the result the bot asks whether you interacted with the message: clicking
+or downloading, entering a password, entering a one-time code, or neither. Answering
+re-scores the same assessment without calling the AI again — a suspicious message you
+clicked reaches the HIGH band (80), and a shared password or code reaches 90 — and
+replaces the saved report instead of adding a second one. Answering "neither" leaves
+the score at the AI-only value and the reply says no exposure was reported. AI calls
 run on a worker thread so the bot stays responsive, and saves take turns.
 
 Every assessment calls the Groq API with your key. Leaving `TELEGRAM_ALLOWED_CHAT_ID`

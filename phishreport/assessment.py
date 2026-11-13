@@ -21,8 +21,20 @@ class AssessmentService:
         limited) and ValueError for invalid input or an invalid AI reply. The AI
         is never bypassed: the outcome is built only from validated findings.
         """
+        return self.assess_with_findings(record)[0]
+
+    def assess_with_findings(self, record: dict) -> tuple[dict, dict]:
+        """Return the evaluated outcome and the AI findings that produced it.
+
+        The findings are kept so a follow-up answer (for example the exposure
+        question) can be scored again without calling the AI a second time.
+        """
         findings = self._ai_manager.assess(record)
         # Enrich a new dictionary only after every AI check passes.
+        return self._logic_manager.evaluate({**record, "ai": findings}), findings
+
+    def reassess(self, record: dict, findings: dict) -> dict:
+        """Re-score a record with findings already obtained; never calls the AI."""
         return self._logic_manager.evaluate({**record, "ai": findings})
 
     @staticmethod
