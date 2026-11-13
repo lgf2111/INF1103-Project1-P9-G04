@@ -10,14 +10,16 @@ required integration points, and decisions to settle before implementation.
 
 - A user review/correction workflow is explicitly listed in the Phase 2 brief as
   an example of a meaningful new feature.
+- Team decision: the Telegram bot is the selected GUI/advanced feature; the
+  feedback and correction workflow is the meaningful new feature.
 - AI must remain part of every assessment. Feedback must not bypass the AI
   manager or silently alter the rule-based score.
 - The four manager responsibilities must remain identifiable. CLI and Telegram
   should be interface adapters that reuse shared application services.
 - The required OOP classes should remain purposeful and be kept in separate
   files, as instructed for this project.
-- Confirm with the instructor whether the Telegram interface will count as the
-  team's advanced GUI feature before relying on it for that requirement.
+- Demonstrate the Telegram bot as an interactive user-facing interface and
+  describe its GUI scope in the engineering report.
 
 ## Current implementation
 
@@ -96,5 +98,5 @@ collecting extra personal information.
   original score or result.
 - Existing version-2 history remains readable.
 - Offline tests pass locally and in Docker, and CI passes.
-- The report documents the feedback feature and whether Telegram was accepted
-  as the advanced GUI feature.
+- The report documents the feedback feature and the Telegram bot as the chosen
+  advanced GUI feature.
