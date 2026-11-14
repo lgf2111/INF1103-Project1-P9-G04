@@ -115,7 +115,11 @@ def _exposure_report(clicked=None, downloaded=None, category=None, answered=Fals
          "otp", "truthy-not-confirmed", "unconfirmed-disclosure"],
 )
 def test_stored_report_v3_uses_confirmed_nested_answers_over_stale_root(answers, expected):
-    record = _exposure_report(*answers)
+    record = _exposure_report()
+    # History can contain malformed answers that the current builder rejects.
+    record["exposure"].update(zip(
+        ("clicked", "downloaded", "submitted_category", "disclosure_answered"), answers,
+    ))
     record.update(clicked=not expected[0], downloaded=not expected[1],
                   submitted_category=None if expected[2] else "password")
     # Nested extras must not replace saved metadata or the original assessment.
@@ -158,7 +162,9 @@ def test_stored_report_v3_missing_exposure_never_falls_back_to_root():
 
 @pytest.mark.parametrize("category", ["password", "otp", ["password"], {"category": "otp"}])
 def test_stored_report_v3_unanswered_disclosure_ignores_even_malformed_category(category):
-    report = StoredReport(_exposure_report(category=category))
+    record = _exposure_report()
+    record["exposure"]["submitted_category"] = category
+    report = StoredReport(record)
 
     assert report.submitted_credentials is False
 

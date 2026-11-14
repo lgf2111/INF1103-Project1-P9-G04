@@ -2,6 +2,7 @@
 
 from copy import deepcopy
 from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 
@@ -241,19 +242,22 @@ def test_build_exposure_report_preserves_source_text_and_metadata(file_name):
         "disclosure_answered": False,
     }
 
-    report = AssessmentService.build_exposure_report(record, {}, exposure)
+    result = {"score": 60, "priority": "MEDIUM", "reasons": [], "checklist": []}
+    report = AssessmentService.build_exposure_report(record, result, exposure)
 
     for field in ("message", "sender", "has_link", "link", "has_file", "file_name"):
         assert report[field] == record[field]
 
 
-def test_build_exposure_report_only_constructs_and_isolates_nested_inputs():
-    # Deliberately unvalidated nested values exercise copying without introducing
-    # schema/type validation, which belongs to ReportValidator.
-    record = {**RECORD, "sender": {"labels": ["original"]}}
-    result = {"reasons": [{"text": "urgent"}]}
+def test_build_exposure_report_isolates_nested_inputs_without_reassessment():
+    record = dict(RECORD)
+    result = {
+        "score": 60, "priority": "MEDIUM", "reasons": ["urgent"],
+        "checklist": ["Verify the sender"], "matched_rule": "credential",
+        "trace": [{"rule_name": "credential", "matched": True, "score": 60}],
+    }
     exposure = {
-        "clicked": {"values": [True]},
+        "clicked": None,
         "downloaded": None,
         "submitted_category": None,
         "disclosure_answered": False,
@@ -265,18 +269,90 @@ def test_build_exposure_report_only_constructs_and_isolates_nested_inputs():
     report = service.build_exposure_report(record, result, exposure)
 
     assert (record, result, exposure) == before
-    report["sender"]["labels"].append("report mutation")
-    report["result"]["reasons"][0]["text"] = "report mutation"
-    report["exposure"]["clicked"]["values"].append(False)
+    report["result"]["reasons"].append("report mutation")
+    report["result"]["trace"][0]["rule_name"] = "report mutation"
+    report["exposure"]["clicked"] = False
     assert (record, result, exposure) == before
-    record["sender"]["labels"].append("input mutation")
-    result["reasons"].append({"text": "input mutation"})
-    exposure["clicked"]["values"].append(None)
-    assert report["sender"]["labels"] == ["original", "report mutation"]
-    assert report["result"]["reasons"] == [{"text": "report mutation"}]
-    assert report["exposure"]["clicked"]["values"] == [True, False]
+    result["checklist"].append("input mutation")
+    result["trace"][0]["score"] = 0
+    exposure["clicked"] = True
+    assert report["result"]["reasons"] == ["urgent", "report mutation"]
+    assert report["result"]["checklist"] == ["Verify the sender"]
+    assert report["result"]["trace"][0]["score"] == 60
+    assert report["exposure"]["clicked"] is False
     ai_manager.assess.assert_not_called()
     logic_manager.evaluate.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("record_changes", "result_changes", "exposure_changes"),
+    [
+        ({"channel": " "}, {}, {}),
+        ({"sender": {"labels": ["original"]}}, {}, {}),
+        ({"has_link": True, "link": None}, {}, {}),
+        ({}, {"score": 101}, {}),
+        ({}, {"reasons": [{"text": "urgent"}]}, {}),
+        ({}, {"assessment_id": "nested-id"}, {}),
+        ({}, {}, {"clicked": {"values": [True]}}),
+        ({}, {}, {"disclosure_answered": None}),
+        ({}, {}, {"submitted_category": "password"}),
+    ],
+)
+def test_build_exposure_report_rejects_invalid_v3_payloads_without_mutation(
+    record_changes, result_changes, exposure_changes
+):
+    record = {**RECORD, **record_changes}
+    result = {
+        "score": 60, "priority": "MEDIUM", "reasons": [], "checklist": [],
+        **result_changes,
+    }
+    exposure = {
+        "clicked": None, "downloaded": None, "submitted_category": None,
+        "disclosure_answered": False, **exposure_changes,
+    }
+    before = deepcopy((record, result, exposure))
+    ai_manager, logic_manager = Mock(), Mock()
+    service = AssessmentService(ai_manager, logic_manager)
+
+    with pytest.raises(ValueError):
+        service.build_exposure_report(record, result, exposure)
+
+    assert (record, result, exposure) == before
+    ai_manager.assess.assert_not_called()
+    logic_manager.evaluate.assert_not_called()
+
+
+def test_build_exposure_report_generates_a_fresh_uuid_for_each_report():
+    result = {"score": 60, "priority": "MEDIUM", "reasons": [], "checklist": []}
+    exposure = {
+        "clicked": None, "downloaded": None, "submitted_category": None,
+        "disclosure_answered": False,
+    }
+
+    first = AssessmentService.build_exposure_report(RECORD, result, exposure)
+    second = AssessmentService.build_exposure_report(RECORD, result, exposure)
+
+    assert UUID(first["assessment_id"]).version == 4
+    assert UUID(second["assessment_id"]).version == 4
+    assert first["assessment_id"] != second["assessment_id"]
+    assert "assessment_id" not in result
+
+
+def test_build_exposure_report_propagates_canonical_validation_error(monkeypatch):
+    from phishreport import model
+
+    error = ValueError("canonical exposure validation failure")
+    monkeypatch.setattr(model, "_validate_new", Mock(side_effect=error))
+    result = {"score": 60, "priority": "MEDIUM", "reasons": [], "checklist": []}
+    exposure = {
+        "clicked": None, "downloaded": None, "submitted_category": None,
+        "disclosure_answered": False,
+    }
+
+    with pytest.raises(ValueError) as caught:
+        AssessmentService.build_exposure_report(RECORD, result, exposure)
+
+    assert caught.value is error
 
 
 def test_assess_with_findings_retains_findings_and_scores_with_one_ai_call():

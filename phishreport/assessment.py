@@ -70,28 +70,11 @@ class AssessmentService:
 
     @staticmethod
     def build_exposure_report(record: dict, result: dict, exposure: dict) -> dict:
-        """Construct an independent v3 report preserving explicit exposure answers.
+        """Validate and serialize an independent v3 report with a fresh identifier.
 
-        Select only report fields without scoring or validation. Unknown answers
+        Select only report fields without scoring or reassessment. Unknown answers
         remain None; disclosure_answered distinguishes unknown from confirmed no.
         """
-        return deepcopy(
-            {
-                "schema_version": 3,
-                "assessment_id": str(uuid4()),
-                "channel": record["channel"],
-                "message": record["message"],
-                "result": result,
-                "sender": record["sender"],
-                "has_link": record["has_link"],
-                "link": record["link"],
-                "has_file": record["has_file"],
-                "file_name": record["file_name"],
-                "exposure": {
-                    "clicked": exposure["clicked"],
-                    "downloaded": exposure["downloaded"],
-                    "submitted_category": exposure["submitted_category"],
-                    "disclosure_answered": exposure["disclosure_answered"],
-                },
-            }
-        )
+        return Report.from_exposure(
+            record, result, exposure, assessment_id=str(uuid4()),
+        ).to_dict()
