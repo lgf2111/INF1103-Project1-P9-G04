@@ -51,6 +51,24 @@ def _freeze_json(value: object) -> object:
     raise ValueError(error_message)
 
 
+def _thaw_json(value: object) -> object:
+    """Serialize acyclic JSON-shaped data into independently owned containers.
+
+    Return new dictionaries and lists without normalizing scalar values. Reject
+    unsupported values without including private input in the error message.
+    """
+    error_message = "Report data must use JSON-compatible values and string object keys."
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError(error_message)
+        return {key: _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_thaw_json(item) for item in value]
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    raise ValueError(error_message)
+
+
 def _validate_new(record: dict) -> dict:
     """Return an unchanged valid v2 or v3 report, or raise ValueError."""
     if not isinstance(record, dict):

@@ -1,5 +1,6 @@
 """Immutable JSON ownership for the report model foundation."""
 
+import json
 import math
 from collections import UserDict
 from copy import deepcopy
@@ -1183,3 +1184,75 @@ def test_stored_report_validator_preserves_nested_failures_without_mutation(vers
 
     assert str(caught.value) == "Invalid stored score."
     assert version_one_report == before
+
+
+def test_thaw_json_outputs_are_independent_of_source_snapshot_and_each_other():
+    source = {"unknown": {"items": [{"value": "original"}]}, "answer": None, "clicked": False}
+    frozen = _freeze_json(source)
+    first = model._thaw_json(frozen)
+    second = model._thaw_json(frozen)
+    assert first == second == source
+    first["unknown"]["items"][0]["value"] = "changed output"
+    source["unknown"]["items"].append("changed input")
+    assert second["unknown"]["items"] == [{"value": "original"}]
+    assert model._thaw_json(frozen) == second
+    assert second["answer"] is None and second["clicked"] is False
+
+
+@pytest.mark.parametrize("value", [None, True, False, 0, -17, 2.5, " Mixed CASE\n ",
+                                  float("nan"), float("inf")])
+def test_thaw_json_preserves_scalar_objects_without_normalization(value):
+    assert model._thaw_json(value) is value
+
+
+def test_thaw_json_owns_mapping_and_sequence_inputs():
+    shared = {"items": ["original"]}
+    source = UserDict({"left": shared, "right": (shared,)})
+    output = model._thaw_json(source)
+    output["left"]["items"].append("left only")
+    assert output["right"] == [{"items": ["original"]}]
+    assert shared == {"items": ["original"]}
+    assert type(output) is dict
+
+
+@pytest.mark.parametrize("value", [object(), {1, 2}, bytearray(b"private"), {1: "private"}])
+def test_thaw_json_rejects_unsupported_values_without_exposing_them(value):
+    with pytest.raises(ValueError, match="JSON-compatible") as caught:
+        model._thaw_json({"nested": (value,)})
+    assert "private" not in str(caught.value)
+
+
+def test_thaw_json_does_not_format_rejected_values():
+    class Unprintable:
+        def __repr__(self):
+            raise AssertionError("Private value formatted")
+
+    with pytest.raises(ValueError, match="JSON-compatible"):
+        model._thaw_json(Unprintable())
+
+
+@pytest.mark.parametrize("fixture_name", [
+    "summary_report", "version_one_report", "version_two_report", "version_three_exposure",
+])
+def test_thaw_json_round_trips_valid_history_without_changing_shape(request, fixture_name):
+    source = request.getfixturevalue(fixture_name)
+    before = deepcopy(source)
+    restored = model._thaw_json(_freeze_json(source))
+    assert restored == source == before
+    assert restored is not source
+    assert _validate_stored(restored) is restored
+    assert json.loads(json.dumps(restored)) == source
+
+
+def test_thaw_json_preserves_existing_feedback_id_and_missing_legacy_fields(assessment_result):
+    source = {
+        "schema_version": 3, "assessment_id": " Original ID ",
+        "channel": "chat", "message": " Message\n ", "result": assessment_result,
+    }
+    restored = model._thaw_json(_freeze_json(source))
+    assert restored == source and _validate_stored(restored) is restored
+    legacy = {"message": None, "unknown": {"items": [False, None, " "]}}
+    restored_legacy = model._thaw_json(_freeze_json(legacy))
+    assert restored_legacy == legacy
+    assert "schema_version" not in restored_legacy
+    assert "assessment_id" not in restored_legacy
