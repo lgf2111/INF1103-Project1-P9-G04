@@ -11,7 +11,7 @@ from phishreport.assessment import AssessmentService, AssessmentSnapshot
 from phishreport.bot import messages
 from phishreport.bot.exposure import ExposureSession
 from phishreport.logic import LogicManager
-from phishreport.model import SCHEMA_VERSION, SCHEMA_VERSION_KEY
+from phishreport.model import SCHEMA_VERSION, SCHEMA_VERSION_KEY, AssessmentResult, RuleTrace
 
 
 @pytest.fixture
@@ -350,3 +350,62 @@ def test_formatter_bounds_whole_reply_in_utf16(session, character, lifecycle):
         assert "Report not saved. Use Retry saving." in text
     elif lifecycle == "saved":
         assert "Report saved locally." in text
+
+
+def test_alert_renders_typed_result_with_safe_html_and_ordered_trace():
+    result = AssessmentResult(
+        score=80, priority="HIGH", matched_rule="Winner<&>",
+        trace=(RuleTrace("First<&>", False), RuleTrace("Winner<&>", True, 80)),
+        reasons=("<script>" + "x" * 400,),
+        checklist=tuple(f"Verify <{number}>" for number in range(6)),
+    )
+
+    text = messages.PhishingAlertFormatter().format(
+        result, "Sender <x&y>", "Subject <unsafe>", 'https://mail.test/?q="x"&a=1',
+    )
+
+    assert "🚨 <b>HIGH risk</b>" in text
+    assert "<b>Score:</b> 80/100" in text
+    assert "Sender &lt;x&amp;y&gt;" in text and "Subject &lt;unsafe&gt;" in text
+    assert "<b>Matched rule:</b> Winner&lt;&amp;&gt;" in text
+    assert "• First&lt;&amp;&gt;: not matched\n• Winner&lt;&amp;&gt;: matched (score: 80)" in text
+    assert "&lt;script&gt;" + "x" * 289 + "..." in text
+    assert "<script>" not in text
+    assert "5. Verify &lt;4&gt;" in text and "Verify &lt;5&gt;" not in text
+    assert 'href="https://mail.test/?q=&quot;x&quot;&amp;a=1"' in text
+    assert text.endswith("<i>Do not click links or reply. A low score never guarantees safety.</i>")
+
+
+def test_alert_uses_tolerant_projection_for_malformed_fields_without_mutating_input():
+    result = {
+        "score": True, "priority": ["HIGH"], "matched_rule": {"private": "rule"},
+        "trace": [None, {"rule_name": "broken", "matched": "yes"}],
+        "reasons": ["Keep <this>", 123, None], "checklist": "not a list",
+    }
+    before = deepcopy(result)
+
+    text = messages.PhishingAlertFormatter().format(result, None)
+
+    assert "⚠️ <b>Possible phishing</b>" in text
+    assert "<b>Score:</b> n/a/100" in text
+    assert "Unknown sender" in text
+    assert "• Keep &lt;this&gt;" in text and "123" not in text
+    assert "Matched rule" not in text and "Rule evaluation trace" not in text
+    assert "What to do" not in text and "private" not in text
+    assert result == before
+
+
+@pytest.mark.parametrize("result", [{}, None, []])
+def test_alert_missing_assessment_preserves_unknown_score(result):
+    text = messages.PhishingAlertFormatter().format(result, None)
+
+    assert "<b>Score:</b> n/a/100" in text
+    assert "<b>Possible phishing</b>" in text
+    assert "Why it was flagged" not in text and "What to do" not in text
+
+
+@pytest.mark.parametrize("score", [0, 12.5])
+def test_alert_preserves_zero_and_finite_legacy_score(score):
+    text = messages.PhishingAlertFormatter().format({"score": score}, None)
+
+    assert f"<b>Score:</b> {score}/100" in text

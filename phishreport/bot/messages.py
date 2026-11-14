@@ -7,7 +7,7 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from phishreport.bot.exposure import ExposureSession
 from phishreport.io.presenter import ReportPresenter
-from phishreport.model import SCHEMA_VERSION, SCHEMA_VERSION_KEY, Report
+from phishreport.model import SCHEMA_VERSION, SCHEMA_VERSION_KEY, AssessmentResult, Report
 
 MAX_REPLY_CHARS = 4000  # Telegram rejects messages longer than 4096 characters.
 EXPOSURE_CALLBACK_PREFIX = "exposure"
@@ -219,9 +219,13 @@ class PhishingAlertFormatter:
         return escape(text if len(text) <= self.MAX_LINE else text[: self.MAX_LINE - 3] + "...")
 
     def format(
-        self, result: dict, sender: str | None, subject: str = "", source_url: str | None = None
+        self, result: dict | AssessmentResult | None, sender: str | None,
+        subject: str = "", source_url: str | None = None,
     ) -> str:
-        priority = result.get("priority", "")
+        assessment = (
+            result if isinstance(result, AssessmentResult) else Report({"result": result}).result
+        )
+        priority = assessment.priority if assessment is not None else None
         lines = [
             f"{self.BADGES.get(priority, '⚠️ <b>Possible phishing</b>')} · possible phishing email",
             "",
@@ -229,22 +233,23 @@ class PhishingAlertFormatter:
         ]
         if subject:
             lines.append(f"<b>Subject:</b> {self._clip(subject)}")
-        lines.append(f"<b>Score:</b> {escape(str(result.get('score', 'n/a')))}/100")
-        if result.get("matched_rule"):
-            lines.append(f"<b>Matched rule:</b> {self._clip(result['matched_rule'])}")
-        trace = result.get("trace") or []
+        score = assessment.score if assessment is not None else None
+        lines.append(f"<b>Score:</b> {escape(str(score)) if score is not None else 'n/a'}/100")
+        if assessment is not None and assessment.matched_rule:
+            lines.append(f"<b>Matched rule:</b> {self._clip(assessment.matched_rule)}")
+        trace = assessment.trace if assessment is not None else ()
         if trace:
             lines += ["", "<b>Rule evaluation trace</b>"]
             for step in trace:
-                rule_name = self._clip(step.get("rule_name", "Unknown rule"))
-                status = "matched" if step.get("matched") else "not matched"
-                score = step.get("score")
+                rule_name = self._clip(step.rule_name)
+                status = "matched" if step.matched else "not matched"
+                score = step.score
                 score_text = f" (score: {escape(str(score))})" if score is not None else ""
                 lines.append(f"• {rule_name}: {status}{score_text}")
-        if result.get("reasons"):
+        if assessment is not None and assessment.reasons:
             lines += ["", "<b>Why it was flagged</b>"]
-            lines += [f"• {self._clip(reason)}" for reason in result["reasons"]]
-        steps = result.get("checklist", [])[: self.MAX_STEPS]
+            lines += [f"• {self._clip(reason)}" for reason in assessment.reasons]
+        steps = assessment.checklist[: self.MAX_STEPS] if assessment is not None else ()
         if steps:
             lines += ["", "<b>What to do</b>"]
             lines += [f"{number}. {self._clip(step)}" for number, step in enumerate(steps, 1)]
