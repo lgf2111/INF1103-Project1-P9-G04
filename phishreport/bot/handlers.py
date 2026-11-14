@@ -11,6 +11,7 @@ from telegram.error import BadRequest
 from telegram.ext import ContextTypes
 
 from phishreport.ai.errors import AIErrorTranslator
+from phishreport.assessment import AssessmentSnapshot
 from phishreport.bot.exposure import ExposureSession
 from phishreport.bot.feedback_ui import (
     CATEGORY_CODES,
@@ -27,6 +28,9 @@ from phishreport.bot.messages import (
     build_exposure_keyboard,
 )
 from phishreport.data import DataManager
+from phishreport.io.check_command import CheckOutcome
+from phishreport.io.command_catalog import CommandCapabilities, discover_commands
+from phishreport.io.commands import CommandRequest, CommandRouter
 
 CHECK_CONNECTION = "check_connection"
 
@@ -296,6 +300,48 @@ class TelegramIOManager:
             await self._submit_feedback(update, context, pending, text)
             return
 
+        command = None
+        failure_messages = {
+            "history": "Could not read local history. Please try again.",
+            "command": "Sorry, the command failed. Please try again.",
+        }
+        if text.lstrip().startswith("/"):
+            catalog = discover_commands(CommandCapabilities(
+                prepare_record=lambda request: self._record_builder.build(request.text),
+                assess_record=lambda record: self._assessment.assess_with_findings(record),
+                session_status=lambda request: status_label,
+                report_count=lambda: len(self._data_manager.load(strict=True)),
+            ))
+            router = CommandRouter(catalog)
+            command = router.resolve(text)
+            if command is not None:
+                # Snapshot owned live sessions on-loop before the history read.
+                now = time.monotonic()
+                count = sum(
+                    session.chat_id == chat_id and session.user_id == user_id
+                    and not session.completed and not session.saved and session.expires_at > now
+                    for session in self._sessions.values()
+                )
+                status_label = f"Active exposure sessions awaiting answers: {count}"
+            if command is not None and command.policy.execution == "reply":
+                try:
+                    reply = await asyncio.to_thread(
+                        router.route, CommandRequest(text, "telegram"),
+                    )
+                except (OSError, ValueError, RuntimeError) as error:
+                    if command.policy.failure != "assessment":
+                        failure_text = failure_messages[command.policy.failure]
+                    elif isinstance(error, RuntimeError):
+                        failure_text = self._error_translator.translate(error)
+                    elif isinstance(error, ValueError):
+                        failure_text = "Sorry, the check failed: " + str(error)
+                    else:
+                        failure_text = "Sorry, the check failed. Please try again."
+                    await message.reply_text(failure_text)
+                else:
+                    await message.reply_text(reply.text)
+                return
+
         # Initialize before the first await, so concurrent ingress shares one
         # lock. This lock never waits for callback storage or future answers.
         if not hasattr(self, "_message_lock"):
@@ -313,18 +359,46 @@ class TelegramIOManager:
                         "Finish or skip an earlier one, then try again."
                     )
                     return
-                record = self._record_builder.build(text)
-                try:
-                    # Retain findings for later answers; AI work stays off-loop.
-                    snapshot = await asyncio.to_thread(
-                        self._assessment.assess_with_findings, record,
-                    )
-                except RuntimeError as error:
-                    await message.reply_text(self._error_translator.translate(error))
-                    return
-                except ValueError as error:
-                    await message.reply_text("Sorry, the check failed: " + str(error))
-                    return
+                if command is None:
+                    record = self._record_builder.build(text)
+                if command is not None:
+                    request = CommandRequest(text, "telegram")
+                    try:
+                        reply = await asyncio.to_thread(router.route, request)
+                    except (OSError, ValueError, RuntimeError) as error:
+                        if command.policy.failure != "assessment":
+                            failure_text = failure_messages[command.policy.failure]
+                        elif isinstance(error, RuntimeError):
+                            failure_text = self._error_translator.translate(error)
+                        elif isinstance(error, ValueError):
+                            failure_text = "Sorry, the check failed: " + str(error)
+                        else:
+                            failure_text = "Sorry, the check failed. Please try again."
+                        await message.reply_text(failure_text)
+                        return
+                    if reply.kind != "assessment":
+                        await message.reply_text(reply.text)
+                        return
+                    outcome = request.session["check_outcome"]
+                    if (not isinstance(outcome, CheckOutcome)
+                            or not isinstance(outcome.findings, dict)):
+                        raise TypeError(
+                            "Assessment commands must retain a CheckOutcome with findings."
+                        )
+                    record = outcome.record
+                    snapshot = AssessmentSnapshot(outcome.findings, outcome.result)
+                else:
+                    try:
+                        # Retain findings for later answers; AI work stays off-loop.
+                        snapshot = await asyncio.to_thread(
+                            self._assessment.assess_with_findings, record,
+                        )
+                    except RuntimeError as error:
+                        await message.reply_text(self._error_translator.translate(error))
+                        return
+                    except ValueError as error:
+                        await message.reply_text("Sorry, the check failed: " + str(error))
+                        return
 
                 session = ExposureSession(
                     record, snapshot, chat_id=chat_id, user_id=user_id, message_id=message_id,

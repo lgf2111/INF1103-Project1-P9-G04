@@ -183,6 +183,39 @@ current and historical layouts, each metric (including unclassifiable values),
 a custom metric subclass, an empty history, an unreadable history file, the filter prompts, the printed
 summary and the menu flow. No AI service is needed.
 
+### Shared conversation commands
+
+Enter these commands at the CLI menu or in the bot's private chat. CLI choices
+**1–6** remain unchanged.
+
+| Command | CLI | Telegram |
+| --- | --- | --- |
+| `/check <text>` | Assess pasted chat text using the existing link, file and exposure prompts; save and display the result. | Assess the text once, then answer the existing exposure questions before finishing or skipping to save. Answers reuse the original AI findings. |
+| `/help` | List the shared commands. | List the shared commands; the Gmail commands below remain available. |
+| `/status` | Show that the CLI conversation is active and count saved reports. | Count the requesting user's active exposure sessions awaiting answers and count saved reports. |
+
+Status counts reports from the configured history backend using strict loading;
+a read failure shows an error rather than a zero count. It does not request AI
+findings or save a report. Telegram's active-session count excludes other users
+and chats, expired sessions, and completed or saved assessments. It does not
+remove cached sessions or completed reports awaiting a save retry.
+
+Command names are exact and case-sensitive. `/check` without text shows usage.
+Bot-addressed forms such as `/check@botname` are not recognized by the shared
+router and follow Telegram's default content path.
+The router accepts leading whitespace and preserves the argument's internal and
+trailing whitespace. Ordinary pasted Telegram text still takes the default
+assessment path. Unknown slash input also takes that path in Telegram; the CLI
+instead shows its invalid-choice message. While Telegram is collecting a feedback
+comment, text reaching this handler, including `/check`, `/help` and `/status`,
+is treated as that comment. The existing Start and Gmail handlers retain priority.
+
+`phishreport/io/commands.py` defines the `Command` ABC, request/reply models and
+router. Check, Help and Status implement that contract in separate files and use
+injected services; the I/O package imports neither Telegram nor the bot package.
+Both transports execute the same command implementations, while input collection,
+presentation, exposure follow-up and persistence remain adapter responsibilities.
+
 ### Telegram bot
 
 The bot opens **PhishReport** on `/start` and shows one **Check connection**
@@ -379,12 +412,61 @@ or enter/send any real password or one-time code.
 A live SMS demo, mounted container restart, and remote CI each require their own
 observed evidence; offline tests alone do not establish those results.
 
-#### Add the next handler
+#### Extend commands or add a transport-specific handler
 
-Add an async method to `TelegramIOManager` in `phishreport/bot/handlers.py`.
-Use the same private-chat check before accessing app data. Register the method
-in `phishreport/bot/main.py` and test it with fake updates in `tests/bot/`.
-Report browsing and summaries still run through the CLI.
+For a shared operation using the existing capabilities and execution policies,
+add one public `.py` file directly under `phishreport/io/command_plugins/`.
+`command_catalog.py` discovers immediate modules in that fixed internal package
+in filename order; private modules and subpackages are excluded. Each module
+exports `create_command(capabilities) -> Command`. Both adapters discover the
+same commands, Help reads their live catalog, and Telegram builds command-menu
+metadata automatically at startup. Restart the bot to refresh its menu.
+
+For example, save this as `phishreport/io/command_plugins/ping.py`:
+
+```python
+from phishreport.io.command_catalog import CommandCapabilities
+from phishreport.io.commands import Command, CommandReply, CommandRequest
+
+
+class PingCommand(Command):
+    name = "ping"
+    help_text = "Check that the conversation is responding"
+
+    def execute(self, request: CommandRequest) -> CommandReply:
+        return CommandReply("Pong", "text")
+
+
+def create_command(capabilities: CommandCapabilities) -> Command:
+    return PingCommand()
+```
+
+Factories receive frozen `CommandCapabilities` with record preparation,
+assessment, session status, report count and the live command catalog. Construct
+the command without calling these services, performing I/O or mutating the
+catalog during discovery. These are trusted internal modules, not arbitrary
+external plugins; import, factory and registration failures are not silently
+ignored.
+
+The default `CommandPolicy` uses ordinary reply execution and a generic command
+failure message. Commands may select the existing assessment or history failure
+policies. Assessment execution must publish a `CheckOutcome` and an assessment
+reply; Telegram also requires retained AI findings for exposure rescoring. An
+ordinary reply's `kind` alone cannot request persistence. New capabilities or
+transport-specific interaction flows still require adapter integration.
+
+Use unique lowercase command names and reserve `start`, `linkgmail`, `checkmail`
+and `unlinkgmail` for the native Telegram handlers. Telegram startup validates
+names of at most 32 characters, descriptions of 1–256 characters, and a maximum
+of 100 menu entries including the native commands, following its
+[command metadata](https://core.telegram.org/bots/api#botcommand) and
+[menu limits](https://core.telegram.org/bots/api#setmycommands).
+
+For Telegram-only interactions, add an async method to `TelegramIOManager` in
+`phishreport/bot/handlers.py`, keep the private-chat check, and register its handler
+in `phishreport/bot/main.py`. Test shared commands with fake services and verify
+adapter dispatch with offline updates. Report browsing and summaries remain in
+the CLI.
 
 ### Offline tests
 
@@ -407,6 +489,20 @@ The application suite uses fake completion clients and mocked Groq HTTP calls
 to check prompt handling, retries, response validation and CLI behavior.
 The Telegram tests use fake updates and temporary data. Neither suite needs
 credentials once dependencies are installed.
+
+For the shared-command contract, import-direction and transport checks in an
+activated Python 3.12 environment, run:
+
+```text
+python -m pytest tests/core/test_commands.py tests/core/test_command_policy.py tests/core/test_command_catalog.py tests/core/test_check_command.py tests/core/test_help_command.py tests/core/test_status_command.py tests/core/test_check_command_factory.py tests/core/test_help_command_factory.py tests/core/test_status_command_factory.py -q
+python -m pytest tests/cli/test_cli_check_command.py tests/cli/test_cli_menu_commands.py tests/cli/test_cli_status_command.py tests/cli/test_cli_discovered_commands.py -q
+python -m pytest tests/bot/test_bot_shared_commands.py tests/bot/test_bot_status_command.py tests/bot/test_bot_discovered_commands.py tests/bot/test_bot_command_menu.py tests/bot/test_dispatch.py -q
+```
+
+The dispatch suite includes combined discovery checks with a new one-file
+command, both transports, Help, Telegram menu metadata and JSON/SQLite history.
+Offline test results do not establish a live Telegram demo, container behavior
+or successful remote CI for a pushed revision.
 
 For focused exposure and persistence checks in an activated Python 3.12
 environment, run:

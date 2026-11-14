@@ -11,6 +11,8 @@ from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
+from phishreport.io.command_catalog import CommandCapabilities, discover_commands
+from phishreport.io.commands import CommandRequest, CommandRouter
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
@@ -77,18 +79,62 @@ class PhishReportApp:
         """Build the shared assessment workflow from the app's current managers."""
         return AssessmentService(self._ai_manager, self._logic_manager)
 
-    def check_message(self, record=None):
+    def check_message(self, record=None, *, command_text: str | None = None):
         """Validate one combined AI response before assessment, saving or display.
 
         Collect input interactively when record is None; otherwise use the supplied
-        record. Stop assessment on handled AI/validation failures. Save the
+        record. Explicit command_text is full raw slash input (e.g. /check text)
+        routed through the shared command catalog.
+        Stop assessment on handled AI/validation failures. Save the
         version-3 outcome locally, then display it even if persistence fails.
         """
-        if record is None:
+        if command_text is None and record is None:
             record = self._io_manager.collect_input()
 
+        if command_text is not None:
+            catalog = discover_commands(CommandCapabilities(
+                prepare_record=lambda request: self._io_manager.build_record_from_message(
+                    request.text, channel="chat"
+                ),
+                assess_record=self._assessment.assess,
+                session_status=lambda request: "CLI conversation active",
+                report_count=lambda: len(self._data_manager.load(strict=True)),
+            ))
+            router = CommandRouter(catalog)
+            resolved = router.resolve(command_text)
+            request = CommandRequest(command_text, "cli")
+
         try:
-            result = self._assessment.assess(record)
+            if command_text is None:
+                result = self._assessment.assess(record)
+            else:
+                try:
+                    reply = router.route(request)
+                except (OSError, ValueError, RuntimeError) as error:
+                    if resolved.policy.failure == "assessment":
+                        if not isinstance(error, OSError):
+                            raise
+                        AppLogging.log_failure(logger, "Assessment failed")
+                        self._io_manager.show_message("Sorry, the check failed. Please try again.")
+                    elif resolved.policy.failure == "history":
+                        AppLogging.log_failure(logger, "Reading local report history failed")
+                        self._io_manager.show_message(
+                            "Could not load local report history; existing file preserved."
+                        )
+                    else:
+                        AppLogging.log_failure(logger, "Command failed")
+                        self._io_manager.show_message(
+                            "Sorry, the command failed. Please try again."
+                        )
+                    return
+                if reply is None:
+                    self._io_manager.show_message("Please choose 1, 2, 3, 4, 5 or 6.")
+                    return
+                if resolved.policy.execution != "assessment" or reply.kind != "assessment":
+                    self._io_manager.show_message(reply.text)
+                    return
+                outcome = request.session["check_outcome"]
+                record, result = outcome.record, outcome.result
 
         # RuntimeError: the AI could not complete after its retries (service down,
         # offline, rate limited). Show an actionable message; the AI is never bypassed.
@@ -215,7 +261,9 @@ class PhishReportApp:
                 self._io_manager.show_message("No saved reports found.")
             while True:
                 choice = self._io_manager.main_menu()
-                if choice == "1":
+                if choice.lstrip().startswith("/"):
+                    self.check_message(command_text=choice)
+                elif choice == "1":
                     # Manual Email, SMS or Chat input.
                     self.check_message()
                 elif choice == "2":
