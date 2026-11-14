@@ -2,6 +2,8 @@
 
 import math
 
+from phishreport.model import _validate_rule_trace
+
 REPORT_FIELDS = {
     "channel",
     "sender",
@@ -132,38 +134,7 @@ class ReportValidator:
         if optional_fields and optional_fields.issubset(fields):
             self._validate_rule_trace(result)
 
-    @staticmethod
-    def _validate_rule_trace(result):
-        """Check that an optional trace ends at the recorded winning rule."""
-        matched_rule = result["matched_rule"]
-        trace = result["trace"]
-        if not isinstance(matched_rule, str) or not matched_rule.strip():
-            raise ValueError("Invalid matched rule.")
-        if not isinstance(trace, list) or not trace:
-            raise ValueError("Invalid stored rule trace.")
-        trace_fields = {"rule_name", "matched", "score"}
-        for step in trace:
-            if not isinstance(step, dict) or set(step) != trace_fields:
-                raise ValueError("Invalid stored rule trace step.")
-            if not isinstance(step["rule_name"], str) or not step["rule_name"].strip():
-                raise ValueError("Invalid stored rule name.")
-            if type(step["matched"]) is not bool:
-                raise ValueError("Invalid stored rule match flag.")
-            score = step["score"]
-            if step["matched"]:
-                if type(score) is not int or not 0 <= score <= 100:
-                    raise ValueError("Invalid stored rule score.")
-            elif score is not None:
-                raise ValueError("Non-matching rules cannot have a score.")
-
-        winning_step = trace[-1]
-        if (
-            any(step["matched"] for step in trace[:-1])
-            or not winning_step["matched"]
-            or winning_step["rule_name"] != matched_rule
-            or winning_step["score"] != result["score"]
-        ):
-            raise ValueError("Stored rule trace does not match its assessment.")
+    _validate_rule_trace = staticmethod(_validate_rule_trace)
 
     def _validate_v2(self, record):
         """Validate the exact version-2 storage contract without changing values."""

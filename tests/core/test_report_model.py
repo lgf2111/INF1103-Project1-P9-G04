@@ -2,11 +2,13 @@
 
 import math
 from collections import UserDict
+from copy import deepcopy
 from types import MappingProxyType
 
 import pytest
 
-from phishreport.model import SCHEMA_VERSION, SCHEMA_VERSION_KEY, _freeze_json
+from phishreport.data.validator import ReportValidator
+from phishreport.model import SCHEMA_VERSION, SCHEMA_VERSION_KEY, _freeze_json, _validate_rule_trace
 
 
 def test_report_model_owns_schema_version_constants():
@@ -122,3 +124,96 @@ def test_freeze_json_error_does_not_format_unsupported_objects():
 
     with pytest.raises(ValueError, match="JSON-compatible"):
         _freeze_json({"unknown": Unprintable()})
+
+
+def test_rule_trace_validator_has_one_canonical_body_and_static_public_access():
+    assert ReportValidator._validate_rule_trace is _validate_rule_trace
+    assert ReportValidator()._validate_rule_trace is _validate_rule_trace
+
+
+@pytest.mark.parametrize("score", [0, 60, 100])
+@pytest.mark.parametrize("early_nonmatches", [0, 2])
+def test_rule_trace_accepts_single_final_winner_without_mutating_input(score, early_nonmatches):
+    result = {
+        "matched_rule": "Winner", "score": score,
+        "trace": [
+            {"rule_name": f"Earlier {index}", "matched": False, "score": None}
+            for index in range(early_nonmatches)
+        ] + [{"rule_name": "Winner", "matched": True, "score": score}],
+    }
+    before = deepcopy(result)
+
+    assert _validate_rule_trace(result) is None
+    assert ReportValidator._validate_rule_trace(result) is None
+    assert ReportValidator()._validate_rule_trace(result) is None
+    assert result == before
+
+
+@pytest.mark.parametrize("updates,expected", [
+    ({"matched_rule": " "}, "Invalid matched rule."),
+    ({"matched_rule": None}, "Invalid matched rule."),
+    ({"matched_rule": 1}, "Invalid matched rule."),
+    ({"trace": []}, "Invalid stored rule trace."),
+    ({"trace": ()}, "Invalid stored rule trace."),
+    ({"trace": None}, "Invalid stored rule trace."),
+    ({"trace": [None]}, "Invalid stored rule trace step."),
+    ({"trace": [{"rule_name": "Winner", "matched": True}]}, "Invalid stored rule trace step."),
+    ({"trace": [{"rule_name": "Winner", "matched": True, "score": 60, "extra": 1}]},
+     "Invalid stored rule trace step."),
+    ({"trace": [{"rule_name": " ", "matched": True, "score": 60}]}, "Invalid stored rule name."),
+    ({"trace": [{"rule_name": None, "matched": True, "score": 60}]}, "Invalid stored rule name."),
+    ({"trace": [{"rule_name": "Winner", "matched": 1, "score": 60}]},
+     "Invalid stored rule match flag."),
+    ({"trace": [{"rule_name": "Winner", "matched": "yes", "score": 60}]},
+     "Invalid stored rule match flag."),
+    ({"trace": [{"rule_name": "Winner", "matched": False, "score": 0}]},
+     "Non-matching rules cannot have a score."),
+    ({"trace": [{"rule_name": "Winner", "matched": True, "score": None}]},
+     "Invalid stored rule score."),
+    ({"trace": [{"rule_name": "Winner", "matched": True, "score": True}]},
+     "Invalid stored rule score."),
+    ({"trace": [{"rule_name": "Winner", "matched": True, "score": -1}]},
+     "Invalid stored rule score."),
+    ({"trace": [{"rule_name": "Winner", "matched": True, "score": 101}]},
+     "Invalid stored rule score."),
+    ({"trace": [{"rule_name": "Winner", "matched": True, "score": 60.0}]},
+     "Invalid stored rule score."),
+    ({"trace": [{"rule_name": "Winner", "matched": True, "score": float("nan")}]},
+     "Invalid stored rule score."),
+    ({"trace": [{"rule_name": "Winner", "matched": False, "score": None}]},
+     "Stored rule trace does not match its assessment."),
+    ({"trace": [{"rule_name": "Earlier", "matched": True, "score": 10},
+                {"rule_name": "Winner", "matched": True, "score": 60}]},
+     "Stored rule trace does not match its assessment."),
+    ({"trace": [{"rule_name": "Different", "matched": True, "score": 60}]},
+     "Stored rule trace does not match its assessment."),
+    ({"trace": [{"rule_name": "Winner", "matched": True, "score": 59}]},
+     "Stored rule trace does not match its assessment."),
+])
+def test_rule_trace_rejects_invalid_winning_trace_without_mutation(updates, expected):
+    result = {
+        "matched_rule": "Winner", "score": 60,
+        "trace": [{"rule_name": "Winner", "matched": True, "score": 60}],
+    }
+    result.update(updates)
+    before = deepcopy(result)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_rule_trace(result)
+
+    assert str(caught.value) == expected
+    assert result == before
+
+
+@pytest.mark.parametrize("missing", ["matched_rule", "trace", "score"])
+def test_rule_trace_keeps_prevalidated_result_precondition(missing):
+    result = {
+        "matched_rule": "Winner", "score": 60,
+        "trace": [{"rule_name": "Winner", "matched": True, "score": 60}],
+    }
+    del result[missing]
+
+    with pytest.raises(KeyError) as caught:
+        _validate_rule_trace(result)
+
+    assert caught.value.args == (missing,)
