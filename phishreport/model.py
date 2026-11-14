@@ -2,7 +2,7 @@
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import InitVar, dataclass, field
 from types import MappingProxyType
 
 SCHEMA_VERSION = 3
@@ -108,6 +108,127 @@ class AssessmentResult:
         object.__setattr__(self, "reasons", tuple(self.reasons))
         object.__setattr__(self, "checklist", tuple(self.checklist))
         object.__setattr__(self, "trace", tuple(self.trace))
+
+
+@dataclass(frozen=True, slots=True)
+class Report:
+    """Own original report data and expose a tolerant immutable history view."""
+
+    source: InitVar[Mapping[str, object]]
+    _payload: Mapping[str, object] = field(init=False, repr=False)
+    schema_version: int | None = field(init=False)
+    assessment_id: str | None = field(init=False)
+    channel: str | None = field(init=False)
+    message: str | None = field(init=False)
+    sender: str | None = field(init=False)
+    link: str | None = field(init=False)
+    file_name: str | None = field(init=False)
+    has_link: bool | None = field(init=False)
+    has_file: bool | None = field(init=False)
+    result: AssessmentResult | None = field(init=False)
+    exposure: ExposureAnswers | None = field(init=False)
+    has_nested_exposure: bool = field(init=False)
+    emails: tuple[str, ...] = field(init=False)
+    phone_numbers: tuple[str, ...] = field(init=False)
+    ip_addresses: tuple[str, ...] = field(init=False)
+
+    def __post_init__(self, source: Mapping[str, object]) -> None:
+        """Snapshot all source data before projecting supported historical fields.
+
+        Invalid JSON-shaped field values remain in the snapshot while the view
+        exposes unknown values as None or empty tuples. Stored-schema validation
+        is a separate boundary; this projection never repairs historical data.
+        """
+        if not isinstance(source, Mapping):
+            raise ValueError("Report source must be an object.")
+        payload = _freeze_json(source)
+        object.__setattr__(self, "_payload", payload)
+        version = payload.get(SCHEMA_VERSION_KEY)
+        object.__setattr__(self, "schema_version", version if type(version) is int else None)
+        for name in ("assessment_id", "channel", "message", "sender", "link", "file_name"):
+            value = payload.get(name)
+            object.__setattr__(self, name, value if isinstance(value, str) else None)
+        for name in ("has_link", "has_file"):
+            value = payload.get(name)
+            object.__setattr__(self, name, value if type(value) is bool else None)
+
+        result_source = payload.get("result")
+        if not isinstance(result_source, Mapping) or not result_source:
+            result_source = payload
+        result = None
+        if any(name in result_source for name in (
+            "score", "priority", "reasons", "checklist", "matched_rule", "trace",
+        )):
+            score = result_source.get("score")
+            if type(score) not in (int, float) or (
+                type(score) is float and not math.isfinite(score)
+            ):
+                score = None
+            priority = result_source.get("priority")
+            if not isinstance(priority, str):
+                priority = None
+            matched_rule = result_source.get("matched_rule")
+            if not isinstance(matched_rule, str):
+                matched_rule = None
+            guidance = {}
+            for name in ("reasons", "checklist"):
+                values = result_source.get(name)
+                guidance[name] = (
+                    tuple(value for value in values if isinstance(value, str))
+                    if isinstance(values, (list, tuple)) else ()
+                )
+            trace = ()
+            if all(name in result_source for name in ("matched_rule", "score", "trace")):
+                candidate = {
+                    "score": score,
+                    "matched_rule": result_source["matched_rule"],
+                    "trace": _thaw_json(result_source["trace"]),
+                }
+                try:
+                    _validate_rule_trace(candidate)
+                except ValueError:
+                    pass
+                else:
+                    trace = tuple(RuleTrace(**step) for step in candidate["trace"])
+            result = AssessmentResult(
+                score, priority, guidance["reasons"], guidance["checklist"], matched_rule, trace,
+            )
+        object.__setattr__(self, "result", result)
+
+        exposure_source = None
+        nested = payload.get("exposure")
+        has_nested_exposure = self.schema_version == SCHEMA_VERSION and isinstance(nested, Mapping)
+        if has_nested_exposure:
+            exposure_source = nested
+        elif self.schema_version != SCHEMA_VERSION and any(name in payload for name in (
+            "clicked", "downloaded", "submitted_category", "disclosure_answered",
+        )):
+            exposure_source = payload
+        exposure = None
+        if exposure_source is not None:
+            answers = {}
+            for name in ("clicked", "downloaded", "disclosure_answered"):
+                value = exposure_source.get(name)
+                answers[name] = value if type(value) is bool else None
+            category = exposure_source.get("submitted_category")
+            answers["submitted_category"] = category if isinstance(category, str) else None
+            exposure = ExposureAnswers(**answers)
+        object.__setattr__(self, "exposure", exposure)
+        object.__setattr__(self, "has_nested_exposure", has_nested_exposure)
+
+        details = payload.get("details")
+        if not isinstance(details, Mapping):
+            ai = payload.get("ai")
+            details = ai.get("details") if isinstance(ai, Mapping) else None
+        if not isinstance(details, Mapping):
+            details = {}
+        for name in ("emails", "phone_numbers", "ip_addresses"):
+            values = details.get(name)
+            projected = (
+                tuple(value for value in values if isinstance(value, str))
+                if isinstance(values, (list, tuple)) else ()
+            )
+            object.__setattr__(self, name, projected)
 
 
 def _freeze_json(value: object) -> object:

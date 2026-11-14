@@ -1532,3 +1532,195 @@ def test_thaw_json_preserves_existing_feedback_id_and_missing_legacy_fields(asse
     assert restored_legacy == legacy
     assert "schema_version" not in restored_legacy
     assert "assessment_id" not in restored_legacy
+
+
+@pytest.mark.parametrize("fixture_name", [
+    "summary_report", "version_one_report", "version_two_report", "version_three_exposure",
+])
+def test_report_constructor_projects_supported_history_and_owns_exact_snapshot(
+    request, fixture_name,
+):
+    source = request.getfixturevalue(fixture_name)
+    before = deepcopy(source)
+    report = model.Report(source)
+
+    assert report.message == source["message"]
+    assert report.channel == source["channel"]
+    assert report.result.score == 60
+    assert model._thaw_json(report._payload) == before == source
+    assert report.assessment_id == source.get("assessment_id")
+    assert report.schema_version == source.get("schema_version")
+
+
+def test_report_constructor_isolates_source_aliases_and_freezes_projected_values():
+    source = UserDict({
+        "message": " Original\n ", "assessment_id": " ID ",
+        "result": {"reasons": ["Reason"], "priority": " Historical "},
+        "details": {"emails": ["a@example.test"]},
+        "unknown": {"items": [None, False]},
+    })
+    report = model.Report(source)
+    source["message"] = "changed"
+    source["result"]["reasons"].clear()
+    source["details"]["emails"].append("later@example.test")
+    source["unknown"]["items"].clear()
+
+    assert report.message == " Original\n " and report.assessment_id == " ID "
+    assert report.result.reasons == ("Reason",)
+    assert report.emails == ("a@example.test",)
+    assert report._payload["unknown"]["items"] == (None, False)
+    assert report._payload["message"] == report.message
+    assert report._payload["result"]["reasons"] == report.result.reasons
+    assert not hasattr(report, "__dict__") and not hasattr(report, "source")
+    with pytest.raises(FrozenInstanceError):
+        report.message = "changed"
+    with pytest.raises(FrozenInstanceError):
+        report.result.priority = "changed"
+    with pytest.raises(TypeError):
+        report._payload["unknown"]["items"] = ()
+
+
+def test_report_constructor_projects_partial_malformed_summary_without_normalizing_snapshot():
+    source = {
+        "schema_version": True, "assessment_id": 1, "channel": [], "message": None,
+        "sender": "", "link": " URL ", "file_name": {}, "has_link": 1, "has_file": False,
+        "score": True, "priority": [], "reasons": ["", 1, "reason", "reason", None],
+        "checklist": "not a sequence", "details": {"emails": ["", False, "a", "a"]},
+        "unknown": [None, {"legacy": " retained "}],
+    }
+    before = deepcopy(source)
+    report = model.Report(source)
+    assert report.schema_version is report.assessment_id is report.channel is None
+    assert report.message is report.file_name is report.has_link is None
+    assert report.sender == "" and report.link == " URL " and report.has_file is False
+    assert report.result == model.AssessmentResult(None, None, ("", "reason", "reason"))
+    assert report.emails == ("", "a", "a")
+    assert report.phone_numbers == report.ip_addresses == ()
+    assert model._thaw_json(report._payload) == source == before
+    assert "assessment_id" in report._payload
+    assert model.Report({}).result is None
+    assert model.Report({}).exposure is None
+
+
+@pytest.mark.parametrize("nested,expected_score,expected_priority", [
+    ({"score": 9}, 9, None), ({"extra": True}, None, None),
+    ({}, 60, "root"), (None, 60, "root"), (["invalid"], 60, "root"),
+])
+def test_report_constructor_selects_one_result_source_without_merging(
+    nested, expected_score, expected_priority,
+):
+    report = model.Report({"result": nested, "score": 60, "priority": "root"})
+    if nested == {"extra": True}:
+        assert report.result is None
+    else:
+        assert report.result.score == expected_score
+        assert report.result.priority == expected_priority
+
+
+@pytest.mark.parametrize("score,expected", [
+    (60.5, 60.5), (-400, -400), (1000, 1000), (True, None), ("60", None),
+    (float("nan"), None), (float("inf"), None), (float("-inf"), None),
+])
+def test_report_constructor_preserves_historical_finite_scores_and_hides_invalid_scores(
+    score, expected,
+):
+    report = model.Report({"score": score, "priority": ""})
+    assert report.result.score == expected
+    assert report.result.priority == ""
+    assert report._payload["score"] is score
+
+
+@pytest.mark.parametrize("updates,valid", [
+    ({}, True), ({"matched_rule": "Other"}, False), ({"score": None}, False),
+    ({"trace": [{"rule_name": "Winner", "matched": True}]}, False),
+    ({"trace": [{"rule_name": "Skip", "matched": False, "score": 0},
+                {"rule_name": "Winner", "matched": True, "score": 60}]}, False),
+    ({"trace": "invalid"}, False), ({"trace": []}, False),
+])
+def test_report_constructor_accepts_only_wholly_canonical_rule_traces(updates, valid):
+    result = {"score": 60, "matched_rule": "Winner", "trace": [
+        {"rule_name": "Skip", "matched": False, "score": None},
+        {"rule_name": "Winner", "matched": True, "score": 60},
+    ]}
+    result.update(updates)
+    report = model.Report({"result": result})
+    assert report.result.matched_rule == result["matched_rule"]
+    assert report.result.trace == ((model.RuleTrace("Skip", False),
+                                    model.RuleTrace("Winner", True, 60)) if valid else ())
+    assert model._thaw_json(report._payload)["result"] == result
+
+
+@pytest.mark.parametrize("missing", ["score", "matched_rule", "trace"])
+def test_report_constructor_does_not_infer_missing_trace_fields(missing):
+    result = {"score": 60, "matched_rule": "Winner", "trace": [
+        {"rule_name": "Winner", "matched": True, "score": 60},
+    ]}
+    del result[missing]
+    assert model.Report({"result": result}).result.trace == ()
+
+
+@pytest.mark.parametrize("nested", [None, [], "invalid"])
+def test_report_constructor_v3_missing_or_malformed_exposure_never_uses_root(nested):
+    source = {"schema_version": 3, "clicked": True, "submitted_category": "root"}
+    assert model.Report(source).exposure is None
+    source["exposure"] = nested
+    report = model.Report(source)
+    assert report.exposure is None and report.has_nested_exposure is False
+
+
+@pytest.mark.parametrize("answered", [None, False, True])
+def test_report_constructor_v3_preserves_nested_categories_and_confirmation_independently(answered):
+    report = model.Report({"schema_version": 3, "clicked": True, "exposure": {
+        "clicked": None, "downloaded": False, "submitted_category": " historical ",
+        "disclosure_answered": answered,
+    }})
+    assert report.has_nested_exposure is True
+    assert report.exposure == model.ExposureAnswers(None, False, " historical ", answered)
+    empty = model.Report({"schema_version": 3, "clicked": True, "exposure": {}})
+    assert empty.has_nested_exposure is True
+    assert empty.exposure == model.ExposureAnswers()
+
+
+@pytest.mark.parametrize("version", [None, 1, 2, 3.0, True, 99])
+def test_report_constructor_historical_exposure_uses_only_root_and_exact_boolean_flags(version):
+    source = {"schema_version": version, "clicked": 1, "downloaded": False,
+              "submitted_category": "", "disclosure_answered": "yes",
+              "exposure": {"clicked": True, "submitted_category": "nested"}}
+    report = model.Report(source)
+    assert report.exposure == model.ExposureAnswers(None, False, "", None)
+    assert report.has_nested_exposure is False
+    assert model.Report({"schema_version": version, "exposure": {}}).exposure is None
+
+
+@pytest.mark.parametrize("root_details,expected", [
+    ({}, ()), ({"emails": ["root", 1, "", "root"]}, ("root", "", "root")),
+    (None, ("ai", "", "ai")), ([], ("ai", "", "ai")),
+])
+def test_report_constructor_selects_root_details_even_when_empty_without_merging(
+    root_details, expected,
+):
+    report = model.Report({"details": root_details, "ai": {"details": {
+        "emails": ["ai", False, "", "ai"], "phone_numbers": ["123"],
+        "ip_addresses": "not a list",
+    }}})
+    assert report.emails == expected
+    assert report.phone_numbers == (() if isinstance(root_details, dict) else ("123",))
+    assert report.ip_addresses == ()
+
+
+@pytest.mark.parametrize("source", [None, [], "private", 1, False])
+def test_report_constructor_rejects_non_mapping_roots_with_safe_fixed_error(source):
+    with pytest.raises(ValueError) as caught:
+        model.Report(source)
+    assert str(caught.value) == "Report source must be an object."
+
+
+def test_report_constructor_rejects_unsupported_values_even_in_unused_fields_without_formatting():
+    class Unprintable:
+        def __repr__(self):
+            raise AssertionError("Private value formatted")
+
+    for source in (Unprintable(), {"unused": Unprintable()}, {"details": {1: "private"}}):
+        with pytest.raises(ValueError) as caught:
+            model.Report(source)
+        assert "Private" not in str(caught.value)
