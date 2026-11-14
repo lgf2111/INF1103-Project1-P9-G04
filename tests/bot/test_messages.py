@@ -1,6 +1,7 @@
 """Exposure keyboard payloads reflect explicit answers without changing state."""
 
 from copy import deepcopy
+from types import MappingProxyType
 from unittest.mock import Mock
 
 import pytest
@@ -10,6 +11,7 @@ from phishreport.assessment import AssessmentService, AssessmentSnapshot
 from phishreport.bot import messages
 from phishreport.bot.exposure import ExposureSession
 from phishreport.logic import LogicManager
+from phishreport.model import SCHEMA_VERSION, SCHEMA_VERSION_KEY
 
 
 @pytest.fixture
@@ -239,6 +241,52 @@ def test_formatter_completed_cache_is_authoritative(assessed_session, saved):
     assert "unconfirmed" not in text.lower() and "Did you" not in text
     assert ("Report saved locally." in text) is saved
     assert ("Report not saved. Use Retry saving." in text) is (not saved)
+
+
+@pytest.mark.parametrize("exposure", [None, ["private invalid exposure"]])
+def test_formatter_partial_completed_report_keeps_unknown_exposure(session, exposure):
+    session.completed = True
+    session.report = {SCHEMA_VERSION_KEY: SCHEMA_VERSION, "exposure": exposure}
+    session.result = {"score": 99, "priority": "HIGH"}
+    session.exposure.update(clicked=True, downloaded=True, disclosure_answered=True)
+    before = deepcopy(session.report)
+
+    text = messages.ResultFormatter().format({}, session=session)
+
+    assert "No assessment available." in text
+    assert "Clicked link: Unconfirmed" in text
+    assert "Downloaded file: Unconfirmed" in text
+    assert "Information submitted: Unconfirmed" in text
+    assert "Exposure unconfirmed" in text
+    assert "Report not saved. Use Retry saving." in text
+    assert "Rule-based score: 99" not in text
+    assert "private invalid exposure" not in text
+    assert session.report == before
+
+
+def test_formatter_frozen_saved_payload_displays_canonical_values(session):
+    session.saved = True
+    session.report = MappingProxyType({
+        SCHEMA_VERSION_KEY: SCHEMA_VERSION,
+        "result": MappingProxyType({
+            "score": 60, "priority": "MEDIUM", "reasons": ("Verify sender", 123),
+        }),
+        "exposure": MappingProxyType({
+            "clicked": False, "downloaded": True,
+            "submitted_category": "otp", "disclosure_answered": True,
+        }),
+    })
+
+    text = messages.ResultFormatter().format({}, session=session)
+
+    assert "Priority: Medium\nRule-based score: 60" in text
+    assert " - Verify sender" in text
+    assert "123" not in text
+    assert "Clicked link: No" in text
+    assert "Downloaded file: Yes" in text
+    assert "Information submitted: One-time code" in text
+    assert "Report saved locally." in text
+    assert "Did you" not in text and "unconfirmed" not in text.lower()
 
 
 @pytest.mark.parametrize("value", [0, 1, "yes", None])
