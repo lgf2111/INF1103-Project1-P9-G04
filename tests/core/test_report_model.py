@@ -1724,3 +1724,120 @@ def test_report_constructor_rejects_unsupported_values_even_in_unused_fields_wit
         with pytest.raises(ValueError) as caught:
             model.Report(source)
         assert "Private" not in str(caught.value)
+
+
+@pytest.mark.parametrize("layout", [
+    "partial_legacy", "summary", "v1", "v2", "v3_feedback",
+    "v3_historical_exposure", "v3_identified_exposure",
+])
+def test_report_from_legacy_preserves_all_supported_layouts_without_inventing_fields(
+    summary_report, version_one_report, version_two_report, version_three_exposure, layout,
+):
+    records = {
+        "partial_legacy": {"message": None, "extra": {"items": [False, None, " "]}},
+        "summary": summary_report, "v1": version_one_report, "v2": version_two_report,
+        "v3_feedback": {
+            "schema_version": 3, "assessment_id": " Original ID ",
+            "channel": "chat", "message": " Original\n ", "result": {"score": 60,
+            "priority": "MEDIUM", "reasons": [], "checklist": []},
+        },
+        "v3_historical_exposure": version_three_exposure,
+        "v3_identified_exposure": {**version_three_exposure, "assessment_id": " Existing ID "},
+    }
+    source = records[layout]
+    before = deepcopy(source)
+
+    report = model.Report.from_legacy(source)
+
+    assert isinstance(report, model.Report)
+    assert model._thaw_json(report._payload) == before == source
+    assert report.schema_version == before.get("schema_version")
+    assert report.assessment_id == before.get("assessment_id")
+    assert ("schema_version" in report._payload) is ("schema_version" in before)
+    assert ("assessment_id" in report._payload) is ("assessment_id" in before)
+    if layout in {"v3_historical_exposure", "v3_identified_exposure"}:
+        assert report.exposure == model.ExposureAnswers(None, False, None, False)
+
+
+def test_report_from_legacy_owns_snapshot_and_preserves_raw_legacy_values():
+    source = {
+        "message": " Original\n ", "sender": None, "clicked": False,
+        "score": 160.5, "priority": " Historical ", "reasons": ["", " ", "same", "same"],
+        "details": {"emails": ["", " original "]},
+        "unknown": {"items": [None, False, {"text": " unchanged "}]},
+    }
+    before = deepcopy(source)
+    report = model.Report.from_legacy(source)
+    assert source == before
+    source["message"] = "changed"
+    source["reasons"].clear()
+    source["details"]["emails"].clear()
+    source["unknown"]["items"][2]["text"] = "changed"
+
+    assert model._thaw_json(report._payload) == before
+    assert report.message == " Original\n "
+    assert report.result.score == 160.5 and type(report.result.score) is float
+    assert report.result.priority == " Historical "
+    assert report.result.reasons == ("", " ", "same", "same")
+    assert report.emails == ("", " original ")
+    assert report.exposure.clicked is False
+    assert report.sender is report.schema_version is report.assessment_id is None
+
+
+@pytest.mark.parametrize("source", [
+    {"schema_version": True}, {"schema_version": 2.0}, {"schema_version": None},
+    {"schema_version": 2, "channel": "chat", "message": "message"},
+    {"schema_version": 3, "channel": "chat", "message": "message", "result": {}},
+    {"message": 1}, {"score": True}, {"result": {"reasons": [None]}},
+    {"details": {"emails": "invalid"}},
+])
+def test_report_from_legacy_rejects_malformed_history_before_tolerant_projection(
+    source, monkeypatch,
+):
+    before = deepcopy(source)
+    assert model._thaw_json(model.Report(source)._payload) == before
+
+    def forbidden_projection(self, source):
+        pytest.fail("Malformed stored history reached the tolerant constructor")
+
+    monkeypatch.setattr(model.Report, "__post_init__", forbidden_projection)
+    with pytest.raises(ValueError):
+        model.Report.from_legacy(source)
+    assert source == before
+
+
+@pytest.mark.parametrize("source", [None, [], "history", 3, UserDict({"message": "text"})])
+def test_report_from_legacy_rejects_non_dictionary_roots(source):
+    with pytest.raises(ValueError, match="Stored reports must be objects"):
+        model.Report.from_legacy(source)
+
+
+def test_report_from_legacy_accepts_unversioned_v2_shaped_data_without_inference(
+    version_two_report,
+):
+    del version_two_report["schema_version"]
+    report = model.Report.from_legacy(version_two_report)
+    assert model._thaw_json(report._payload) == version_two_report
+    assert report.schema_version is report.assessment_id is None
+    assert report.result.score == 60
+
+
+def test_report_from_legacy_propagates_canonical_validation_exception_identity(monkeypatch):
+    error = ValueError("Canonical validation failure")
+
+    def reject(record):
+        raise error
+
+    monkeypatch.setattr(model, "_validate_stored", reject)
+    with pytest.raises(ValueError) as caught:
+        model.Report.from_legacy({})
+    assert caught.value is error
+
+
+def test_report_from_legacy_constructs_requested_subclass():
+    class HistoricalReport(model.Report):
+        pass
+
+    report = HistoricalReport.from_legacy({"message": " Original "})
+    assert type(report) is HistoricalReport
+    assert report.message == " Original "

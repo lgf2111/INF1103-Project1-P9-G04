@@ -132,6 +132,12 @@ class Report:
     phone_numbers: tuple[str, ...] = field(init=False)
     ip_addresses: tuple[str, ...] = field(init=False)
 
+    @classmethod
+    def from_legacy(cls, record: dict) -> "Report":
+        """Validate stored history before taking an immutable, unchanged snapshot."""
+        _validate_stored(record)
+        return cls(record)
+
     def __post_init__(self, source: Mapping[str, object]) -> None:
         """Snapshot all source data before projecting supported historical fields.
 
