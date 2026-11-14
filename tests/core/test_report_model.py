@@ -12,6 +12,7 @@ from phishreport import model
 from phishreport.data import validator as data_validator
 from phishreport.data.validator import ReportValidator
 from phishreport.model import (
+    INPUT_FIELDS,
     REPORT_FIELDS,
     SCHEMA_VERSION,
     SCHEMA_VERSION_KEY,
@@ -20,6 +21,7 @@ from phishreport.model import (
     _validate_result,
     _validate_rule_trace,
     _validate_summary,
+    _validate_v1,
     _validate_v2,
     _validate_v3,
 )
@@ -854,3 +856,143 @@ def test_summary_validator_accepts_empty_extraction_and_preserves_validation_ord
 
     with pytest.raises(ValueError, match="Invalid stored score"):
         _validate_summary(summary_report)
+
+
+@pytest.fixture
+def version_one_report(assessment_result):
+    return {
+        "schema_version": 1, "channel": "", "sender": "", "message": " Original Message\n ",
+        "has_link": False, "link": None, "has_file": False, "file_name": " ",
+        "clicked": False, "downloaded": False, "submitted_category": None,
+        "ai": {
+            "credential_request": False, "suspicious": True, "insufficient_context": False,
+            "details": {"emails": [], "phone_numbers": [], "ip_addresses": []},
+        },
+        "result": assessment_result,
+    }
+
+
+@pytest.mark.parametrize("emails", [[], [" original extraction "]])
+def test_v1_validator_preserves_complete_historical_report_and_shared_input_fields(
+    version_one_report, emails,
+):
+    version_one_report["ai"]["details"]["emails"] = emails
+    before = deepcopy(version_one_report)
+
+    assert INPUT_FIELDS is data_validator.INPUT_FIELDS
+    assert type(INPUT_FIELDS) is set
+    assert INPUT_FIELDS == {
+        "channel", "sender", "message", "has_link", "link", "has_file", "file_name",
+        "clicked", "downloaded", "submitted_category",
+    }
+    assert ReportValidator._validate_v1 is _validate_v1
+    assert ReportValidator()._validate_v1 is _validate_v1
+    assert _validate_v1(version_one_report) is version_one_report
+    assert ReportValidator().validate_stored(version_one_report) is version_one_report
+    assert version_one_report == before
+    assert version_one_report["schema_version"] == 1
+    assert "assessment_id" not in version_one_report
+
+
+@pytest.mark.parametrize("missing", ["schema_version", "channel", "has_file", "ai", "result"])
+def test_v1_validator_rejects_incomplete_shape(version_one_report, missing):
+    del version_one_report[missing]
+    before = deepcopy(version_one_report)
+
+    with pytest.raises(ValueError, match="Incomplete versioned report"):
+        _validate_v1(version_one_report)
+
+    assert version_one_report == before
+
+
+def test_v1_validator_rejects_extra_fields_before_value_validation(version_one_report):
+    version_one_report.update(extra="Not allowed", message=None)
+
+    with pytest.raises(ValueError, match="Incomplete versioned report"):
+        _validate_v1(version_one_report)
+
+
+@pytest.mark.parametrize("updates,expected", [
+    ({"channel": None}, "Invalid report channel."),
+    ({"message": " "}, "Invalid report message."),
+    ({"sender": 1}, "Invalid report metadata."),
+    ({"link": False}, "Invalid report metadata."),
+    ({"has_link": 0}, "Invalid reported action."),
+    ({"downloaded": None}, "Invalid reported action."),
+    ({"submitted_category": "email"}, "Invalid submitted category."),
+    ({"ai": None}, "Invalid stored AI findings."),
+])
+def test_v1_validator_preserves_known_input_field_errors(version_one_report, updates, expected):
+    version_one_report.update(updates)
+    before = deepcopy(version_one_report)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_v1(version_one_report)
+
+    assert str(caught.value) == expected
+    assert version_one_report == before
+
+
+@pytest.mark.parametrize("updates,expected", [
+    ({"extra": True}, "Invalid stored AI findings."),
+    ({"credential_request": 1}, "Invalid stored AI finding types."),
+    ({"details": None}, "Invalid stored extraction."),
+    ({"details": {"emails": []}}, "Invalid stored extraction."),
+    ({"details": {"emails": [], "phone_numbers": [], "ip_addresses": [], "extra": []}},
+     "Invalid stored extraction."),
+    ({"details": {"emails": [" "], "phone_numbers": [], "ip_addresses": []}},
+     "Invalid stored text lists."),
+    ({"details": {"emails": [], "phone_numbers": (), "ip_addresses": []}},
+     "Invalid stored text lists."),
+    ({"details": {"emails": [], "phone_numbers": [], "ip_addresses": [None]}},
+     "Invalid stored text lists."),
+])
+def test_v1_validator_checks_exact_ai_findings_and_extraction_without_mutation(
+    version_one_report, updates, expected,
+):
+    version_one_report["ai"].update(updates)
+    before = deepcopy(version_one_report)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_v1(version_one_report)
+
+    assert str(caught.value) == expected
+    assert version_one_report == before
+
+
+@pytest.mark.parametrize("version", [True, 1.0, None, "1", 99])
+def test_v1_leaf_keeps_version_check_as_dispatcher_precondition(version_one_report, version):
+    version_one_report["schema_version"] = version
+    before = deepcopy(version_one_report)
+
+    assert _validate_v1(version_one_report) is version_one_report
+    assert version_one_report == before
+    with pytest.raises(ValueError, match="Unsupported report version"):
+        ReportValidator().validate_stored(version_one_report)
+
+
+def test_v1_validator_uses_canonical_result_without_rule_trace_opt_in(
+    version_one_report, monkeypatch,
+):
+    validate_result = Mock(wraps=model._validate_result)
+    monkeypatch.setattr(model, "_validate_result", validate_result)
+
+    assert _validate_v1(version_one_report) is version_one_report
+
+    validate_result.assert_called_once_with(version_one_report["result"])
+    version_one_report["result"].update(
+        matched_rule="Winner", trace=[{"rule_name": "Winner", "matched": True, "score": 60}],
+    )
+    with pytest.raises(ValueError, match="Invalid stored assessment"):
+        _validate_v1(version_one_report)
+
+
+def test_v1_validator_checks_result_before_extraction_list_contents(version_one_report):
+    version_one_report["result"]["score"] = True
+    version_one_report["ai"]["details"]["emails"] = [None]
+    before = deepcopy(version_one_report)
+
+    with pytest.raises(ValueError, match="Invalid stored score"):
+        _validate_v1(version_one_report)
+
+    assert version_one_report == before

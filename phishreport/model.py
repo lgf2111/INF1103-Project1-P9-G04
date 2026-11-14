@@ -18,6 +18,19 @@ REPORT_FIELDS = {
     "priority",
 }
 
+INPUT_FIELDS = {
+    "channel",
+    "sender",
+    "message",
+    "has_link",
+    "link",
+    "has_file",
+    "file_name",
+    "clicked",
+    "downloaded",
+    "submitted_category",
+}
+
 
 def _freeze_json(value: object) -> object:
     """Own an acyclic JSON-shaped value through recursively read-only containers.
@@ -121,6 +134,44 @@ def _validate_legacy(record):
                 or any(not isinstance(item, str) for item in details[key])
             ):
                 raise ValueError("Invalid legacy extraction list: " + key)
+    return record
+
+
+def _validate_v1(record):
+    """Validate the complete historical version-1 assessment."""
+    if set(record) != INPUT_FIELDS | {SCHEMA_VERSION_KEY, "ai", "result"}:
+        raise ValueError("Incomplete versioned report.")
+    if not isinstance(record["channel"], str):
+        raise ValueError("Invalid report channel.")
+    if not isinstance(record["message"], str) or not record["message"].strip():
+        raise ValueError("Invalid report message.")
+    for key in ("sender", "link", "file_name"):
+        if record[key] is not None and not isinstance(record[key], str):
+            raise ValueError("Invalid report metadata.")
+    for key in ("has_link", "has_file", "clicked", "downloaded"):
+        if type(record[key]) is not bool:
+            raise ValueError("Invalid reported action.")
+    if record["submitted_category"] not in (None, "password", "otp"):
+        raise ValueError("Invalid submitted category.")
+    ai = record["ai"]
+    findings = {"credential_request", "suspicious", "insufficient_context"}
+    if not isinstance(ai, dict) or set(ai) != findings | {"details"}:
+        raise ValueError("Invalid stored AI findings.")
+    if any(type(ai[key]) is not bool for key in findings):
+        raise ValueError("Invalid stored AI finding types.")
+    details = ai["details"]
+    if not isinstance(details, dict) or set(details) != {
+        "emails",
+        "phone_numbers",
+        "ip_addresses",
+    }:
+        raise ValueError("Invalid stored extraction.")
+    _validate_result(record["result"])
+    for values in details.values():
+        if not isinstance(values, list) or any(
+            not isinstance(value, str) or not value.strip() for value in values
+        ):
+            raise ValueError("Invalid stored text lists.")
     return record
 
 
