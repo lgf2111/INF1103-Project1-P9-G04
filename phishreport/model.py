@@ -63,6 +63,26 @@ def _validate_new(record: dict) -> dict:
     return _validate_v2(record)
 
 
+def _validate_stored(record: dict) -> dict:
+    """Validate supported history without inventing or normalizing data."""
+    if not isinstance(record, dict):
+        raise ValueError("Stored reports must be objects.")
+    if SCHEMA_VERSION_KEY not in record:
+        if set(record) == REPORT_FIELDS:
+            return _validate_summary(record)
+        return _validate_legacy(record)
+    if (
+        type(record[SCHEMA_VERSION_KEY]) is not int
+        or record[SCHEMA_VERSION_KEY] not in (1, 2, SCHEMA_VERSION)
+    ):
+        raise ValueError("Unsupported report version.")
+    if record[SCHEMA_VERSION_KEY] == SCHEMA_VERSION:
+        return _validate_v3(record)
+    if record[SCHEMA_VERSION_KEY] == 2:
+        return _validate_v2(record)
+    return _validate_v1(record)
+
+
 def _validate_summary(record):
     """Return an unchanged legacy eight-field report after validating its fields.
 

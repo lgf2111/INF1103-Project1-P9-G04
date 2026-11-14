@@ -4,11 +4,14 @@ from phishreport.model import (
     INPUT_FIELDS as INPUT_FIELDS,
 )
 from phishreport.model import (
-    REPORT_FIELDS,
+    REPORT_FIELDS as REPORT_FIELDS,
+)
+from phishreport.model import (
     _validate_legacy,
     _validate_new,
     _validate_result,
     _validate_rule_trace,
+    _validate_stored,
     _validate_summary,
     _validate_v1,
     _validate_v2,
@@ -17,28 +20,11 @@ from phishreport.model import (
 
 
 class ReportValidator:
-    """Own report schema rules independently of persistence and logging."""
+    """Expose model-owned report validation through the existing validator API."""
 
     validate_new = staticmethod(_validate_new)
 
-    def validate_stored(self, record: dict) -> dict:
-        """Validate supported history without inventing or normalizing data."""
-        if not isinstance(record, dict):
-            raise ValueError("Stored reports must be objects.")
-        if "schema_version" not in record:
-            if set(record) == REPORT_FIELDS:
-                return self._validate_summary(record)
-            return self._validate_legacy(record)
-        if (
-            type(record["schema_version"]) is not int
-            or record["schema_version"] not in (1, 2, 3)
-        ):
-            raise ValueError("Unsupported report version.")
-        if record["schema_version"] == 3:
-            return self._validate_v3(record)
-        if record["schema_version"] == 2:
-            return self._validate_v2(record)
-        return self._validate_v1(record)
+    validate_stored = staticmethod(_validate_stored)
 
     _validate_summary = staticmethod(_validate_summary)
 

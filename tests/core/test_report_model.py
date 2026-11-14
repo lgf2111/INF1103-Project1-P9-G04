@@ -21,6 +21,7 @@ from phishreport.model import (
     _validate_new,
     _validate_result,
     _validate_rule_trace,
+    _validate_stored,
     _validate_summary,
     _validate_v1,
     _validate_v2,
@@ -1083,3 +1084,102 @@ def test_new_report_validator_preserves_nested_validation_errors_without_mutatio
 
     assert str(caught.value) == "Invalid stored score."
     assert record == before
+
+
+@pytest.mark.parametrize("layout", [
+    "partial_legacy", "summary", "v1", "v2", "v3_feedback",
+    "v3_historical_exposure", "v3_identified_exposure",
+])
+def test_stored_report_validator_is_canonical_and_preserves_all_supported_layouts(
+    summary_report, version_one_report, version_two_report, version_three_exposure, layout,
+):
+    if layout == "partial_legacy":
+        record = {"message": None, "unknown_extra": {"original": [False, None, " "]}}
+    elif layout == "summary":
+        record = summary_report
+    elif layout == "v1":
+        record = version_one_report
+    elif layout == "v2":
+        record = version_two_report
+    else:
+        record = version_three_exposure
+        if layout == "v3_feedback":
+            record = {
+                key: record[key] for key in ("schema_version", "channel", "message", "result")
+            }
+        if layout != "v3_historical_exposure":
+            record["assessment_id"] = " preserved original ID "
+    before = deepcopy(record)
+
+    assert ReportValidator.validate_stored is _validate_stored
+    assert ReportValidator().validate_stored is _validate_stored
+    assert _validate_stored(record) is record
+    assert ReportValidator.validate_stored(record) is record
+    assert ReportValidator().validate_stored(record) is record
+    assert record == before
+    assert ("schema_version" in record) is ("schema_version" in before)
+    assert ("assessment_id" in record) is ("assessment_id" in before)
+    assert data_validator.REPORT_FIELDS is REPORT_FIELDS
+
+
+@pytest.mark.parametrize("record", [None, [], "history", 3])
+def test_stored_report_validator_checks_root_before_any_dispatch(record):
+    with pytest.raises(ValueError) as caught:
+        _validate_stored(record)
+
+    assert str(caught.value) == "Stored reports must be objects."
+
+
+@pytest.mark.parametrize("version", [None, True, False, 1.0, 2.0, 3.0, "1", 0, 4])
+def test_stored_report_validator_rejects_explicit_bad_versions_before_payload_validation(version):
+    record = {"schema_version": version, "message": 1, "result": None}
+    before = deepcopy(record)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_stored(record)
+
+    assert str(caught.value) == "Unsupported report version."
+    assert record == before
+
+
+def test_stored_report_validator_distinguishes_exact_summary_from_permissive_legacy(summary_report):
+    summary_report["score"] = 60.5
+    with pytest.raises(ValueError, match="Invalid stored score"):
+        _validate_stored(summary_report)
+    summary_report["unknown_extra"] = {"unchanged": [None]}
+    before = deepcopy(summary_report)
+
+    assert _validate_stored(summary_report) is summary_report
+
+    assert summary_report == before
+    assert summary_report["score"] == 60.5
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_stored_report_validator_selects_corresponding_canonical_schema_once(
+    version_one_report, version_two_report, version_three_exposure, monkeypatch, version,
+):
+    records = {1: version_one_report, 2: version_two_report, 3: version_three_exposure}
+    validators = {
+        1: Mock(wraps=model._validate_v1),
+        2: Mock(wraps=model._validate_v2),
+        3: Mock(wraps=model._validate_v3),
+    }
+    for candidate, validator in validators.items():
+        monkeypatch.setattr(model, f"_validate_v{candidate}", validator)
+
+    assert _validate_stored(records[version]) is records[version]
+
+    validators[version].assert_called_once_with(records[version])
+    assert sum(validator.call_count for validator in validators.values()) == 1
+
+
+def test_stored_report_validator_preserves_nested_failures_without_mutation(version_one_report):
+    version_one_report["result"]["score"] = True
+    before = deepcopy(version_one_report)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_stored(version_one_report)
+
+    assert str(caught.value) == "Invalid stored score."
+    assert version_one_report == before
