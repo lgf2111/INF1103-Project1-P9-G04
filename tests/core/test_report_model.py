@@ -17,6 +17,7 @@ from phishreport.model import (
     _validate_result,
     _validate_rule_trace,
     _validate_v2,
+    _validate_v3,
 )
 
 
@@ -468,3 +469,180 @@ def test_v2_validator_calls_canonical_result_with_trace_opt_in(version_two_repor
     assert _validate_v2(version_two_report) is version_two_report
 
     validate_result.assert_called_once_with(version_two_report["result"], allow_rule_trace=True)
+
+
+@pytest.fixture
+def version_three_exposure(assessment_result):
+    return {
+        "schema_version": 3, "channel": " chat ", "message": " Original Message\n  ",
+        "result": assessment_result, "sender": None,
+        "has_link": True, "link": " https://example.test/login ",
+        "has_file": True, "file_name": None,
+        "exposure": {
+            "clicked": None, "downloaded": False,
+            "submitted_category": None, "disclosure_answered": False,
+        },
+    }
+
+
+@pytest.mark.parametrize("shape", ["feedback", "historical_exposure", "identified_exposure"])
+def test_v3_validator_preserves_three_supported_shapes_and_original_identifiers(
+    version_three_exposure, shape,
+):
+    record = version_three_exposure
+    if shape == "feedback":
+        record = {key: record[key] for key in ("schema_version", "channel", "message", "result")}
+    if shape != "historical_exposure":
+        record["assessment_id"] = " " + "x" * 98 + " "
+    record["result"].update(
+        matched_rule="Winner", trace=[{"rule_name": "Winner", "matched": True, "score": 60}],
+    )
+    before = deepcopy(record)
+
+    assert _validate_v3(record) is record
+    assert ReportValidator._validate_v3 is _validate_v3
+    assert ReportValidator()._validate_v3 is _validate_v3
+    assert ReportValidator().validate_new(record) is record
+    assert ReportValidator().validate_stored(record) is record
+    assert record == before
+    assert ("assessment_id" in record) is (shape != "historical_exposure")
+    if "exposure" in record:
+        assert record["exposure"]["clicked"] is None
+        assert record["exposure"]["downloaded"] is False
+        assert record["has_file"] is True and record["file_name"] is None
+
+
+@pytest.mark.parametrize("answers", [
+    (None, None, None, False), (False, False, None, True),
+    (True, False, "password", True), (False, True, "otp", True),
+])
+def test_v3_validator_preserves_unknown_and_confirmed_exposure_answers(
+    version_three_exposure, answers,
+):
+    version_three_exposure["exposure"] = dict(zip(
+        ("clicked", "downloaded", "submitted_category", "disclosure_answered"), answers,
+    ))
+    before = deepcopy(version_three_exposure)
+
+    assert _validate_v3(version_three_exposure) is version_three_exposure
+    assert version_three_exposure == before
+
+
+@pytest.mark.parametrize("root", [None, [], "report"])
+def test_v3_validator_rejects_non_mapping_roots_at_version_boundary(root):
+    with pytest.raises(ValueError, match="Version-3 reports must use schema version 3"):
+        _validate_v3(root)
+
+
+@pytest.mark.parametrize("version", [None, True, False, 3.0, "3", 2])
+def test_v3_validator_requires_exact_current_integer_version(version_three_exposure, version):
+    version_three_exposure["schema_version"] = version
+    before = deepcopy(version_three_exposure)
+
+    with pytest.raises(ValueError, match="Version-3 reports must use schema version 3"):
+        _validate_v3(version_three_exposure)
+
+    assert version_three_exposure == before
+
+
+@pytest.mark.parametrize("missing", ["channel", "message", "result", "exposure"])
+def test_v3_validator_rejects_incomplete_exposure_shapes(version_three_exposure, missing):
+    del version_three_exposure[missing]
+    before = deepcopy(version_three_exposure)
+
+    with pytest.raises(ValueError, match="supported report shape"):
+        _validate_v3(version_three_exposure)
+
+    assert version_three_exposure == before
+
+
+def test_v3_validator_rejects_extra_fields_before_identifier_validation(version_three_exposure):
+    version_three_exposure.update(extra="not supported", assessment_id=None)
+    before = deepcopy(version_three_exposure)
+
+    with pytest.raises(ValueError, match="supported report shape"):
+        _validate_v3(version_three_exposure)
+
+    assert version_three_exposure == before
+
+
+@pytest.mark.parametrize("identifier", [None, True, "", " \t ", "x" * 101])
+def test_v3_validator_rejects_invalid_identifiers_without_inventing_replacements(
+    version_three_exposure, identifier,
+):
+    version_three_exposure["assessment_id"] = identifier
+    before = deepcopy(version_three_exposure)
+
+    with pytest.raises(ValueError, match="Invalid assessment identifier"):
+        _validate_v3(version_three_exposure)
+
+    assert version_three_exposure == before
+
+
+@pytest.mark.parametrize("updates,expected", [
+    ({"channel": " "}, "Invalid report text: channel"),
+    ({"message": None}, "Invalid report text: message"),
+    ({"sender": 1}, "Invalid report sender."),
+    ({"link": " "}, "Invalid report metadata: link"),
+    ({"file_name": False}, "Invalid report metadata: file_name"),
+    ({"has_link": 1}, "Invalid report metadata flag: has_link"),
+    ({"has_file": None}, "Invalid report metadata flag: has_file"),
+    ({"link": None}, "Report link and flag must agree."),
+    ({"has_link": False}, "Report link and flag must agree."),
+    ({"has_file": False, "file_name": "file.pdf"}, "A report filename requires a file clue."),
+    ({"exposure": {}}, "Invalid report exposure fields."),
+])
+def test_v3_validator_rejects_invalid_source_metadata_without_mutation(
+    version_three_exposure, updates, expected,
+):
+    version_three_exposure.update(updates)
+    before = deepcopy(version_three_exposure)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_v3(version_three_exposure)
+
+    assert str(caught.value) == expected
+    assert version_three_exposure == before
+
+
+@pytest.mark.parametrize("updates,expected", [
+    ({"clicked": 1}, "Invalid exposure action: clicked"),
+    ({"downloaded": "no"}, "Invalid exposure action: downloaded"),
+    ({"disclosure_answered": None}, "Invalid disclosure answer flag."),
+    ({"submitted_category": "email"}, "Invalid submitted category."),
+    ({"submitted_category": "password"}, "Unanswered disclosure must have no submitted category."),
+    ({"extra": False}, "Invalid report exposure fields."),
+])
+def test_v3_validator_rejects_invalid_exposure_answer_cross_fields(
+    version_three_exposure, updates, expected,
+):
+    version_three_exposure["exposure"].update(updates)
+    before = deepcopy(version_three_exposure)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_v3(version_three_exposure)
+
+    assert str(caught.value) == expected
+    assert version_three_exposure == before
+
+
+@pytest.mark.parametrize("shape", ["feedback", "exposure"])
+def test_v3_validator_uses_canonical_result_validation_for_each_result_branch(
+    version_three_exposure, monkeypatch, shape,
+):
+    record = version_three_exposure
+    if shape == "feedback":
+        record = {key: record[key] for key in ("schema_version", "channel", "message", "result")}
+        record["assessment_id"] = "stable-id"
+    validate_result = Mock(wraps=model._validate_result)
+    monkeypatch.setattr(model, "_validate_result", validate_result)
+
+    assert _validate_v3(record) is record
+
+    validate_result.assert_called_once_with(record["result"], allow_rule_trace=True)
+    record["result"]["matched_rule"] = "Winner"
+    with pytest.raises(ValueError, match="Invalid stored assessment"):
+        _validate_v3(record)
+    record["result"]["trace"] = [{"rule_name": "Winner", "matched": True, "score": 59}]
+    with pytest.raises(ValueError, match="Stored rule trace does not match"):
+        _validate_v3(record)

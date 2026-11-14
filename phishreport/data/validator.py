@@ -2,7 +2,7 @@
 
 import math
 
-from phishreport.model import _validate_result, _validate_rule_trace, _validate_v2
+from phishreport.model import _validate_result, _validate_rule_trace, _validate_v2, _validate_v3
 
 REPORT_FIELDS = {
     "channel",
@@ -104,74 +104,7 @@ class ReportValidator:
 
     _validate_v2 = staticmethod(_validate_v2)
 
-    def _validate_v3(self, record: dict) -> dict:
-        """Validate feedback-linked or exposure reports without changing values.
-
-        The ten-field exposure form remains readable for existing reports. New
-        exposure reports also carry an assessment ID so users can leave feedback.
-        """
-        if (
-            not isinstance(record, dict)
-            or type(record.get("schema_version")) is not int
-            or record["schema_version"] != 3
-        ):
-            raise ValueError("Version-3 reports must use schema version 3.")
-        exposure_fields = {
-            "schema_version", "channel", "message", "result", "sender",
-            "has_link", "link", "has_file", "file_name", "exposure",
-        }
-        feedback_fields = {
-            "schema_version", "assessment_id", "channel", "message", "result",
-        }
-        fields = set(record)
-        is_exposure = fields in (exposure_fields, exposure_fields | {"assessment_id"})
-        if not is_exposure and fields != feedback_fields:
-            raise ValueError("Version-3 reports must match a supported report shape.")
-        if "assessment_id" in record:
-            assessment_id = record["assessment_id"]
-            if (
-                not isinstance(assessment_id, str)
-                or not assessment_id.strip()
-                or len(assessment_id) > 100
-            ):
-                raise ValueError("Invalid assessment identifier.")
-        for key in ("channel", "message"):
-            if not isinstance(record[key], str) or not record[key].strip():
-                raise ValueError("Invalid report text: " + key)
-        if not is_exposure:
-            self._validate_result(record["result"], allow_rule_trace=True)
-            return record
-
-        if record["sender"] is not None and not isinstance(record["sender"], str):
-            raise ValueError("Invalid report sender.")
-        for key in ("link", "file_name"):
-            value = record[key]
-            if value is not None and (not isinstance(value, str) or not value.strip()):
-                raise ValueError("Invalid report metadata: " + key)
-        for key in ("has_link", "has_file"):
-            if type(record[key]) is not bool:
-                raise ValueError("Invalid report metadata flag: " + key)
-        if record["has_link"] != (record["link"] is not None):
-            raise ValueError("Report link and flag must agree.")
-        if record["file_name"] is not None and not record["has_file"]:
-            raise ValueError("A report filename requires a file clue.")
-
-        exposure = record["exposure"]
-        if not isinstance(exposure, dict) or set(exposure) != {
-            "clicked", "downloaded", "submitted_category", "disclosure_answered",
-        }:
-            raise ValueError("Invalid report exposure fields.")
-        for key in ("clicked", "downloaded"):
-            if exposure[key] is not None and type(exposure[key]) is not bool:
-                raise ValueError("Invalid exposure action: " + key)
-        if type(exposure["disclosure_answered"]) is not bool:
-            raise ValueError("Invalid disclosure answer flag.")
-        if exposure["submitted_category"] not in (None, "password", "otp"):
-            raise ValueError("Invalid submitted category.")
-        if not exposure["disclosure_answered"] and exposure["submitted_category"] is not None:
-            raise ValueError("Unanswered disclosure must have no submitted category.")
-        self._validate_result(record["result"], allow_rule_trace=True)
-        return record
+    _validate_v3 = staticmethod(_validate_v3)
 
     def _validate_legacy(self, record):
         """Return historical data after checking the fields that are present.
