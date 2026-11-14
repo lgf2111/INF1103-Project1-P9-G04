@@ -36,6 +36,118 @@ def test_report_model_owns_schema_version_constants():
     assert SCHEMA_VERSION_KEY == "schema_version"
 
 
+def test_assessment_result_requires_nullable_score_and_priority_and_is_frozen_slotted():
+    result = model.AssessmentResult(score=None, priority=None)
+
+    assert result.score is None and result.priority is None
+    assert result.reasons == result.checklist == result.trace == ()
+    assert result.matched_rule is None
+    assert not hasattr(result, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        result.score = 60
+    with pytest.raises(FrozenInstanceError):
+        del result.priority
+    with pytest.raises(TypeError):
+        model.AssessmentResult(priority=None)
+    with pytest.raises(TypeError):
+        model.AssessmentResult(score=None)
+
+
+@pytest.mark.parametrize("score,priority", [
+    (None, None), (-1000, "historical label"), (1000, ""), (60.5, " mixed Case "),
+])
+def test_assessment_result_preserves_legacy_scalars_and_blank_guidance(score, priority):
+    result = model.AssessmentResult(score, priority, ["", " ", "Reason"], ("", "Check"))
+
+    assert result.score is score and result.priority is priority
+    assert result.reasons == ("", " ", "Reason")
+    assert result.checklist == ("", "Check")
+
+
+@pytest.mark.parametrize("matched_rule", [None, "", " Historical rule "])
+def test_assessment_result_empty_trace_preserves_optional_legacy_matched_rule(matched_rule):
+    result = model.AssessmentResult(None, None, matched_rule=matched_rule)
+    assert result.matched_rule is matched_rule
+
+
+def test_assessment_result_owns_guidance_and_trace_lists_without_mutating_inputs():
+    reasons, checklist = ["Reason"], ["Check"]
+    trace = [model.RuleTrace("Skip", False), model.RuleTrace("Winner", True, 60)]
+    result = model.AssessmentResult(60, "HIGH", reasons, checklist, "Winner", trace)
+
+    assert reasons == ["Reason"] and checklist == ["Check"]
+    assert trace == [model.RuleTrace("Skip", False), model.RuleTrace("Winner", True, 60)]
+    reasons[0] = "changed"
+    checklist.clear()
+    trace.clear()
+    assert result.reasons == ("Reason",) and result.checklist == ("Check",)
+    assert result.trace == (model.RuleTrace("Skip", False), model.RuleTrace("Winner", True, 60))
+
+
+@pytest.mark.parametrize("field,value", [
+    ("score", True), ("score", "60"), ("score", float("nan")),
+    ("score", float("inf")), ("score", float("-inf")),
+    ("score", type("ScoreSubclass", (int,), {})(60)),
+    ("priority", 60), ("priority", []), ("matched_rule", 60), ("matched_rule", []),
+    ("reasons", None), ("reasons", "private reason"), ("reasons", {"private reason"}),
+    ("reasons", iter(["private reason"])), ("reasons", [None]),
+    ("checklist", None), ("checklist", "private check"), ("checklist", [False]),
+    ("checklist", {"private check"}), ("checklist", iter(["private check"])),
+    ("trace", None), ("trace", "private trace"), ("trace", iter([])),
+    ("trace", [{}]), ("trace", [None]),
+])
+def test_assessment_result_rejects_invalid_field_types_with_safe_errors(field, value):
+    arguments = {"score": None, "priority": None, field: value}
+    with pytest.raises(ValueError) as caught:
+        model.AssessmentResult(**arguments)
+    assert "private" not in str(caught.value)
+
+
+@pytest.mark.parametrize("trace,score,matched_rule", [
+    ([model.RuleTrace("", True, 60)], 60, "Winner"),
+    ([model.RuleTrace([], True, 60)], 60, "Winner"),
+    ([model.RuleTrace("Winner", [], 60)], 60, "Winner"),
+    ([model.RuleTrace("Winner", 1, 60)], 60, "Winner"),
+    ([model.RuleTrace("Winner", True, [])], 60, "Winner"),
+    ([model.RuleTrace("Winner", True, True)], 60, "Winner"),
+    ([model.RuleTrace("Winner", True, 60.0)], 60, "Winner"),
+    ([model.RuleTrace("Winner", True, 101)], 101, "Winner"),
+    ([model.RuleTrace("Skip", False, 0), model.RuleTrace("Winner", True, 60)], 60, "Winner"),
+    ([model.RuleTrace("Earlier", True, 60), model.RuleTrace("Winner", True, 60)], 60, "Winner"),
+    ([model.RuleTrace("Winner", False)], 60, "Winner"),
+    ([model.RuleTrace("Winner", True, 60)], 61, "Winner"),
+    ([model.RuleTrace("Winner", True, 60)], 60, "Other"),
+    ([model.RuleTrace("Winner", True, 60)], None, "Winner"),
+    ([model.RuleTrace("Winner", True, 60)], 60, None),
+    ([model.RuleTrace("Winner", True, 60)], 60, ""),
+])
+def test_assessment_result_reuses_canonical_trace_rules_without_input_mutation(
+    trace, score, matched_rule,
+):
+    before = deepcopy([step.as_dict() for step in trace])
+    with pytest.raises(ValueError) as canonical_error:
+        _validate_rule_trace({"score": score, "matched_rule": matched_rule, "trace": before})
+    with pytest.raises(ValueError) as caught:
+        model.AssessmentResult(score, "legacy", matched_rule=matched_rule, trace=trace)
+    assert str(caught.value) == str(canonical_error.value)
+    assert [step.as_dict() for step in trace] == before
+
+
+def test_assessment_result_never_formats_rejected_values():
+    class Unprintable:
+        def __repr__(self):
+            raise AssertionError("Private value formatted")
+
+    private = Unprintable()
+    for field in ("score", "priority", "matched_rule", "reasons", "checklist", "trace"):
+        with pytest.raises(ValueError):
+            model.AssessmentResult(**{"score": None, "priority": None, field: private})
+    with pytest.raises(ValueError):
+        model.AssessmentResult(
+            60, "HIGH", matched_rule="Winner", trace=[model.RuleTrace(private, True, 60)],
+        )
+
+
 def test_rule_trace_is_the_same_canonical_class_through_existing_imports():
     from phishreport.logic import RuleTrace as PublicRuleTrace
     from phishreport.logic.rule_trace import RuleTrace as LogicRuleTrace

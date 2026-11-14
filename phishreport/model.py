@@ -50,6 +50,48 @@ class RuleTrace:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class AssessmentResult:
+    """Own assessment values while preserving supported historical outcomes."""
+
+    score: int | float | None
+    priority: str | None
+    reasons: tuple[str, ...] = ()
+    checklist: tuple[str, ...] = ()
+    matched_rule: str | None = None
+    trace: tuple[RuleTrace, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Validate scalar values and own guidance and validated rule traces."""
+        if self.score is not None and (
+            type(self.score) not in (int, float)
+            or (type(self.score) is float and not math.isfinite(self.score))
+        ):
+            raise ValueError("Invalid assessment score.")
+        if self.priority is not None and not isinstance(self.priority, str):
+            raise ValueError("Invalid assessment priority.")
+        if self.matched_rule is not None and not isinstance(self.matched_rule, str):
+            raise ValueError("Invalid assessment matched rule.")
+        for values in (self.reasons, self.checklist):
+            if not isinstance(values, (list, tuple)) or any(
+                not isinstance(value, str) for value in values
+            ):
+                raise ValueError("Invalid assessment guidance.")
+        if not isinstance(self.trace, (list, tuple)) or any(
+            not isinstance(step, RuleTrace) for step in self.trace
+        ):
+            raise ValueError("Invalid assessment trace.")
+        if self.trace:
+            _validate_rule_trace({
+                "score": self.score,
+                "matched_rule": self.matched_rule,
+                "trace": [step.as_dict() for step in self.trace],
+            })
+        object.__setattr__(self, "reasons", tuple(self.reasons))
+        object.__setattr__(self, "checklist", tuple(self.checklist))
+        object.__setattr__(self, "trace", tuple(self.trace))
+
+
 def _freeze_json(value: object) -> object:
     """Own an acyclic JSON-shaped value through recursively read-only containers.
 
