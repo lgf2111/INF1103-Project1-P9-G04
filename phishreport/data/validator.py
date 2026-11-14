@@ -2,7 +2,7 @@
 
 import math
 
-from phishreport.model import _validate_rule_trace
+from phishreport.model import _validate_result, _validate_rule_trace
 
 REPORT_FIELDS = {
     "channel",
@@ -98,41 +98,7 @@ class ReportValidator:
             raise ValueError("Invalid stored priority.")
         return record
 
-    def _validate_result(self, result, *, allow_rule_trace=False):
-        """Validate the score, priority, guidance and permitted explanation fields.
-
-        Return None on success; raise ValueError without changing the result on
-        failure. Four-field historical results remain valid. Newer v2 and v3
-        reports may also carry the matched-rule trace. Empty guidance lists are
-        accepted, but blank list entries are not.
-        """
-        required_fields = {
-            "score",
-            "priority",
-            "reasons",
-            "checklist",
-        }
-        optional_fields = {"matched_rule", "trace"} if allow_rule_trace else set()
-        fields = set(result) if isinstance(result, dict) else set()
-        if (
-            not isinstance(result, dict)
-            or not required_fields.issubset(fields)
-            or not fields.issubset(required_fields | optional_fields)
-            or (bool(fields.intersection(optional_fields)) and not optional_fields.issubset(fields))
-        ):
-            raise ValueError("Invalid stored assessment.")
-        if type(result["score"]) is not int or not 0 <= result["score"] <= 100:
-            raise ValueError("Invalid stored score.")
-        if result["priority"] not in ("LOW", "MEDIUM", "HIGH"):
-            raise ValueError("Invalid stored priority.")
-        for key in ("reasons", "checklist"):
-            values = result[key]
-            if not isinstance(values, list) or any(
-                not isinstance(value, str) or not value.strip() for value in values
-            ):
-                raise ValueError("Invalid stored text lists.")
-        if optional_fields and optional_fields.issubset(fields):
-            self._validate_rule_trace(result)
+    _validate_result = staticmethod(_validate_result)
 
     _validate_rule_trace = staticmethod(_validate_rule_trace)
 

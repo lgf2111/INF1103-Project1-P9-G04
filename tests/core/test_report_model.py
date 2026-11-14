@@ -4,11 +4,19 @@ import math
 from collections import UserDict
 from copy import deepcopy
 from types import MappingProxyType
+from unittest.mock import Mock
 
 import pytest
 
+from phishreport import model
 from phishreport.data.validator import ReportValidator
-from phishreport.model import SCHEMA_VERSION, SCHEMA_VERSION_KEY, _freeze_json, _validate_rule_trace
+from phishreport.model import (
+    SCHEMA_VERSION,
+    SCHEMA_VERSION_KEY,
+    _freeze_json,
+    _validate_result,
+    _validate_rule_trace,
+)
 
 
 def test_report_model_owns_schema_version_constants():
@@ -217,3 +225,136 @@ def test_rule_trace_keeps_prevalidated_result_precondition(missing):
         _validate_rule_trace(result)
 
     assert caught.value.args == (missing,)
+
+
+@pytest.fixture
+def assessment_result():
+    return {"score": 60, "priority": "MEDIUM", "reasons": [], "checklist": []}
+
+
+def test_result_validator_has_one_canonical_body_and_compatible_instance_access(assessment_result):
+    assert ReportValidator._validate_result is _validate_result
+    assert ReportValidator()._validate_result is _validate_result
+    assert ReportValidator()._validate_result(assessment_result) is None
+
+
+@pytest.mark.parametrize("score,priority", [(0, "HIGH"), (60, "MEDIUM"), (100, "LOW")])
+@pytest.mark.parametrize("allow_rule_trace", [False, True])
+def test_result_validation_accepts_historical_fields_without_applying_scoring_rules(
+    assessment_result, score, priority, allow_rule_trace,
+):
+    assessment_result.update(score=score, priority=priority)
+    assessment_result["reasons"] = ["  Preserved reason  "]
+    before = deepcopy(assessment_result)
+
+    assert _validate_result(assessment_result, allow_rule_trace=allow_rule_trace) is None
+    assert assessment_result == before
+
+
+def test_result_validation_accepts_empty_guidance_lists(assessment_result):
+    assert _validate_result(assessment_result) is None
+    assert assessment_result["reasons"] == assessment_result["checklist"] == []
+
+
+def test_result_validation_calls_canonical_trace_only_for_complete_opted_in_trace(
+    assessment_result, monkeypatch,
+):
+    trace = Mock(wraps=model._validate_rule_trace)
+    monkeypatch.setattr(model, "_validate_rule_trace", trace)
+    assert _validate_result(assessment_result, allow_rule_trace=True) is None
+    trace.assert_not_called()
+    assessment_result.update(
+        matched_rule="Winner", trace=[{"rule_name": "Winner", "matched": True, "score": 60}],
+    )
+    before = deepcopy(assessment_result)
+
+    assert _validate_result(assessment_result, allow_rule_trace=True) is None
+
+    trace.assert_called_once_with(assessment_result)
+    assert assessment_result == before
+
+
+@pytest.mark.parametrize("missing", ["score", "priority", "reasons", "checklist"])
+def test_result_validation_rejects_missing_required_fields(assessment_result, missing):
+    del assessment_result[missing]
+    before = deepcopy(assessment_result)
+
+    with pytest.raises(ValueError, match="Invalid stored assessment"):
+        _validate_result(assessment_result)
+
+    assert assessment_result == before
+
+
+@pytest.mark.parametrize("value", [None, [], "assessment", 60])
+def test_result_validation_rejects_non_dictionary_results(value):
+    with pytest.raises(ValueError, match="Invalid stored assessment"):
+        _validate_result(value)
+
+
+@pytest.mark.parametrize("updates,allow_rule_trace", [
+    ({"extra": "Not allowed"}, False),
+    ({"extra": "Not allowed"}, True),
+    ({"matched_rule": "Winner"}, True),
+    ({"trace": []}, True),
+    ({"matched_rule": "Winner", "trace": []}, False),
+])
+def test_result_validation_requires_exact_fields_and_explicit_complete_trace_pair(
+    assessment_result, updates, allow_rule_trace,
+):
+    assessment_result.update(updates)
+    before = deepcopy(assessment_result)
+
+    with pytest.raises(ValueError, match="Invalid stored assessment"):
+        _validate_result(assessment_result, allow_rule_trace=allow_rule_trace)
+
+    assert assessment_result == before
+
+
+@pytest.mark.parametrize("score", [True, False, None, -1, 101, 60.0, float("nan"), "60"])
+def test_result_validation_rejects_non_integer_or_out_of_range_scores(assessment_result, score):
+    assessment_result["score"] = score
+    before = deepcopy(assessment_result)
+
+    with pytest.raises(ValueError, match="Invalid stored score"):
+        _validate_result(assessment_result)
+
+    assert assessment_result == before
+
+
+@pytest.mark.parametrize("priority", [None, "", "low", "CRITICAL", [], {}])
+def test_result_validation_rejects_unknown_priorities(assessment_result, priority):
+    assessment_result["priority"] = priority
+    before = deepcopy(assessment_result)
+
+    with pytest.raises(ValueError, match="Invalid stored priority"):
+        _validate_result(assessment_result)
+
+    assert assessment_result == before
+
+
+@pytest.mark.parametrize("field", ["reasons", "checklist"])
+@pytest.mark.parametrize("values", [None, (), "Reason", [""], [" \t"], [1], [True], [{}]])
+def test_result_validation_rejects_invalid_guidance_without_coercion(
+    assessment_result, field, values,
+):
+    assessment_result[field] = values
+    before = deepcopy(assessment_result)
+
+    with pytest.raises(ValueError, match="Invalid stored text lists"):
+        _validate_result(assessment_result)
+
+    assert assessment_result == before
+
+
+def test_result_validation_propagates_trace_mismatch_and_preserves_failure_order(assessment_result):
+    assessment_result.update(
+        matched_rule="Winner", trace=[{"rule_name": "Winner", "matched": True, "score": 59}],
+    )
+    before = deepcopy(assessment_result)
+    with pytest.raises(ValueError, match="Stored rule trace does not match"):
+        _validate_result(assessment_result, allow_rule_trace=True)
+    assert assessment_result == before
+    assessment_result.update(score=True, priority="INVALID")
+
+    with pytest.raises(ValueError, match="Invalid stored score"):
+        _validate_result(assessment_result, allow_rule_trace=True)
