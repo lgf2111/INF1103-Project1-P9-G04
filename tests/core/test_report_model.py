@@ -9,14 +9,17 @@ from unittest.mock import Mock
 import pytest
 
 from phishreport import model
+from phishreport.data import validator as data_validator
 from phishreport.data.validator import ReportValidator
 from phishreport.model import (
+    REPORT_FIELDS,
     SCHEMA_VERSION,
     SCHEMA_VERSION_KEY,
     _freeze_json,
     _validate_legacy,
     _validate_result,
     _validate_rule_trace,
+    _validate_summary,
     _validate_v2,
     _validate_v3,
 )
@@ -744,3 +747,110 @@ def test_legacy_validator_keeps_validation_order_and_dict_precondition():
 
     with pytest.raises(AttributeError):
         _validate_legacy(None)
+
+
+@pytest.fixture
+def summary_report():
+    return {
+        "channel": "", "sender": "", "message": " Original Message\n ",
+        "link": None, "file_name": " ",
+        "details": {"emails": [" original text "], "phone_numbers": [], "ip_addresses": []},
+        "score": 60, "priority": "MEDIUM",
+    }
+
+
+@pytest.mark.parametrize("score,priority", [(0, "HIGH"), (100, "LOW")])
+def test_summary_validator_preserves_exact_historical_record_and_shared_field_set(
+    summary_report, score, priority,
+):
+    summary_report.update(score=score, priority=priority)
+    before = deepcopy(summary_report)
+
+    assert REPORT_FIELDS is data_validator.REPORT_FIELDS
+    assert type(REPORT_FIELDS) is set
+    assert REPORT_FIELDS == {
+        "channel", "sender", "message", "link", "file_name", "details", "score", "priority",
+    }
+    assert ReportValidator._validate_summary is _validate_summary
+    assert ReportValidator()._validate_summary is _validate_summary
+    assert _validate_summary(summary_report) is summary_report
+    assert ReportValidator._validate_summary(summary_report) is summary_report
+    assert ReportValidator().validate_stored(summary_report) is summary_report
+    assert summary_report == before
+    assert "schema_version" not in summary_report and "assessment_id" not in summary_report
+
+
+@pytest.mark.parametrize("root", [None, [], "report"])
+def test_summary_validator_rejects_invalid_roots(root):
+    with pytest.raises(ValueError, match="exactly the eight agreed fields"):
+        _validate_summary(root)
+
+
+@pytest.mark.parametrize("missing", [
+    "channel", "sender", "message", "link", "file_name", "details", "score", "priority",
+])
+def test_summary_validator_requires_each_agreed_field(summary_report, missing):
+    del summary_report[missing]
+    before = deepcopy(summary_report)
+
+    with pytest.raises(ValueError, match="exactly the eight agreed fields"):
+        _validate_summary(summary_report)
+
+    assert summary_report == before
+
+
+def test_summary_validator_rejects_extra_fields_before_checking_values(summary_report):
+    summary_report.update(extra="Not allowed", message=None)
+    before = deepcopy(summary_report)
+
+    with pytest.raises(ValueError, match="exactly the eight agreed fields"):
+        _validate_summary(summary_report)
+
+    assert summary_report == before
+
+
+@pytest.mark.parametrize("updates,expected", [
+    ({"channel": None}, "Invalid report channel."),
+    ({"message": " \t "}, "Invalid report message."),
+    ({"message": False}, "Invalid report message."),
+    ({"sender": 1}, "Invalid report metadata."),
+    ({"link": False}, "Invalid report metadata."),
+    ({"file_name": []}, "Invalid report metadata."),
+    ({"details": None}, "Invalid stored extraction."),
+    ({"details": {"emails": []}}, "Invalid stored extraction."),
+    ({"details": {"emails": [], "phone_numbers": [], "ip_addresses": [], "extra": []}},
+     "Invalid stored extraction."),
+    ({"details": {"emails": (), "phone_numbers": [], "ip_addresses": []}},
+     "Invalid stored text lists."),
+    ({"details": {"emails": [" "], "phone_numbers": [], "ip_addresses": []}},
+     "Invalid stored text lists."),
+    ({"details": {"emails": [], "phone_numbers": ["12345678", None], "ip_addresses": []}},
+     "Invalid stored text lists."),
+    ({"score": True}, "Invalid stored score."),
+    ({"score": 0.0}, "Invalid stored score."),
+    ({"score": float("nan")}, "Invalid stored score."),
+    ({"score": -1}, "Invalid stored score."),
+    ({"score": 101}, "Invalid stored score."),
+    ({"priority": "medium"}, "Invalid stored priority."),
+    ({"priority": None}, "Invalid stored priority."),
+])
+def test_summary_validator_preserves_known_field_validation_and_error_messages(
+    summary_report, updates, expected,
+):
+    summary_report.update(updates)
+    before = deepcopy(summary_report)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_summary(summary_report)
+
+    assert str(caught.value) == expected
+    assert summary_report == before
+
+
+def test_summary_validator_accepts_empty_extraction_and_preserves_validation_order(summary_report):
+    summary_report["details"] = {"emails": [], "phone_numbers": [], "ip_addresses": []}
+    assert _validate_summary(summary_report) is summary_report
+    summary_report.update(score=True, priority="INVALID")
+
+    with pytest.raises(ValueError, match="Invalid stored score"):
+        _validate_summary(summary_report)

@@ -7,6 +7,17 @@ from types import MappingProxyType
 SCHEMA_VERSION = 3
 SCHEMA_VERSION_KEY = "schema_version"
 
+REPORT_FIELDS = {
+    "channel",
+    "sender",
+    "message",
+    "link",
+    "file_name",
+    "details",
+    "score",
+    "priority",
+}
+
 
 def _freeze_json(value: object) -> object:
     """Own an acyclic JSON-shaped value through recursively read-only containers.
@@ -25,6 +36,42 @@ def _freeze_json(value: object) -> object:
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     raise ValueError(error_message)
+
+
+def _validate_summary(record):
+    """Return an unchanged legacy eight-field report after validating its fields.
+
+    Raise ValueError for invalid types, detail lists, score or priority. This
+    checks stored structure, not contact syntax or the original assessment.
+    """
+    if not isinstance(record, dict) or set(record) != REPORT_FIELDS:
+        raise ValueError("Reports must contain exactly the eight agreed fields.")
+    if not isinstance(record["channel"], str):
+        raise ValueError("Invalid report channel.")
+    if not isinstance(record["message"], str) or not record["message"].strip():
+        raise ValueError("Invalid report message.")
+    for key in ("sender", "link", "file_name"):
+        if record[key] is not None and not isinstance(record[key], str):
+            raise ValueError("Invalid report metadata.")
+
+    # Store extraction as three lists, without normalizing or inventing values.
+    details = record["details"]
+    if not isinstance(details, dict) or set(details) != {
+        "emails",
+        "phone_numbers",
+        "ip_addresses",
+    }:
+        raise ValueError("Invalid stored extraction.")
+    for values in details.values():
+        if not isinstance(values, list) or any(
+            not isinstance(value, str) or not value.strip() for value in values
+        ):
+            raise ValueError("Invalid stored text lists.")
+    if type(record["score"]) is not int or not 0 <= record["score"] <= 100:
+        raise ValueError("Invalid stored score.")
+    if record["priority"] not in ("LOW", "MEDIUM", "HIGH"):
+        raise ValueError("Invalid stored priority.")
+    return record
 
 
 def _validate_legacy(record):
