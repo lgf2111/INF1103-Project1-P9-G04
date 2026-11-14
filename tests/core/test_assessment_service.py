@@ -7,6 +7,7 @@ import pytest
 
 from phishreport.assessment import AssessmentService
 from phishreport.logic import LogicManager
+from phishreport.model import Report
 
 RECORD = {
     "channel": "chat",
@@ -73,6 +74,105 @@ def test_build_report_keeps_the_message_and_its_assessment():
         "message": RECORD["message"],
         "result": {key: value for key, value in result.items() if key != "assessment_id"},
     }
+
+
+def test_build_report_delegates_to_the_canonical_factory_and_serializer(monkeypatch):
+    service, _ = _service()
+    result = service.assess(RECORD)
+    factory = Mock(wraps=Report.from_assessment)
+    serialized = []
+    to_dict = Report.to_dict
+
+    def serialize(report):
+        serialized.append(report)
+        return to_dict(report)
+
+    monkeypatch.setattr(Report, "from_assessment", factory)
+    monkeypatch.setattr(Report, "to_dict", serialize)
+
+    report = service.build_report(RECORD, result)
+
+    factory.assert_called_once_with(RECORD, result)
+    assert len(serialized) == 1
+    assert isinstance(serialized[0], Report)
+    assert type(report) is dict
+    assert report["assessment_id"] == result["assessment_id"]
+    assert report["result"]["score"] == 60
+
+
+@pytest.mark.parametrize(
+    ("record_changes", "result_changes"),
+    [
+        ({"channel": " "}, {}),
+        ({"message": None}, {}),
+        ({}, {"score": 101}),
+        ({}, {"priority": "UNKNOWN"}),
+        ({}, {"reasons": None}),
+        ({}, {"trace": []}),
+        ({}, {"assessment_id": "x" * 101}),
+    ],
+)
+def test_build_report_rejects_invalid_current_reports(record_changes, result_changes):
+    record = {**RECORD, **record_changes}
+    result = {
+        "assessment_id": "stable-id", "score": 60, "priority": "MEDIUM",
+        "reasons": [], "checklist": [], **result_changes,
+    }
+    before = deepcopy((record, result))
+
+    with pytest.raises(ValueError):
+        AssessmentService.build_report(record, result)
+
+    assert (record, result) == before
+
+
+@pytest.mark.parametrize("assessment_id", [None, "", " ", 123])
+def test_build_report_rejects_bad_id_before_reading_source(assessment_id):
+    with pytest.raises(ValueError, match="missing its identifier"):
+        AssessmentService.build_report({}, {"assessment_id": assessment_id})
+
+
+def test_build_report_propagates_the_canonical_validation_error(monkeypatch):
+    from phishreport import model
+
+    error = ValueError("canonical validation failure")
+    monkeypatch.setattr(model, "_validate_new", Mock(side_effect=error))
+    result = {"assessment_id": "stable-id"}
+
+    with pytest.raises(ValueError) as caught:
+        AssessmentService.build_report(RECORD, result)
+
+    assert caught.value is error
+
+
+def test_build_report_owns_nested_result_without_reassessing_or_generating_id(monkeypatch):
+    from phishreport import assessment
+
+    result = {
+        "assessment_id": "stable-id", "score": 60, "priority": "MEDIUM",
+        "reasons": ["Credential request"], "checklist": ["Verify the sender"],
+        "matched_rule": "credential", "trace": [
+            {"rule_name": "credential", "matched": True, "score": 60},
+        ],
+    }
+    before = deepcopy(result)
+    ai_manager, logic_manager = Mock(), Mock()
+    uuid = Mock(side_effect=AssertionError("Builder must reuse the assessment ID"))
+    monkeypatch.setattr(assessment, "uuid4", uuid)
+    service = AssessmentService(ai_manager, logic_manager)
+
+    report = service.build_report(RECORD, result)
+
+    assert result == before
+    assert report["assessment_id"] == "stable-id"
+    report["result"]["reasons"].append("Output mutation")
+    report["result"]["trace"][0]["rule_name"] = "Output mutation"
+    assert result == before
+    result["checklist"].append("Input mutation")
+    assert report["result"]["checklist"] == ["Verify the sender"]
+    ai_manager.assess.assert_not_called()
+    logic_manager.evaluate.assert_not_called()
+    uuid.assert_not_called()
 
 
 @pytest.mark.parametrize(

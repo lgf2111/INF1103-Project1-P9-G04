@@ -74,7 +74,7 @@ def test_cli_app_uses_its_own_managers_for_each_assessment():
     def build_app(message):
         record = {"channel": "email", "message": message}
         findings = {"suspicious": True}
-        result = {"score": 45, "priority": "MEDIUM"}
+        result = {"score": 45, "priority": "MEDIUM", "reasons": [], "checklist": []}
         collaborators = Mock()
         collaborators.io.collect_input.return_value = record
         collaborators.ai.assess.return_value = findings

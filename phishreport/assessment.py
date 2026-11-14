@@ -10,6 +10,8 @@ from copy import deepcopy
 from dataclasses import dataclass
 from uuid import uuid4
 
+from phishreport.model import Report
+
 
 @dataclass
 class AssessmentSnapshot:
@@ -64,17 +66,7 @@ class AssessmentService:
     @staticmethod
     def build_report(record: dict, result: dict) -> dict:
         """Return a version-3 report with a stable identifier for feedback links."""
-        assessment_id = result.get("assessment_id")
-        if not isinstance(assessment_id, str) or not assessment_id.strip():
-            raise ValueError("Assessment result is missing its identifier.")
-        saved_result = {key: value for key, value in result.items() if key != "assessment_id"}
-        return {
-            "schema_version": 3,
-            "assessment_id": assessment_id,
-            "channel": record["channel"],
-            "message": record["message"],
-            "result": saved_result,
-        }
+        return Report.from_assessment(record, result).to_dict()
 
     @staticmethod
     def build_exposure_report(record: dict, result: dict, exposure: dict) -> dict:
