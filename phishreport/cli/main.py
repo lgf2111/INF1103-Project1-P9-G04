@@ -11,10 +11,8 @@ from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
-from phishreport.io.check_command import CheckCommand
+from phishreport.io.command_catalog import CommandCapabilities, discover_commands
 from phishreport.io.commands import CommandRequest, CommandRouter
-from phishreport.io.help_command import HelpCommand
-from phishreport.io.status_command import StatusCommand
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
@@ -93,39 +91,46 @@ class PhishReportApp:
         if command_text is None and record is None:
             record = self._io_manager.collect_input()
 
+        if command_text is not None:
+            catalog = discover_commands(CommandCapabilities(
+                prepare_record=lambda request: self._io_manager.build_record_from_message(
+                    request.text, channel="chat"
+                ),
+                assess_record=self._assessment.assess,
+                session_status=lambda request: "CLI conversation active",
+                report_count=lambda: len(self._data_manager.load(strict=True)),
+            ))
+            router = CommandRouter(catalog)
+            resolved = router.resolve(command_text)
+            request = CommandRequest(command_text, "cli")
+
         try:
             if command_text is None:
                 result = self._assessment.assess(record)
             else:
-                command = CheckCommand(
-                    prepare_record=lambda request: self._io_manager.build_record_from_message(
-                        request.text, channel="chat"
-                    ),
-                    assess_record=self._assessment.assess,
-                )
-                catalog = [command]
-                catalog.append(StatusCommand(
-                    session_status=lambda request: "CLI conversation active",
-                    report_count=lambda: len(self._data_manager.load(strict=True)),
-                ))
-                catalog.append(HelpCommand(catalog))
-                request = CommandRequest(command_text, "cli")
-                router = CommandRouter(catalog)
-                resolved = router.resolve(command_text)
                 try:
                     reply = router.route(request)
-                except (OSError, ValueError):
-                    if not isinstance(resolved, StatusCommand):
-                        raise
-                    AppLogging.log_failure(logger, "Reading local report history failed")
-                    self._io_manager.show_message(
-                        "Could not load local report history; existing file preserved."
-                    )
+                except (OSError, ValueError, RuntimeError) as error:
+                    if resolved.policy.failure == "assessment":
+                        if not isinstance(error, OSError):
+                            raise
+                        AppLogging.log_failure(logger, "Assessment failed")
+                        self._io_manager.show_message("Sorry, the check failed. Please try again.")
+                    elif resolved.policy.failure == "history":
+                        AppLogging.log_failure(logger, "Reading local report history failed")
+                        self._io_manager.show_message(
+                            "Could not load local report history; existing file preserved."
+                        )
+                    else:
+                        AppLogging.log_failure(logger, "Command failed")
+                        self._io_manager.show_message(
+                            "Sorry, the command failed. Please try again."
+                        )
                     return
                 if reply is None:
                     self._io_manager.show_message("Please choose 1, 2, 3, 4, 5 or 6.")
                     return
-                if reply.kind != "assessment":
+                if resolved.policy.execution != "assessment" or reply.kind != "assessment":
                     self._io_manager.show_message(reply.text)
                     return
                 outcome = request.session["check_outcome"]

@@ -165,8 +165,8 @@ def test_cli_help_uses_shared_router_and_help_without_assessing(command_app, mon
     assert helped == ["ignored ", ""]
     expected = (
         "/check: Assess a pasted message: /check <text>\n"
-        "/status: Show session status and the number of saved reports\n"
-        "/help: List the available conversation commands"
+        "/help: List the available conversation commands\n"
+        "/status: Show session status and the number of saved reports"
     )
     assert [entry.args[0] for entry in io.show_message.call_args_list] == [expected, expected]
     io.collect_input.assert_not_called()
