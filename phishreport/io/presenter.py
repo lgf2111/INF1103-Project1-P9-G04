@@ -1,7 +1,5 @@
 """Render assessments and saved reports through a terminal."""
 
-from dataclasses import asdict
-
 from phishreport.model import AssessmentResult, Report
 
 from .terminal import Terminal
@@ -82,10 +80,7 @@ class ReportPresenter:
         ):
             self._terminal.write("Exposure unconfirmed")
 
-        result = asdict(report.result) if report.result is not None else None
-        if result is not None and report.result.score is None:
-            result.pop("score")
-        self.display_result(result)
+        self.display_result(report.result)
 
     def display_list(self, records: list[dict]) -> None:
         """Display tolerant report views with a shortened preview of each message."""
