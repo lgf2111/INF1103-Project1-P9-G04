@@ -1,5 +1,9 @@
 """Render assessments and saved reports through a terminal."""
 
+from dataclasses import asdict
+
+from phishreport.model import Report
+
 from .terminal import Terminal
 
 
@@ -42,41 +46,46 @@ class ReportPresenter:
             self._terminal.write(f"{number}. {step}")
 
     def display_record(self, record: dict) -> None:
-        """Display a validated saved record, preserving absent historical fields."""
-        is_exposure_report = record.get("schema_version") == 3
+        """Display a saved report's tolerant view without inventing absent history."""
+        report = Report(record)
+        is_exposure_report = report.has_nested_exposure
         self._terminal.write("\n=== Report details ===")
         channels = {"email": "Email", "sms": "SMS", "chat": "Chat"}
-        self._terminal.write("Channel:", channels.get(record.get("channel"), "Unknown"))
-        self._terminal.write("Sender:", record.get("sender") or "Unknown")
+        self._terminal.write("Channel:", channels.get(report.channel, "Unknown"))
+        self._terminal.write("Sender:", report.sender or "Unknown")
         self._terminal.write("Message:")
-        self._terminal.write(record.get("message") or "No message recorded.")
-        self._terminal.write("Included link:", record.get("link") or "None reported")
-        file_label = record.get("file_name") or "None reported"
-        if is_exposure_report and record["has_file"] and record["file_name"] is None:
+        self._terminal.write(report.message or "No message recorded.")
+        self._terminal.write("Included link:", report.link or "None reported")
+        file_label = report.file_name or "None reported"
+        if is_exposure_report and report.has_file and report.file_name is None:
             file_label = "Mentioned (filename unknown)"
         self._terminal.write("Included file:", file_label)
 
-        exposure = record["exposure"] if is_exposure_report else record
+        exposure = report.exposure
+        clicked = exposure.clicked if exposure is not None else None
+        downloaded = exposure.downloaded if exposure is not None else None
+        submitted = exposure.submitted_category if exposure is not None else None
+        disclosure_answered = exposure.disclosure_answered if exposure is not None else None
         answers = {
             True: "Yes", False: "No",
             None: "Unconfirmed" if is_exposure_report else "Not recorded",
         }
-        self._terminal.write("Clicked link:", answers[exposure.get("clicked")])
-        self._terminal.write("Downloaded file:", answers[exposure.get("downloaded")])
-        submitted = exposure.get("submitted_category")
+        self._terminal.write("Clicked link:", answers[clicked])
+        self._terminal.write("Downloaded file:", answers[downloaded])
         labels = {"password": "Password", "otp": "One-time code"}
         disclosure_label = labels.get(submitted, submitted or "None reported")
-        if is_exposure_report and not exposure["disclosure_answered"]:
+        if is_exposure_report and not disclosure_answered:
             disclosure_label = "Unconfirmed"
         self._terminal.write("Information submitted:", disclosure_label)
         if is_exposure_report and (
-            exposure["clicked"] is None
-            or exposure["downloaded"] is None
-            or not exposure["disclosure_answered"]
+            clicked is None or downloaded is None or not disclosure_answered
         ):
             self._terminal.write("Exposure unconfirmed")
 
-        self.display_result(record.get("result") or {})
+        result = asdict(report.result) if report.result is not None else None
+        if result is not None and report.result.score is None:
+            result.pop("score")
+        self.display_result(result)
 
     def display_list(self, records: list[dict]) -> None:
         """Display saved summaries with a shortened preview of each message."""

@@ -269,6 +269,91 @@ def test_saved_v3_partial_exposure_displays_after_reload(tmp_path, backend, expo
     assert exposure_record == before
 
 
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_plain_v3_history_does_not_invent_exposure_answers(tmp_path, backend):
+    from phishreport.assessment import AssessmentService
+    from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
+    from phishreport.io import ReportPresenter
+
+    record = AssessmentService.build_report(
+        {"channel": "chat", "message": " Original message\n "},
+        {"assessment_id": "existing-id", "score": 0, "priority": "LOW",
+         "reasons": [], "checklist": []},
+    )
+    before = deepcopy(record)
+    storage_type = JsonReportStorage if backend == "json" else SqliteReportStorage
+    path = tmp_path / f"reports.{backend}"
+    DataManager(storage=storage_type(path)).save(record)
+    loaded = DataManager(storage=storage_type(path)).load(strict=True)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_record(loaded[0])
+
+    assert terminal.lines == [
+        "\n=== Report details ===", "Channel: Chat", "Sender: Unknown", "Message:",
+        " Original message\n ", "Included link: None reported", "Included file: None reported",
+        "Clicked link: Not recorded", "Downloaded file: Not recorded",
+        "Information submitted: None reported", "\n=== Assessment ===", "Priority: Low",
+        "Rule-based score: 0", "\nRecommended actions:",
+    ]
+    assert loaded == [before]
+    assert record == before
+
+
+@pytest.mark.parametrize("nested", [None, {}, {"clicked": None}])
+def test_v3_history_never_falls_back_to_root_exposure(nested):
+    from phishreport.io import ReportPresenter
+
+    record = {"schema_version": 3, "channel": "chat", "message": "Original",
+              "clicked": True, "downloaded": True, "submitted_category": "password"}
+    if nested is not None:
+        record["exposure"] = nested
+    before = deepcopy(record)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_record(record)
+
+    missing = "Not recorded" if nested is None else "Unconfirmed"
+    assert terminal.lines[7:10] == [
+        f"Clicked link: {missing}", f"Downloaded file: {missing}",
+        "Information submitted: None reported" if nested is None
+        else "Information submitted: Unconfirmed",
+    ]
+    assert ("Exposure unconfirmed" in terminal.lines) is (nested is not None)
+    assert record == before
+
+
+def test_display_record_projects_legacy_root_assessment_without_mutation():
+    from phishreport.io import ReportPresenter
+
+    record = {"channel": "sms", "message": "Historical", "score": 0, "priority": "LOW",
+              "reasons": [" Original reason "], "checklist": [" Original action "]}
+    before = deepcopy(record)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_record(record)
+
+    assert terminal.lines[-7:] == [
+        "\n=== Assessment ===", "Priority: Low", "Rule-based score: 0", "\nReasons:",
+        " -  Original reason ", "\nRecommended actions:", "1.  Original action ",
+    ]
+    assert record == before
+
+
+@pytest.mark.parametrize("score", [{}, {"score": None}, {"score": "invalid"}])
+def test_display_record_describes_unknown_assessment_score_as_unavailable(score):
+    from phishreport.io import ReportPresenter
+
+    record = {"result": {"priority": "LOW", **score}}
+    before = deepcopy(record)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_record(record)
+
+    assert "Rule-based score: Unavailable" in terminal.lines
+    assert record == before
+
+
 def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, monkeypatch):
     from phishreport.io import IOManager
 
