@@ -2,7 +2,7 @@
 
 from dataclasses import asdict
 
-from phishreport.model import Report
+from phishreport.model import AssessmentResult, Report
 
 from .terminal import Terminal
 
@@ -13,36 +13,36 @@ class ReportPresenter:
     def __init__(self, terminal: Terminal):
         self._terminal = terminal
 
-    def display_result(self, result: dict | None) -> None:
-        """Display a validated outcome or an explicit unavailable assessment."""
-        if not result:
+    def display_result(self, result: AssessmentResult | dict | None) -> None:
+        """Display an outcome through its tolerant, immutable assessment view."""
+        if isinstance(result, dict):
+            result = Report({"result": result}).result
+        if result is None:
             self._terminal.write("\nNo assessment available.")
             return
 
-        priority = (result.get("priority") or "unavailable").replace("_", " ").title()
+        priority = (result.priority or "unavailable").replace("_", " ").title()
         self._terminal.write("\n=== Assessment ===")
         self._terminal.write("Priority:", priority)
-        self._terminal.write("Rule-based score:", result.get("score", "Unavailable"))
-        if result.get("matched_rule"):
-            self._terminal.write("Matched rule:", result["matched_rule"])
+        score = result.score if result.score is not None else "Unavailable"
+        self._terminal.write("Rule-based score:", score)
+        if result.matched_rule:
+            self._terminal.write("Matched rule:", result.matched_rule)
 
-        trace = result.get("trace") or []
-        if trace:
+        if result.trace:
             self._terminal.write("\nRule evaluation trace:")
-            for step in trace:
-                rule_name = step.get("rule_name", "Unknown rule")
-                status = "matched" if step.get("matched") else "not matched"
-                score = step.get("score")
-                score_text = f" (score: {score})" if score is not None else ""
-                self._terminal.write(f" - {rule_name}: {status}{score_text}")
+            for step in result.trace:
+                status = "matched" if step.matched else "not matched"
+                score_text = f" (score: {step.score})" if step.score is not None else ""
+                self._terminal.write(f" - {step.rule_name}: {status}{score_text}")
 
-        if result.get("reasons"):
+        if result.reasons:
             self._terminal.write("\nReasons:")
-            for reason in result["reasons"]:
+            for reason in result.reasons:
                 self._terminal.write(" -", reason)
 
         self._terminal.write("\nRecommended actions:")
-        for number, step in enumerate(result.get("checklist", []), start=1):
+        for number, step in enumerate(result.checklist, start=1):
             self._terminal.write(f"{number}. {step}")
 
     def display_record(self, record: dict) -> None:

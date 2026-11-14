@@ -97,6 +97,106 @@ def test_report_presenter_shortens_only_the_history_preview():
     assert record == {"channel": "chat", "message": message, "priority": "review", "score": 0}
 
 
+@pytest.mark.parametrize("typed", [False, True], ids=["dictionary", "model"])
+def test_display_result_preserves_guidance_and_validated_trace_order(typed):
+    from phishreport.io import ReportPresenter
+    from phishreport.model import AssessmentResult, RuleTrace
+
+    result = {
+        "score": 80, "priority": "urgent_review", "matched_rule": "Clicked link",
+        "reasons": ["  First reason\n ", "Second reason"],
+        "checklist": ["  First action  ", "Second action"],
+        "trace": [
+            {"rule_name": "Disclosure", "matched": False, "score": None},
+            {"rule_name": "Clicked link", "matched": True, "score": 80},
+        ],
+    }
+    before = deepcopy(result)
+    if typed:
+        result = AssessmentResult(
+            80, "urgent_review", result["reasons"], result["checklist"], "Clicked link",
+            [RuleTrace("Disclosure", False), RuleTrace("Clicked link", True, 80)],
+        )
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_result(result)
+
+    assert terminal.lines == [
+        "\n=== Assessment ===", "Priority: Urgent Review", "Rule-based score: 80",
+        "Matched rule: Clicked link", "\nRule evaluation trace:",
+        " - Disclosure: not matched", " - Clicked link: matched (score: 80)",
+        "\nReasons:", " -   First reason\n ", " - Second reason",
+        "\nRecommended actions:", "1.   First action  ", "2. Second action",
+    ]
+    if not typed:
+        assert result == before
+
+
+@pytest.mark.parametrize("fields", [
+    {}, {"score": None}, {"score": "invalid"}, {"score": True},
+    {"score": float("nan")}, {"score": float("inf")},
+])
+def test_display_result_reports_unknown_scores_without_inventing_zero(fields):
+    from phishreport.io import ReportPresenter
+
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_result({"priority": "LOW", **fields})
+
+    assert terminal.lines == [
+        "\n=== Assessment ===", "Priority: Low", "Rule-based score: Unavailable",
+        "\nRecommended actions:",
+    ]
+
+
+def test_display_result_tolerates_partial_malformed_guidance_and_priority():
+    from phishreport.io import ReportPresenter
+
+    result = {"score": 0, "priority": ["HIGH"], "matched_rule": 7,
+              "reasons": [" Keep reason ", None, 3, ""], "checklist": "not a list"}
+    before = deepcopy(result)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_result(result)
+
+    assert terminal.lines == [
+        "\n=== Assessment ===", "Priority: Unavailable", "Rule-based score: 0",
+        "\nReasons:", " -  Keep reason ", " - ", "\nRecommended actions:",
+    ]
+    assert result == before
+
+
+@pytest.mark.parametrize("trace", [
+    ["malformed step"],
+    [{"rule_name": "Claimed rule", "matched": "yes", "score": 80}],
+    [{"rule_name": "Claimed rule", "matched": True, "score": 90}],
+])
+def test_display_result_omits_unvalidated_trace(trace):
+    from phishreport.io import ReportPresenter
+
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_result({
+        "score": 80, "matched_rule": "Claimed rule", "trace": trace,
+    })
+
+    assert terminal.lines == [
+        "\n=== Assessment ===", "Priority: Unavailable", "Rule-based score: 80",
+        "Matched rule: Claimed rule", "\nRecommended actions:",
+    ]
+
+
+@pytest.mark.parametrize("result", [None, {}])
+def test_display_result_describes_absent_assessment(result):
+    from phishreport.io import ReportPresenter
+
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_result(result)
+
+    assert terminal.lines == ["\nNo assessment available."]
+
+
 @pytest.fixture
 def exposure_record():
     return {
