@@ -2,6 +2,7 @@
 
 import math
 from collections.abc import Mapping
+from dataclasses import dataclass
 from types import MappingProxyType
 
 SCHEMA_VERSION = 3
@@ -30,6 +31,23 @@ INPUT_FIELDS = {
     "downloaded",
     "submitted_category",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class RuleTrace:
+    """Describe whether a rule matched and the score it produced, if any."""
+
+    rule_name: str
+    matched: bool
+    score: int | None = None
+
+    def as_dict(self) -> dict:
+        """Return a JSON-compatible representation for interface adapters."""
+        return {
+            "rule_name": self.rule_name,
+            "matched": self.matched,
+            "score": self.score,
+        }
 
 
 def _freeze_json(value: object) -> object:

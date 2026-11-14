@@ -4,6 +4,7 @@ import json
 import math
 from collections import UserDict
 from copy import deepcopy
+from dataclasses import FrozenInstanceError
 from types import MappingProxyType
 from unittest.mock import Mock
 
@@ -33,6 +34,93 @@ from phishreport.model import (
 def test_report_model_owns_schema_version_constants():
     assert SCHEMA_VERSION == 3
     assert SCHEMA_VERSION_KEY == "schema_version"
+
+
+def test_rule_trace_is_the_same_canonical_class_through_existing_imports():
+    from phishreport.logic import RuleTrace as PublicRuleTrace
+    from phishreport.logic.rule_trace import RuleTrace as LogicRuleTrace
+
+    assert model.RuleTrace is LogicRuleTrace is PublicRuleTrace
+    assert model.RuleTrace.__module__ == "phishreport.model"
+
+
+def test_rule_trace_preserves_default_score_equality_and_hash():
+    trace = model.RuleTrace("Unmatched", False)
+
+    assert trace == model.RuleTrace(rule_name="Unmatched", matched=False, score=None)
+    assert len({trace, model.RuleTrace("Unmatched", False, None)}) == 1
+    assert trace != model.RuleTrace("Winner", True, 60)
+    assert trace.as_dict() == {"rule_name": "Unmatched", "matched": False, "score": None}
+
+
+def test_rule_trace_remains_frozen_and_slotted():
+    trace = model.RuleTrace("Winner", True, 60)
+
+    with pytest.raises(FrozenInstanceError):
+        trace.score = 0
+    with pytest.raises(FrozenInstanceError):
+        del trace.rule_name
+    assert not hasattr(trace, "__dict__")
+    assert trace.as_dict() == {"rule_name": "Winner", "matched": True, "score": 60}
+
+
+@pytest.mark.parametrize("args,kwargs", [
+    ((), {}),
+    (("Winner",), {}),
+    (("Winner", True, 60, "extra"), {}),
+    (("Winner", True), {"unknown": 60}),
+    (("Winner", True), {"rule_name": "duplicate"}),
+])
+def test_rule_trace_preserves_constructor_argument_errors(args, kwargs):
+    with pytest.raises(TypeError):
+        model.RuleTrace(*args, **kwargs)
+
+
+@pytest.mark.parametrize("rule_name,matched,score", [
+    ("", False, None),
+    (None, "unvalidated", -1),
+    ("Winner", True, True),
+    ("Winner", False, 101),
+])
+def test_rule_trace_does_not_add_runtime_field_validation(rule_name, matched, score):
+    trace = model.RuleTrace(rule_name, matched, score)
+
+    assert trace.rule_name is rule_name
+    assert trace.matched is matched
+    assert trace.score is score
+
+
+def test_rule_trace_serialization_returns_independent_fresh_dictionaries():
+    trace = model.RuleTrace("Winner", True, 60)
+    first = trace.as_dict()
+    second = trace.as_dict()
+    first.update(rule_name="Changed", matched=False, score=0)
+    first["extra"] = "only first"
+
+    assert first is not second
+    assert second == {"rule_name": "Winner", "matched": True, "score": 60}
+    assert trace.as_dict() == second
+    assert (trace.rule_name, trace.matched, trace.score) == ("Winner", True, 60)
+
+
+def test_canonical_rule_trace_serialization_is_accepted_by_existing_validators(
+    version_two_report,
+):
+    version_two_report["result"].update(
+        matched_rule="Winner",
+        trace=[
+            model.RuleTrace("Unmatched", False).as_dict(),
+            model.RuleTrace("Winner", True, 60).as_dict(),
+        ],
+    )
+    before = deepcopy(version_two_report)
+
+    assert _validate_rule_trace(version_two_report["result"]) is None
+    assert _validate_result(version_two_report["result"], allow_rule_trace=True) is None
+    assert _validate_new(version_two_report) is version_two_report
+    assert _validate_stored(version_two_report) is version_two_report
+    assert ReportValidator.validate_new(version_two_report) is version_two_report
+    assert version_two_report == before
 
 
 def test_freeze_json_owns_nested_input_and_unknown_legacy_fields():
