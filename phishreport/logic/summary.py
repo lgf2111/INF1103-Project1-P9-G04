@@ -21,24 +21,6 @@ class StoredReport:
 
     def __init__(self, record: dict) -> None:
         self._report = Report(record)
-        exposure = self._report.exposure
-        category = exposure.submitted_category if exposure is not None else None
-        if self._report.schema_version == SCHEMA_VERSION and (
-            exposure is None or exposure.disclosure_answered is not True
-        ):
-            category = None
-        # Temporary bridge until the properties read the canonical view directly.
-        self._record = {
-            "channel": self._report.channel,
-            "clicked": exposure is not None and exposure.clicked is True,
-            "downloaded": exposure is not None and exposure.downloaded is True,
-            "submitted_category": category,
-        }
-        result = self._report.result
-        self._result = {
-            "score": result.score if result is not None else None,
-            "priority": result.priority if result is not None else None,
-        }
 
     @property
     def channel(self) -> str | None:
@@ -64,11 +46,20 @@ class StoredReport:
 
     @property
     def downloaded(self) -> bool:
-        return self._record.get("downloaded") is True
+        exposure = self._report.exposure
+        return exposure is not None and exposure.downloaded is True
 
     @property
     def submitted_credentials(self) -> bool:
-        return self._record.get("submitted_category") in ("password", "otp")
+        exposure = self._report.exposure
+        if exposure is None:
+            return False
+        if (
+            self._report.schema_version == SCHEMA_VERSION
+            and exposure.disclosure_answered is not True
+        ):
+            return False
+        return exposure.submitted_category in ("password", "otp")
 
 
 @dataclass(frozen=True)
