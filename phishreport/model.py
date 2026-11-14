@@ -138,6 +138,10 @@ class Report:
         _validate_stored(record)
         return cls(record)
 
+    def to_dict(self) -> dict:
+        """Return a fresh mutable JSON graph preserving the original report shape."""
+        return _thaw_json(self._payload)
+
     def __post_init__(self, source: Mapping[str, object]) -> None:
         """Snapshot all source data before projecting supported historical fields.
 

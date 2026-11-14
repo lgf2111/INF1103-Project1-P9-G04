@@ -12,6 +12,8 @@ import pytest
 
 from phishreport import model
 from phishreport.data import validator as data_validator
+from phishreport.data.json_storage import JsonReportStorage
+from phishreport.data.sqlite_storage import SqliteReportStorage
 from phishreport.data.validator import ReportValidator
 from phishreport.model import (
     INPUT_FIELDS,
@@ -1841,3 +1843,131 @@ def test_report_from_legacy_constructs_requested_subclass():
     report = HistoricalReport.from_legacy({"message": " Original "})
     assert type(report) is HistoricalReport
     assert report.message == " Original "
+
+
+@pytest.mark.parametrize("layout", [
+    "partial_legacy", "summary", "v1", "v2", "v3_feedback",
+    "v3_historical_exposure", "v3_identified_exposure",
+])
+@pytest.mark.parametrize("storage_type", [JsonReportStorage, SqliteReportStorage])
+def test_report_to_dict_preserves_history_through_json_and_real_storage(
+    summary_report, version_one_report, version_two_report, version_three_exposure,
+    layout, storage_type, tmp_path,
+):
+    records = {
+        "partial_legacy": {"message": None, "extra": {"items": [False, None, " "]}},
+        "summary": summary_report, "v1": version_one_report, "v2": version_two_report,
+        "v3_feedback": {
+            "schema_version": 3, "assessment_id": " Original ID ",
+            "channel": "chat", "message": " Original\n ", "result": {
+                "score": 60, "priority": "MEDIUM", "reasons": [], "checklist": [],
+            },
+        },
+        "v3_historical_exposure": version_three_exposure,
+        "v3_identified_exposure": {**version_three_exposure, "assessment_id": " Existing ID "},
+    }
+    source = records[layout]
+    if layout in {"v2", "v3_feedback"}:
+        source["result"].update(matched_rule="Winner", trace=[
+            {"rule_name": "Skip", "matched": False, "score": None},
+            {"rule_name": "Winner", "matched": True, "score": 60},
+        ])
+    before = deepcopy(source)
+    report = model.Report.from_legacy(source)
+
+    output = report.to_dict()
+
+    assert type(output) is dict
+    assert output == source == before
+    assert output is not source
+    assert json.loads(json.dumps(output, allow_nan=False)) == before
+    assert _validate_stored(output) is output
+    for key in ("schema_version", "assessment_id", "exposure", "sender"):
+        assert (key in output) is (key in before)
+    storage = storage_type(tmp_path / "history")
+    storage.write_records([output])
+    restored = storage.read_records()
+    assert restored == [before]
+    assert model.Report.from_legacy(restored[0]).to_dict() == before
+
+
+def test_report_to_dict_returns_fresh_nested_containers_isolated_from_source_and_model():
+    source = {
+        "message": " Original\n ", "assessment_id": " ID ", "sender": None,
+        "clicked": False, "reasons": ["", "same", "same"],
+        "unknown": {"items": [{"values": [None, False, " unchanged "]}]},
+    }
+    before = deepcopy(source)
+    report = model.Report.from_legacy(source)
+    first, second = report.to_dict(), report.to_dict()
+
+    first["unknown"]["items"][0]["values"].append("first only")
+    first["unknown"]["items"].append({"new": []})
+    first["unknown"]["added"] = True
+    first["reasons"].clear()
+    first["assessment_id"] = "changed output"
+    assert source == before
+    source["unknown"]["items"][0]["values"].clear()
+    source["reasons"].append("source only")
+    source["message"] = "changed source"
+
+    assert first is not second
+    assert second == report.to_dict() == before
+    assert report.message == " Original\n " and report.assessment_id == " ID "
+    assert report.result.reasons == ("", "same", "same")
+    assert report._payload["unknown"]["items"][0]["values"] == (None, False, " unchanged ")
+    second["unknown"]["items"][0]["values"][0] = "second only"
+    assert report.to_dict() == before
+
+
+def test_report_to_dict_preserves_malformed_raw_values_instead_of_filtered_attributes(monkeypatch):
+    source = {
+        "schema_version": 3, "assessment_id": 1, "channel": [], "message": None,
+        "has_link": 1, "result": {
+            "score": True, "priority": [], "reasons": ["", None, False, "reason"],
+            "checklist": "not a list", "matched_rule": "Winner",
+            "trace": [{"rule_name": "Winner", "matched": "yes", "score": 60}],
+        },
+        "exposure": {"clicked": 1, "downloaded": False,
+                     "submitted_category": ["password"], "disclosure_answered": "yes"},
+        "details": {"emails": ["a", None, "", False]},
+        "unknown": {"items": [None, False, {"text": " retained "}]},
+    }
+    before = deepcopy(source)
+    report = model.Report(source)
+    assert report.assessment_id is report.channel is report.has_link is None
+    assert report.result.reasons == ("", "reason") and report.result.trace == ()
+    assert report.exposure == model.ExposureAnswers(None, False, None, None)
+    assert report.emails == ("a", "")
+
+    def forbidden_validation(*args, **kwargs):
+        pytest.fail("Serialization must not validate or project stored history again")
+
+    for name in ("_validate_stored", "_validate_result", "_validate_rule_trace"):
+        monkeypatch.setattr(model, name, forbidden_validation)
+    output = report.to_dict()
+    assert output == source == before
+    assert json.loads(json.dumps(output, allow_nan=False)) == before
+
+
+def test_report_to_dict_converts_owned_mapping_and_tuple_graphs_to_plain_json_containers():
+    source = UserDict({"unknown": (UserDict({"items": (None, False, " Text ")}),)})
+    output = model.Report(source).to_dict()
+
+    assert type(output) is dict and type(output["unknown"]) is list
+    assert type(output["unknown"][0]) is dict
+    assert type(output["unknown"][0]["items"]) is list
+    assert output == {"unknown": [{"items": [None, False, " Text "]}]}
+    assert json.loads(json.dumps(output)) == output
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_report_to_dict_keeps_nonfinite_raw_extras_without_normalizing_them(value):
+    source = {"unknown": {"items": [value]}, "score": value}
+    report = model.Report(source)
+
+    output = report.to_dict()
+
+    assert report.result.score is None
+    assert output["score"] is value and output["unknown"]["items"][0] is value
+    assert math.isnan(output["score"]) if math.isnan(value) else output["score"] == value
