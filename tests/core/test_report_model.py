@@ -16,6 +16,7 @@ from phishreport.model import (
     _freeze_json,
     _validate_result,
     _validate_rule_trace,
+    _validate_v2,
 )
 
 
@@ -358,3 +359,112 @@ def test_result_validation_propagates_trace_mismatch_and_preserves_failure_order
 
     with pytest.raises(ValueError, match="Invalid stored score"):
         _validate_result(assessment_result, allow_rule_trace=True)
+
+
+@pytest.fixture
+def version_two_report(assessment_result):
+    return {
+        "schema_version": 2, "channel": " chat ", "message": " Original Message\n  ",
+        "result": assessment_result,
+    }
+
+
+@pytest.mark.parametrize("with_trace", [False, True])
+def test_v2_validator_returns_original_record_without_normalizing(version_two_report, with_trace):
+    if with_trace:
+        version_two_report["result"].update(
+            matched_rule="Winner", trace=[{"rule_name": "Winner", "matched": True, "score": 60}],
+        )
+    before = deepcopy(version_two_report)
+
+    assert _validate_v2(version_two_report) is version_two_report
+    assert ReportValidator._validate_v2 is _validate_v2
+    assert ReportValidator()._validate_v2 is _validate_v2
+    assert ReportValidator()._validate_v2(version_two_report) is version_two_report
+    assert ReportValidator().validate_new(version_two_report) is version_two_report
+    assert ReportValidator().validate_stored(version_two_report) is version_two_report
+    assert version_two_report == before
+
+
+@pytest.mark.parametrize("root", [None, [], "report", 2])
+def test_v2_validator_rejects_non_dictionary_reports(root):
+    with pytest.raises(ValueError) as caught:
+        _validate_v2(root)
+
+    assert str(caught.value) == "Version-2 reports must contain exactly the four agreed fields."
+
+
+@pytest.mark.parametrize("missing", ["schema_version", "channel", "message", "result"])
+def test_v2_validator_requires_all_four_fields(version_two_report, missing):
+    del version_two_report[missing]
+    before = deepcopy(version_two_report)
+
+    with pytest.raises(ValueError, match="exactly the four agreed fields"):
+        _validate_v2(version_two_report)
+
+    assert version_two_report == before
+
+
+def test_v2_validator_rejects_extra_fields_before_version_validation(version_two_report):
+    version_two_report.update(extra="not allowed", schema_version=True)
+    before = deepcopy(version_two_report)
+
+    with pytest.raises(ValueError, match="exactly the four agreed fields"):
+        _validate_v2(version_two_report)
+
+    assert version_two_report == before
+
+
+@pytest.mark.parametrize("version", [None, True, False, 2.0, "2", 1, 3])
+def test_v2_validator_requires_exact_integer_version_two(version_two_report, version):
+    version_two_report["schema_version"] = version
+    before = deepcopy(version_two_report)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_v2(version_two_report)
+
+    assert str(caught.value) == "New reports must use schema version 2."
+    assert version_two_report == before
+
+
+@pytest.mark.parametrize("field", ["channel", "message"])
+@pytest.mark.parametrize("value", [None, "", " \t\n", 1, True, []])
+def test_v2_validator_rejects_invalid_text_without_coercion(version_two_report, field, value):
+    version_two_report[field] = value
+    before = deepcopy(version_two_report)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_v2(version_two_report)
+
+    assert str(caught.value) == "Invalid report text: " + field
+    assert version_two_report == before
+
+
+@pytest.mark.parametrize("updates,expected", [
+    ({"score": True}, "Invalid stored score."),
+    ({"reasons": [""]}, "Invalid stored text lists."),
+    ({"matched_rule": "Winner"}, "Invalid stored assessment."),
+    ({"matched_rule": "Winner", "trace": [
+        {"rule_name": "Winner", "matched": True, "score": 59},
+    ]}, "Stored rule trace does not match its assessment."),
+])
+def test_v2_validator_reuses_canonical_result_and_trace_validation(
+    version_two_report, updates, expected,
+):
+    version_two_report["result"].update(updates)
+    before = deepcopy(version_two_report)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_v2(version_two_report)
+
+    assert str(caught.value) == expected
+    assert version_two_report == before
+
+
+def test_v2_validator_calls_canonical_result_with_trace_opt_in(version_two_report, monkeypatch):
+    validate_result = Mock(wraps=model._validate_result)
+    monkeypatch.setattr(model, "_validate_result", validate_result)
+
+    assert _validate_v2(version_two_report) is version_two_report
+
+    validate_result.assert_called_once_with(version_two_report["result"], allow_rule_trace=True)

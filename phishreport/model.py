@@ -26,6 +26,26 @@ def _freeze_json(value: object) -> object:
     raise ValueError(error_message)
 
 
+def _validate_v2(record):
+    """Validate the exact version-2 storage contract without changing values."""
+    if not isinstance(record, dict) or set(record) != {
+        SCHEMA_VERSION_KEY,
+        "channel",
+        "message",
+        "result",
+    }:
+        raise ValueError("Version-2 reports must contain exactly the four agreed fields.")
+    if type(record[SCHEMA_VERSION_KEY]) is not int or record[SCHEMA_VERSION_KEY] != 2:
+        raise ValueError("New reports must use schema version 2.")
+    for key in ("channel", "message"):
+        if not isinstance(record[key], str) or not record[key].strip():
+            raise ValueError("Invalid report text: " + key)
+    # Keep the original message intact; validation never strips or truncates it.
+    # The merged RuleOutcome workflow writes traces to v2 reports too.
+    _validate_result(record["result"], allow_rule_trace=True)
+    return record
+
+
 def _validate_result(result, *, allow_rule_trace=False):
     """Validate the score, priority, guidance and permitted explanation fields.
 

@@ -2,7 +2,7 @@
 
 import math
 
-from phishreport.model import _validate_result, _validate_rule_trace
+from phishreport.model import _validate_result, _validate_rule_trace, _validate_v2
 
 REPORT_FIELDS = {
     "channel",
@@ -102,24 +102,7 @@ class ReportValidator:
 
     _validate_rule_trace = staticmethod(_validate_rule_trace)
 
-    def _validate_v2(self, record):
-        """Validate the exact version-2 storage contract without changing values."""
-        if not isinstance(record, dict) or set(record) != {
-            "schema_version",
-            "channel",
-            "message",
-            "result",
-        }:
-            raise ValueError("Version-2 reports must contain exactly the four agreed fields.")
-        if type(record["schema_version"]) is not int or record["schema_version"] != 2:
-            raise ValueError("New reports must use schema version 2.")
-        for key in ("channel", "message"):
-            if not isinstance(record[key], str) or not record[key].strip():
-                raise ValueError("Invalid report text: " + key)
-        # Keep the original message intact; validation never strips or truncates it.
-        # The merged RuleOutcome workflow writes traces to v2 reports too.
-        self._validate_result(record["result"], allow_rule_trace=True)
-        return record
+    _validate_v2 = staticmethod(_validate_v2)
 
     def _validate_v3(self, record: dict) -> dict:
         """Validate feedback-linked or exposure reports without changing values.
