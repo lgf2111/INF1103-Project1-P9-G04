@@ -2,6 +2,7 @@
 
 import logging
 
+from phishreport.ai._provider_errors import ProviderFailure, ProviderFailureReason
 from phishreport.logging_setup import AppLogging
 
 
@@ -15,6 +16,17 @@ class FailureDiagnostics:
     def logger(self) -> logging.Logger:
         """Return the logger shared by AI components for operational messages."""
         return self._logger
+
+    def provider_failure(
+        self,
+        reason: ProviderFailureReason,
+        *,
+        status_code: int | None = None,
+    ) -> ProviderFailure:
+        """Validate a provider failure, log its safe summary, and return it."""
+        error = ProviderFailure(reason, status_code=status_code)
+        AppLogging.log_failure(self._logger, f"stage=call_api reason={error}")
+        return error
 
     def failure(self, stage, message, error_type):
         """Log a developer-controlled reason and construct the existing public error.
