@@ -150,6 +150,32 @@ class Report:
         return cls(payload)
 
     @classmethod
+    def from_exposure(
+        cls, record: dict, result: dict, exposure: dict, assessment_id: str,
+    ) -> "Report":
+        """Validate explicit exposure answers and an existing ID before snapshotting."""
+        payload = {
+            SCHEMA_VERSION_KEY: SCHEMA_VERSION,
+            "assessment_id": assessment_id,
+            "channel": record["channel"],
+            "message": record["message"],
+            "result": result,
+            "sender": record["sender"],
+            "has_link": record["has_link"],
+            "link": record["link"],
+            "has_file": record["has_file"],
+            "file_name": record["file_name"],
+            "exposure": {
+                "clicked": exposure["clicked"],
+                "downloaded": exposure["downloaded"],
+                "submitted_category": exposure["submitted_category"],
+                "disclosure_answered": exposure["disclosure_answered"],
+            },
+        }
+        _validate_new(payload)
+        return cls(payload)
+
+    @classmethod
     def from_legacy(cls, record: dict) -> "Report":
         """Validate stored history before taking an immutable, unchanged snapshot."""
         _validate_stored(record)

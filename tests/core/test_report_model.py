@@ -2120,3 +2120,183 @@ def test_report_from_assessment_constructs_requested_subclass_at_id_length_bound
 def test_report_from_assessment_leaves_missing_record_key_as_programming_error():
     with pytest.raises(KeyError, match="channel"):
         model.Report.from_assessment({}, {"assessment_id": "id"})
+
+
+@pytest.fixture
+def exposure_factory_inputs():
+    return (
+        {"channel": " chat ", "message": " Original\n ", "sender": " Sender ",
+         "has_link": True, "link": " https://example.test ",
+         "has_file": True, "file_name": " invoice.pdf ", "extra": object()},
+        {"score": 60, "priority": "MEDIUM", "reasons": [" Original reason "],
+         "checklist": [], "matched_rule": "Winner", "trace": [
+             {"rule_name": "Skip", "matched": False, "score": None},
+             {"rule_name": "Winner", "matched": True, "score": 60},
+         ]},
+        {"clicked": None, "downloaded": None, "submitted_category": None,
+         "disclosure_answered": False},
+    )
+
+
+@pytest.mark.parametrize("answers", [
+    (None, None, None, False), (False, False, None, True),
+    (None, False, None, False), (True, None, None, False),
+    (False, True, "password", True), (None, None, "otp", True),
+])
+@pytest.mark.parametrize("storage_type", [JsonReportStorage, SqliteReportStorage])
+def test_report_from_exposure_preserves_explicit_answers_and_owned_storage_payload(
+    exposure_factory_inputs, answers, storage_type, tmp_path,
+):
+    record, result, exposure = exposure_factory_inputs
+    exposure.update(zip(exposure, answers))
+    exposure["extra"] = object()
+    before_record = dict(record)
+    before_result = deepcopy(result)
+    before_exposure = dict(exposure)
+    expected = {
+        "schema_version": 3, "assessment_id": " Existing ID ",
+        "channel": " chat ", "message": " Original\n ", "sender": " Sender ",
+        "has_link": True, "link": " https://example.test ",
+        "has_file": True, "file_name": " invoice.pdf ",
+        "result": {"score": 60, "priority": "MEDIUM", "reasons": [" Original reason "],
+                   "checklist": [], "matched_rule": "Winner", "trace": [
+                       {"rule_name": "Skip", "matched": False, "score": None},
+                       {"rule_name": "Winner", "matched": True, "score": 60},
+                   ]},
+        "exposure": {"clicked": answers[0], "downloaded": answers[1],
+                     "submitted_category": answers[2], "disclosure_answered": answers[3]},
+    }
+
+    report = model.Report.from_exposure(record, result, exposure, " Existing ID ")
+
+    assert record == before_record and result == before_result and exposure == before_exposure
+    assert report.to_dict() == expected
+    assert report.exposure == model.ExposureAnswers(*answers)
+    assert report.assessment_id == " Existing ID "
+    record["message"] = "changed"
+    result["reasons"].clear()
+    result["trace"][-1]["rule_name"] = "changed"
+    exposure["clicked"] = False
+    output = report.to_dict()
+    output["result"]["trace"][-1]["score"] = 0
+    output["result"]["checklist"].append("changed")
+    output["exposure"]["disclosure_answered"] = False
+    assert report.to_dict() == expected
+    serialized = json.loads(json.dumps(report.to_dict(), allow_nan=False))
+    assert _validate_new(serialized) is serialized
+    storage = storage_type(tmp_path / "history")
+    storage.write_records([serialized])
+    assert storage.read_records() == [expected]
+    assert model.Report.from_legacy(storage.read_records()[0]).to_dict() == expected
+
+
+@pytest.mark.parametrize("section,updates,error", [
+    ("record", {"channel": " "}, "Invalid report text: channel"),
+    ("record", {"message": None}, "Invalid report text: message"),
+    ("record", {"sender": 1}, "Invalid report sender."),
+    ("record", {"link": " "}, "Invalid report metadata: link"),
+    ("record", {"file_name": False}, "Invalid report metadata: file_name"),
+    ("record", {"has_link": 1}, "Invalid report metadata flag: has_link"),
+    ("record", {"has_file": None}, "Invalid report metadata flag: has_file"),
+    ("record", {"link": None}, "Report link and flag must agree."),
+    ("record", {"has_file": False}, "A report filename requires a file clue."),
+    ("exposure", {"clicked": 1}, "Invalid exposure action: clicked"),
+    ("exposure", {"downloaded": "no"}, "Invalid exposure action: downloaded"),
+    ("exposure", {"disclosure_answered": None}, "Invalid disclosure answer flag."),
+    ("exposure", {"submitted_category": "email"}, "Invalid submitted category."),
+    ("exposure", {"submitted_category": "password"},
+     "Unanswered disclosure must have no submitted category."),
+    ("result", {"score": True}, "Invalid stored score."),
+    ("result", {"reasons": [" "]}, "Invalid stored text lists."),
+    ("result", {"assessment_id": "nested"}, "Invalid stored assessment."),
+    ("result", {"extra": False}, "Invalid stored assessment."),
+    ("result", {"trace": []}, "Invalid stored rule trace."),
+    ("result", {"matched_rule": "Other"}, "Stored rule trace does not match its assessment."),
+])
+def test_report_from_exposure_rejects_invalid_payload_before_constructor(
+    exposure_factory_inputs, section, updates, error, monkeypatch,
+):
+    record, result, exposure = exposure_factory_inputs
+    # Remove the deliberately ignored non-JSON extra for independent snapshot comparison.
+    record.pop("extra")
+    {"record": record, "result": result, "exposure": exposure}[section].update(updates)
+    before = deepcopy((record, result, exposure))
+
+    def forbidden(*args):
+        pytest.fail("Invalid exposure reached the tolerant constructor")
+
+    monkeypatch.setattr(model.Report, "__post_init__", forbidden)
+    with pytest.raises(ValueError) as caught:
+        model.Report.from_exposure(record, result, exposure, "id")
+    assert str(caught.value) == error
+    assert (record, result, exposure) == before
+
+
+@pytest.mark.parametrize("identifier", [None, True, "", " \t ", "x" * 101])
+def test_report_from_exposure_rejects_invalid_explicit_id(
+    exposure_factory_inputs, identifier, monkeypatch,
+):
+    def forbidden(*args):
+        pytest.fail("Invalid ID reached the tolerant constructor")
+
+    monkeypatch.setattr(model.Report, "__post_init__", forbidden)
+    with pytest.raises(ValueError, match="Invalid assessment identifier"):
+        model.Report.from_exposure(*exposure_factory_inputs, identifier)
+
+
+def test_report_from_exposure_propagates_canonical_exception_identity(
+    exposure_factory_inputs, monkeypatch,
+):
+    error = ValueError("Canonical rejection")
+
+    def reject(payload):
+        assert len(payload) == 11 and payload["assessment_id"] == "id"
+        raise error
+
+    def forbidden(*args):
+        pytest.fail("Factory used stored validation or constructed a rejected payload")
+
+    monkeypatch.setattr(model, "_validate_new", reject)
+    monkeypatch.setattr(model, "_validate_stored", forbidden)
+    monkeypatch.setattr(model.Report, "__post_init__", forbidden)
+    with pytest.raises(ValueError) as caught:
+        model.Report.from_exposure(*exposure_factory_inputs, "id")
+    assert caught.value is error
+
+
+@pytest.mark.parametrize("section,key", [
+    *[(0, key) for key in ("channel", "message", "sender", "has_link", "link",
+                           "has_file", "file_name")],
+    *[(2, key) for key in ("clicked", "downloaded", "submitted_category",
+                           "disclosure_answered")],
+])
+def test_report_from_exposure_requires_source_keys(exposure_factory_inputs, section, key):
+    del exposure_factory_inputs[section][key]
+    with pytest.raises(KeyError) as caught:
+        model.Report.from_exposure(*exposure_factory_inputs, "id")
+    assert caught.value.args == (key,)
+
+
+@pytest.mark.parametrize("argument_count", [0, 1, 2, 3])
+def test_report_from_exposure_requires_all_arguments(exposure_factory_inputs, argument_count):
+    args = (*exposure_factory_inputs, "id")
+    with pytest.raises(TypeError):
+        model.Report.from_exposure(*args[:argument_count])
+
+
+def test_report_from_exposure_supports_nullable_clues_and_id_boundary(exposure_factory_inputs):
+    class NewReport(model.Report):
+        pass
+
+    record, result, exposure = exposure_factory_inputs
+    record.update(sender=None, has_link=False, link=None, has_file=False, file_name=None)
+    result.pop("matched_rule")
+    result.pop("trace")
+    report = NewReport.from_exposure(record, result, exposure, "x" * 100)
+    assert type(report) is NewReport
+    assert report.assessment_id == "x" * 100
+    assert report.sender is report.link is report.file_name is None
+    assert report.has_link is report.has_file is False
+    assert report.to_dict()["result"] == {
+        "score": 60, "priority": "MEDIUM", "reasons": [" Original reason "], "checklist": [],
+    }
