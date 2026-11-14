@@ -53,7 +53,8 @@ class StoredReport:
 
     @property
     def score(self) -> int | None:
-        value = self._result.get("score")
+        result = self._report.result
+        value = result.score if result is not None else None
         return value if isinstance(value, int) and not isinstance(value, bool) else None
 
     @property
