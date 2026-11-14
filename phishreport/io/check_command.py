@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from phishreport.assessment import AssessmentSnapshot
 
-from .commands import Command, CommandReply, CommandRequest
+from .commands import Command, CommandPolicy, CommandReply, CommandRequest
 
 
 @dataclass(frozen=True)
@@ -32,6 +32,7 @@ class CheckCommand(Command):
 
     name: ClassVar[str] = "check"
     help_text: ClassVar[str] = "Assess a pasted message: /check <text>"
+    policy: ClassVar[CommandPolicy] = CommandPolicy(execution="assessment", failure="assessment")
 
     def execute(self, request: CommandRequest) -> CommandReply:
         """Assess nonempty argument text and publish its complete outcome."""

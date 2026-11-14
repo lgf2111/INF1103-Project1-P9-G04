@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import ClassVar
 
-from .commands import Command, CommandReply, CommandRequest
+from .commands import Command, CommandPolicy, CommandReply, CommandRequest
 
 
 @dataclass
@@ -16,6 +16,7 @@ class StatusCommand(Command):
 
     name: ClassVar[str] = "status"
     help_text: ClassVar[str] = "Show session status and the number of saved reports"
+    policy: ClassVar[CommandPolicy] = CommandPolicy(failure="history")
 
     def execute(self, request: CommandRequest) -> CommandReply:
         """Read history count before session status; propagate capability failures."""

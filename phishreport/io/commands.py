@@ -9,6 +9,7 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, MutableMapping
 from dataclasses import dataclass, field, replace
+from typing import ClassVar, Literal
 
 
 @dataclass(frozen=True)
@@ -33,6 +34,21 @@ class CommandReply:
     kind: str
 
 
+@dataclass(frozen=True)
+class CommandPolicy:
+    """Declare transport execution and expected-failure presentation policies.
+
+    Assessment execution owns the assessment/session lifecycle and must publish
+    CheckOutcome with an assessment reply, or return usage without assessment.
+    Ordinary replies cannot request persistence through their reply kind alone.
+    Failure policies select presentation for OSError, ValueError and RuntimeError;
+    programming errors remain visible. Adapters interpret this trusted metadata.
+    """
+
+    execution: Literal["reply", "assessment"] = "reply"
+    failure: Literal["command", "assessment", "history"] = "command"
+
+
 class Command(ABC):
     """A single operation usable by any transport.
 
@@ -40,6 +56,8 @@ class Command(ABC):
     commands own their services and error policy; the router does not convert
     service failures into a successful reply.
     """
+
+    policy: ClassVar[CommandPolicy] = CommandPolicy()
 
     @property
     @abstractmethod
