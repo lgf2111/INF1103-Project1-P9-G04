@@ -97,6 +97,68 @@ def test_report_presenter_shortens_only_the_history_preview():
     assert record == {"channel": "chat", "message": message, "priority": "review", "score": 0}
 
 
+def test_display_list_tolerates_mixed_history_without_changing_records():
+    from phishreport.io import ReportPresenter
+
+    records = [
+        {"channel": "sms", "message": "  First\n\tmessage ", "score": 0, "priority": "LOW"},
+        {"channel": ["email"], "message": {"text": "invalid"},
+         "result": {"priority": ["HIGH"], "score": True}},
+        {"channel": "email", "message": "x" * 50,
+         "result": {"priority": "urgent_review", "score": 101.5}},
+        {"channel": "chat", "message": "y" * 51, "result": "malformed",
+         "priority": "review", "score": -2.5},
+        {},
+    ]
+    before = deepcopy(records)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_list(records)
+
+    assert terminal.lines == [
+        "\n=== Saved reports ===",
+        "1. SMS | Low | Score: 0", "   First message",
+        "2. Unknown | Unavailable | Score: Unavailable", "   ",
+        "3. Email | Urgent Review | Score: 101.5", "   " + "x" * 50,
+        "4. Chat | Review | Score: -2.5", "   " + "y" * 47 + "...",
+        "5. Unknown | Unavailable | Score: Unavailable", "   ",
+    ]
+    assert records == before
+
+
+@pytest.mark.parametrize("score", [None, "invalid", True, [], {}, float("nan"), float("inf")])
+def test_display_list_marks_unknown_scores_unavailable(score):
+    from phishreport.io import ReportPresenter
+
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_list([{"result": {"priority": "LOW", "score": score}}])
+
+    assert terminal.lines == [
+        "\n=== Saved reports ===", "1. Unknown | Low | Score: Unavailable", "   ",
+    ]
+
+
+@pytest.mark.parametrize("nested,expected", [
+    ({}, "Low | Score: 0"),
+    (None, "Low | Score: 0"),
+    ({"priority": "HIGH"}, "High | Score: Unavailable"),
+    ({"score": 60}, "Unavailable | Score: 60"),
+    ({"historical_metadata": True}, "Unavailable | Score: Unavailable"),
+])
+def test_display_list_selects_nested_result_without_merging_root_fields(nested, expected):
+    from phishreport.io import ReportPresenter
+
+    record = {"channel": "chat", "priority": "LOW", "score": 0, "result": nested}
+    before = deepcopy(record)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_list([record])
+
+    assert terminal.lines == ["\n=== Saved reports ===", f"1. Chat | {expected}", "   "]
+    assert record == before
+
+
 @pytest.mark.parametrize("typed", [False, True], ids=["dictionary", "model"])
 def test_display_result_preserves_guidance_and_validated_trace_order(typed):
     from phishreport.io import ReportPresenter
