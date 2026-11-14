@@ -1971,3 +1971,152 @@ def test_report_to_dict_keeps_nonfinite_raw_extras_without_normalizing_them(valu
     assert report.result.score is None
     assert output["score"] is value and output["unknown"]["items"][0] is value
     assert math.isnan(output["score"]) if math.isnan(value) else output["score"] == value
+
+
+@pytest.mark.parametrize("with_trace", [False, True])
+@pytest.mark.parametrize("storage_type", [JsonReportStorage, SqliteReportStorage])
+def test_report_from_assessment_preserves_plain_v3_through_real_storage(
+    with_trace, storage_type, tmp_path,
+):
+    record = {
+        "channel": " chat ", "message": " Original\n ", "sender": "private",
+        "has_link": True, "link": "private", "has_file": True,
+        "file_name": "private", "ai": {"suspicious": True}, "clicked": True,
+        "exposure": {"clicked": True}, "schema_version": 1,
+    }
+    result = {
+        "assessment_id": " Existing ID ", "score": 60, "priority": "MEDIUM",
+        "reasons": [" Original reason "], "checklist": [],
+    }
+    expected = {
+        "schema_version": 3, "assessment_id": " Existing ID ",
+        "channel": " chat ", "message": " Original\n ", "result": {
+            "score": 60, "priority": "MEDIUM",
+            "reasons": [" Original reason "], "checklist": [],
+        },
+    }
+    if with_trace:
+        trace = [
+            {"rule_name": "Skip", "matched": False, "score": None},
+            {"rule_name": "Winner", "matched": True, "score": 60},
+        ]
+        result.update(matched_rule="Winner", trace=deepcopy(trace))
+        expected["result"].update(matched_rule="Winner", trace=trace)
+    before = deepcopy((record, result))
+
+    report = model.Report.from_assessment(record, result)
+
+    assert (record, result) == before
+    assert report.to_dict() == expected
+    assert report.assessment_id == " Existing ID "
+    assert report.sender is report.exposure is report.has_link is None
+    record["message"] = "changed"
+    result["reasons"].clear()
+    if with_trace:
+        result["trace"][-1]["rule_name"] = "changed"
+    output = report.to_dict()
+    assert output == expected
+    assert json.loads(json.dumps(output, allow_nan=False)) == expected
+    assert _validate_new(output) is output
+    storage = storage_type(tmp_path / "history")
+    storage.write_records([output])
+    restored = storage.read_records()
+    assert restored == [expected]
+    assert model.Report.from_legacy(restored[0]).to_dict() == expected
+
+
+@pytest.mark.parametrize("result", [
+    {}, {"assessment_id": None}, {"assessment_id": True},
+    {"assessment_id": ""}, {"assessment_id": " \n "},
+])
+def test_report_from_assessment_requires_existing_id_before_reading_record(result):
+    before = deepcopy(result)
+    with pytest.raises(ValueError) as caught:
+        model.Report.from_assessment({}, result)
+    assert str(caught.value) == "Assessment result is missing its identifier."
+    assert result == before
+
+
+@pytest.mark.parametrize("record,changes,omitted,error", [
+    ({"channel": "chat", "message": "text"}, {"assessment_id": "x" * 101}, None,
+     "Invalid assessment identifier."),
+    ({"channel": " ", "message": "text"}, {}, None, "Invalid report text: channel"),
+    ({"channel": "chat", "message": None}, {}, None, "Invalid report text: message"),
+    ({"channel": "chat", "message": "text"}, {"score": True}, None,
+     "Invalid stored score."),
+    ({"channel": "chat", "message": "text"}, {}, "checklist", "Invalid stored assessment."),
+    ({"channel": "chat", "message": "text"}, {"reasons": [" "]}, None,
+     "Invalid stored text lists."),
+    ({"channel": "chat", "message": "text"}, {"extra": True}, None,
+     "Invalid stored assessment."),
+    ({"channel": "chat", "message": "text"}, {"matched_rule": "Winner"}, None,
+     "Invalid stored assessment."),
+    ({"channel": "chat", "message": "text"}, {
+        "matched_rule": "Winner",
+        "trace": [{"rule_name": "Winner", "matched": True, "score": 99}],
+    }, None, "Stored rule trace does not match its assessment."),
+])
+def test_report_from_assessment_validates_before_tolerant_constructor(
+    record, changes, omitted, error, monkeypatch,
+):
+    result = {
+        "assessment_id": "id", "score": 60, "priority": "MEDIUM",
+        "reasons": [], "checklist": [], **changes,
+    }
+    if omitted:
+        del result[omitted]
+    before = deepcopy((record, result))
+
+    def forbidden_constructor(self, source):
+        pytest.fail("Invalid assessment reached the tolerant constructor")
+
+    monkeypatch.setattr(model.Report, "__post_init__", forbidden_constructor)
+    with pytest.raises(ValueError) as caught:
+        model.Report.from_assessment(record, result)
+    assert str(caught.value) == error
+    assert (record, result) == before
+
+
+def test_report_from_assessment_uses_new_validation_and_preserves_error_identity(monkeypatch):
+    error = ValueError("Canonical new-report rejection")
+    seen = []
+
+    def reject(payload):
+        seen.append(deepcopy(payload))
+        raise error
+
+    def forbidden(*args):
+        pytest.fail("New assessments must not use stored validation or construct on failure")
+
+    monkeypatch.setattr(model, "_validate_new", reject)
+    monkeypatch.setattr(model, "_validate_stored", forbidden)
+    monkeypatch.setattr(model.Report, "__post_init__", forbidden)
+    with pytest.raises(ValueError) as caught:
+        model.Report.from_assessment({"channel": "chat", "message": "text"}, {
+            "assessment_id": " ID ", "score": 60, "priority": "MEDIUM",
+            "reasons": [], "checklist": [],
+        })
+    assert caught.value is error
+    assert seen == [{
+        "schema_version": 3, "assessment_id": " ID ", "channel": "chat",
+        "message": "text", "result": {
+            "score": 60, "priority": "MEDIUM", "reasons": [], "checklist": [],
+        },
+    }]
+
+
+def test_report_from_assessment_constructs_requested_subclass_at_id_length_boundary():
+    class NewReport(model.Report):
+        pass
+
+    report = NewReport.from_assessment({"channel": "chat", "message": "text"}, {
+        "assessment_id": "x" * 100, "score": 0, "priority": "LOW",
+        "reasons": [], "checklist": [],
+    })
+    assert type(report) is NewReport
+    assert report.assessment_id == "x" * 100
+
+
+def test_report_from_assessment_leaves_missing_record_key_as_programming_error():
+    with pytest.raises(KeyError, match="channel"):
+        model.Report.from_assessment({}, {"assessment_id": "id"})

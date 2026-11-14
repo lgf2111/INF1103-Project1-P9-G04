@@ -133,6 +133,23 @@ class Report:
     ip_addresses: tuple[str, ...] = field(init=False)
 
     @classmethod
+    def from_assessment(cls, record: dict, result: dict) -> "Report":
+        """Validate a current report with its existing ID before owning its data."""
+        assessment_id = result.get("assessment_id")
+        if not isinstance(assessment_id, str) or not assessment_id.strip():
+            raise ValueError("Assessment result is missing its identifier.")
+        saved_result = {key: value for key, value in result.items() if key != "assessment_id"}
+        payload = {
+            SCHEMA_VERSION_KEY: SCHEMA_VERSION,
+            "assessment_id": assessment_id,
+            "channel": record["channel"],
+            "message": record["message"],
+            "result": saved_result,
+        }
+        _validate_new(payload)
+        return cls(payload)
+
+    @classmethod
     def from_legacy(cls, record: dict) -> "Report":
         """Validate stored history before taking an immutable, unchanged snapshot."""
         _validate_stored(record)
