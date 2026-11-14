@@ -18,6 +18,7 @@ from phishreport.model import (
     SCHEMA_VERSION_KEY,
     _freeze_json,
     _validate_legacy,
+    _validate_new,
     _validate_result,
     _validate_rule_trace,
     _validate_summary,
@@ -996,3 +997,89 @@ def test_v1_validator_checks_result_before_extraction_list_contents(version_one_
         _validate_v1(version_one_report)
 
     assert version_one_report == before
+
+
+@pytest.mark.parametrize("shape", [
+    "v2", "v3_feedback", "v3_historical_exposure", "v3_identified_exposure",
+])
+def test_new_report_validator_is_canonical_and_preserves_supported_records(
+    version_two_report, version_three_exposure, shape,
+):
+    record = version_two_report if shape == "v2" else version_three_exposure
+    if shape == "v3_feedback":
+        record = {key: record[key] for key in ("schema_version", "channel", "message", "result")}
+    if shape in {"v3_feedback", "v3_identified_exposure"}:
+        record["assessment_id"] = " stable original ID "
+    record["result"].update(
+        matched_rule="Winner", trace=[{"rule_name": "Winner", "matched": True, "score": 60}],
+    )
+    before = deepcopy(record)
+
+    assert ReportValidator.validate_new is _validate_new
+    assert ReportValidator().validate_new is _validate_new
+    assert _validate_new(record) is record
+    assert ReportValidator.validate_new(record) is record
+    assert ReportValidator().validate_new(record) is record
+    assert record == before
+
+
+@pytest.mark.parametrize("record", [None, [], "report", 3, False])
+def test_new_report_validator_checks_root_before_version(record):
+    with pytest.raises(ValueError) as caught:
+        _validate_new(record)
+
+    assert str(caught.value) == "New reports must be objects."
+
+
+@pytest.mark.parametrize("version", [None, True, False, 2.0, 3.0, "3", 1, 4])
+def test_new_report_validator_rejects_unsupported_versions_before_body_validation(version):
+    record = {"schema_version": version, "message": None}
+    before = deepcopy(record)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_new(record)
+
+    assert str(caught.value) == "Unsupported new report version."
+    assert record == before
+
+
+def test_new_report_validator_does_not_infer_a_missing_schema_version():
+    record = {"channel": "chat", "message": "Historical input"}
+    before = deepcopy(record)
+
+    with pytest.raises(ValueError, match="Unsupported new report version"):
+        _validate_new(record)
+
+    assert record == before and "schema_version" not in record
+
+
+@pytest.mark.parametrize("version", [2, 3])
+def test_new_report_validator_dispatches_only_to_corresponding_canonical_validator(
+    version_two_report, version_three_exposure, monkeypatch, version,
+):
+    v2 = Mock(wraps=model._validate_v2)
+    v3 = Mock(wraps=model._validate_v3)
+    monkeypatch.setattr(model, "_validate_v2", v2)
+    monkeypatch.setattr(model, "_validate_v3", v3)
+    record = version_two_report if version == 2 else version_three_exposure
+
+    assert _validate_new(record) is record
+
+    expected, other = (v2, v3) if version == 2 else (v3, v2)
+    expected.assert_called_once_with(record)
+    other.assert_not_called()
+
+
+@pytest.mark.parametrize("version", [2, 3])
+def test_new_report_validator_preserves_nested_validation_errors_without_mutation(
+    version_two_report, version_three_exposure, version,
+):
+    record = version_two_report if version == 2 else version_three_exposure
+    record["result"]["score"] = True
+    before = deepcopy(record)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_new(record)
+
+    assert str(caught.value) == "Invalid stored score."
+    assert record == before

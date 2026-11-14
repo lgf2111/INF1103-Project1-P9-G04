@@ -6,6 +6,7 @@ from phishreport.model import (
 from phishreport.model import (
     REPORT_FIELDS,
     _validate_legacy,
+    _validate_new,
     _validate_result,
     _validate_rule_trace,
     _validate_summary,
@@ -18,16 +19,7 @@ from phishreport.model import (
 class ReportValidator:
     """Own report schema rules independently of persistence and logging."""
 
-    def validate_new(self, record: dict) -> dict:
-        """Return an unchanged valid v2 or v3 report, or raise ValueError."""
-        if not isinstance(record, dict):
-            raise ValueError("New reports must be objects.")
-        version = record.get("schema_version")
-        if type(version) is not int or version not in (2, 3):
-            raise ValueError("Unsupported new report version.")
-        if version == 3:
-            return self._validate_v3(record)
-        return self._validate_v2(record)
+    validate_new = staticmethod(_validate_new)
 
     def validate_stored(self, record: dict) -> dict:
         """Validate supported history without inventing or normalizing data."""

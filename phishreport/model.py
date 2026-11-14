@@ -51,6 +51,18 @@ def _freeze_json(value: object) -> object:
     raise ValueError(error_message)
 
 
+def _validate_new(record: dict) -> dict:
+    """Return an unchanged valid v2 or v3 report, or raise ValueError."""
+    if not isinstance(record, dict):
+        raise ValueError("New reports must be objects.")
+    version = record.get(SCHEMA_VERSION_KEY)
+    if type(version) is not int or version not in (2, SCHEMA_VERSION):
+        raise ValueError("Unsupported new report version.")
+    if version == SCHEMA_VERSION:
+        return _validate_v3(record)
+    return _validate_v2(record)
+
+
 def _validate_summary(record):
     """Return an unchanged legacy eight-field report after validating its fields.
 
