@@ -1,10 +1,13 @@
 """Exercise main's real PTB dispatch without polling, credentials or network."""
 
 import asyncio
+import importlib
 import json
+import sys
 import threading
 from copy import deepcopy
 from importlib import import_module
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -13,8 +16,10 @@ from telegram.ext import Application
 from telegram.request import BaseRequest
 
 from phishreport.bot.main import main
-from phishreport.data import DataManager
+from phishreport.cli.main import PhishReportApp
+from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
 from phishreport.data.factory import create_report_storage
+from phishreport.io import IOManager, command_plugins
 from phishreport.io.check_command import CheckCommand
 from phishreport.io.help_command import HelpCommand
 
@@ -558,3 +563,133 @@ def test_main_shared_commands_ignore_disallowed_chat(monkeypatch, tmp_path):
         assert not any(e == "sendMessage" for e, _ in request.calls)
 
     asyncio.run(asyncio.wait_for(scenario(), 10))
+
+
+@pytest.fixture
+def one_file_command(tmp_path, monkeypatch):
+    """Install exactly one trusted module for both production transport paths."""
+    module_name = "phishreport.io.command_plugins.zz_shared_one_file_probe"
+    attribute = module_name.rsplit(".", 1)[-1]
+    assert module_name not in sys.modules
+    (tmp_path / f"{attribute}.py").write_text(
+        "from phishreport.io.commands import Command, CommandReply\n"
+        "EXECUTIONS = []\n"
+        "class ProbeCommand(Command):\n"
+        "    name = 'one_file_probe'\n"
+        "    help_text = 'One file shared by both transports'\n"
+        "    def execute(self, request):\n"
+        "        EXECUTIONS.append((request.channel, request.text, type(self)))\n"
+        "        return CommandReply('Echo: ' + request.text, 'text')\n"
+        "def create_command(capabilities):\n"
+        "    return ProbeCommand()\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(command_plugins, "__path__", [*command_plugins.__path__, str(tmp_path)])
+    importlib.invalidate_caches()
+    try:
+        yield import_module(module_name)
+    finally:
+        sys.modules.pop(module_name, None)
+        if hasattr(command_plugins, attribute):
+            delattr(command_plugins, attribute)
+        importlib.invalidate_caches()
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_one_file_extends_cli_telegram_help_and_menu_without_changing_free_text(
+    monkeypatch, tmp_path, backend, one_file_command,
+):
+    """One temporary command file requires no transport registration changes."""
+    payload = "Mixed CASE  payload "
+    seed = {
+        "schema_version": 2, "channel": "chat", "message": "Existing history",
+        "result": {"score": 10, "priority": "LOW", "reasons": [], "checklist": []},
+    }
+    storage = JsonReportStorage if backend == "json" else SqliteReportStorage
+    cli_data = DataManager(storage(tmp_path / "cli_history"))
+    cli_data.save(seed)
+    cli_save = Mock(wraps=cli_data.save)
+    monkeypatch.setattr(cli_data, "save", cli_save)
+    terminal = Mock()
+    terminal.read.side_effect = ["  /one_file_probe   " + payload, "/help", "6"]
+    cli_ai, cli_logic = Mock(), Mock()
+    module = import_module("phishreport.bot.main")
+    monkeypatch.setattr(module.AppLogging, "setup", lambda: True)
+    cli_app = PhishReportApp(
+        IOManager(terminal), cli_ai, cli_logic, cli_data, env_loader=Mock(),
+    )
+
+    cli_app.run()
+
+    terminal.write.assert_any_call("Echo: " + payload)
+    cli_help, = [entry.args[0] for entry in terminal.write.call_args_list
+                 if "/one_file_probe:" in str(entry.args[0])]
+    assert cli_help.count("/one_file_probe: One file shared by both transports") == 1
+    cli_ai.assess.assert_not_called()
+    cli_logic.evaluate.assert_not_called()
+    cli_save.assert_not_called()
+    assert cli_data.load(strict=True) == [seed]
+    assert one_file_command.EXECUTIONS == [("cli", payload, one_file_command.ProbeCommand)]
+
+    async def scenario():
+        app, manager, ai, request, errors = offline_application(monkeypatch, tmp_path, backend)
+        manager._data_manager.save(seed)
+        bot_save = Mock(wraps=manager._data_manager.save)
+        monkeypatch.setattr(manager._data_manager, "save", bot_save)
+        builder = Mock(wraps=manager._record_builder)
+        monkeypatch.setattr(manager, "_record_builder", builder)
+        startup = SimpleNamespace(
+            bot=SimpleNamespace(set_my_commands=AsyncMock(), username="offline_bot"), bot_data={},
+        )
+        monitor = Mock(run=AsyncMock())
+        with patch.object(module, "EmailMonitor", return_value=monitor):
+            await app.post_init(startup)
+            await startup.bot_data["monitor_task"]
+            await app.post_shutdown(startup)
+        menu = startup.bot.set_my_commands.await_args.args[0]
+        probe_entries = [entry for entry in menu if entry.command == "one_file_probe"]
+        assert len(probe_entries) == 1
+        assert probe_entries[0].description == "One file shared by both transports"
+        assert one_file_command.EXECUTIONS == [("cli", payload, one_file_command.ProbeCommand)]
+        ai.assess.assert_not_called()
+        builder.build.assert_not_called()
+
+        await app.initialize()
+        await app.start()
+        try:
+            await app.process_update(message(app.bot, 100, "/one_file_probe\t" + payload))
+            await request.until(lambda: sum(e == "sendMessage" for e, _ in request.calls) == 1)
+            echo, = [data["text"] for e, data in request.calls if e == "sendMessage"]
+            assert echo == "Echo: " + payload
+            await app.process_update(message(app.bot, 101, "/help"))
+            await request.until(lambda: sum(e == "sendMessage" for e, _ in request.calls) == 2)
+            bot_help = [data["text"] for e, data in request.calls if e == "sendMessage"][-1]
+            assert bot_help.count("/one_file_probe: One file shared by both transports") == 1
+            assert one_file_command.EXECUTIONS == [
+                ("cli", payload, one_file_command.ProbeCommand),
+                ("telegram", payload, one_file_command.ProbeCommand),
+            ]
+            ai.assess.assert_not_called()
+            builder.build.assert_not_called()
+            assert not manager._sessions
+            bot_save.assert_not_called()
+            assert manager._data_manager.load(strict=True) == [seed]
+
+            original = "  Untouched plain CASE\nKeep  spaces  "
+            await app.process_update(message(app.bot, 102, original))
+            await request.until(lambda: bool(manager._sessions) and all(
+                session.reply_message_id is not None for session in manager._sessions.values()
+            ))
+            builder.build.assert_called_once_with(original)
+            ai.assess.assert_called_once()
+            session, = manager._sessions.values()
+            assert session.record["message"] == original and session.findings == FINDINGS
+            assert not session.completed and not session.saved
+            bot_save.assert_not_called()
+            assert manager._data_manager.load(strict=True) == [seed]
+        finally:
+            await app.stop()
+            await app.shutdown()
+        assert not errors
+
+    asyncio.run(asyncio.wait_for(scenario(), 15))

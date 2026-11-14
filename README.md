@@ -414,14 +414,53 @@ observed evidence; offline tests alone do not establish those results.
 
 #### Extend commands or add a transport-specific handler
 
-For a shared operation, implement `Command` in a new I/O module and register an
-instance with the required services in both adapters' command catalogs. Integrate
-its reply kind and lifecycle with the adapters: Telegram currently handles Help
-and Status separately and expects other recognized commands to produce an
-assessment outcome. The router dispatch logic does not need to change, but
-registration alone does not enable an arbitrary operation. Adding a file alone
-does not discover or enable a command. Update Telegram's command-menu metadata
-separately when the command should appear there.
+For a shared operation using the existing capabilities and execution policies,
+add one public `.py` file directly under `phishreport/io/command_plugins/`.
+`command_catalog.py` discovers immediate modules in that fixed internal package
+in filename order; private modules and subpackages are excluded. Each module
+exports `create_command(capabilities) -> Command`. Both adapters discover the
+same commands, Help reads their live catalog, and Telegram builds command-menu
+metadata automatically at startup. Restart the bot to refresh its menu.
+
+For example, save this as `phishreport/io/command_plugins/ping.py`:
+
+```python
+from phishreport.io.command_catalog import CommandCapabilities
+from phishreport.io.commands import Command, CommandReply, CommandRequest
+
+
+class PingCommand(Command):
+    name = "ping"
+    help_text = "Check that the conversation is responding"
+
+    def execute(self, request: CommandRequest) -> CommandReply:
+        return CommandReply("Pong", "text")
+
+
+def create_command(capabilities: CommandCapabilities) -> Command:
+    return PingCommand()
+```
+
+Factories receive frozen `CommandCapabilities` with record preparation,
+assessment, session status, report count and the live command catalog. Construct
+the command without calling these services, performing I/O or mutating the
+catalog during discovery. These are trusted internal modules, not arbitrary
+external plugins; import, factory and registration failures are not silently
+ignored.
+
+The default `CommandPolicy` uses ordinary reply execution and a generic command
+failure message. Commands may select the existing assessment or history failure
+policies. Assessment execution must publish a `CheckOutcome` and an assessment
+reply; Telegram also requires retained AI findings for exposure rescoring. An
+ordinary reply's `kind` alone cannot request persistence. New capabilities or
+transport-specific interaction flows still require adapter integration.
+
+Use unique lowercase command names and reserve `start`, `linkgmail`, `checkmail`
+and `unlinkgmail` for the native Telegram handlers. Telegram startup validates
+names of at most 32 characters, descriptions of 1–256 characters, and a maximum
+of 100 menu entries including the native commands, following its
+[command metadata](https://core.telegram.org/bots/api#botcommand) and
+[menu limits](https://core.telegram.org/bots/api#setmycommands).
 
 For Telegram-only interactions, add an async method to `TelegramIOManager` in
 `phishreport/bot/handlers.py`, keep the private-chat check, and register its handler
@@ -455,10 +494,15 @@ For the shared-command contract, import-direction and transport checks in an
 activated Python 3.12 environment, run:
 
 ```text
-python -m pytest tests/core/test_commands.py tests/core/test_check_command.py tests/core/test_help_command.py tests/core/test_status_command.py -q
-python -m pytest tests/cli/test_cli_check_command.py tests/cli/test_cli_menu_commands.py tests/cli/test_cli_status_command.py -q
-python -m pytest tests/bot/test_bot_shared_commands.py tests/bot/test_bot_status_command.py tests/bot/test_dispatch.py -q
+python -m pytest tests/core/test_commands.py tests/core/test_command_policy.py tests/core/test_command_catalog.py tests/core/test_check_command.py tests/core/test_help_command.py tests/core/test_status_command.py tests/core/test_check_command_factory.py tests/core/test_help_command_factory.py tests/core/test_status_command_factory.py -q
+python -m pytest tests/cli/test_cli_check_command.py tests/cli/test_cli_menu_commands.py tests/cli/test_cli_status_command.py tests/cli/test_cli_discovered_commands.py -q
+python -m pytest tests/bot/test_bot_shared_commands.py tests/bot/test_bot_status_command.py tests/bot/test_bot_discovered_commands.py tests/bot/test_bot_command_menu.py tests/bot/test_dispatch.py -q
 ```
+
+The dispatch suite includes combined discovery checks with a new one-file
+command, both transports, Help, Telegram menu metadata and JSON/SQLite history.
+Offline test results do not establish a live Telegram demo, container behavior
+or successful remote CI for a pushed revision.
 
 For focused exposure and persistence checks in an activated Python 3.12
 environment, run:
