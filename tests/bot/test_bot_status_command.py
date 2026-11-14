@@ -124,18 +124,16 @@ def test_bot_status_read_failure_is_sanitized_without_zero_fallback(error_type):
     assert not manager._sessions
 
 
-def test_bot_status_metadata_and_help_list_it_once_without_history_reads():
-    from phishreport.bot.main import COMMANDS
-
-    metadata = {command.command: command.description for command in COMMANDS}
-    assert metadata[StatusCommand.name] == StatusCommand.help_text
+def test_bot_help_lists_status_metadata_once_without_history_reads():
     data = Mock()
     manager = TelegramIOManager(data)
     update = status_update("/help")
 
     asyncio.run(manager.assess_message(update, None))
 
-    assert update.effective_message.reply_text.await_args.args[0].count("/status:") == 1
+    assert update.effective_message.reply_text.await_args.args[0].count(
+        f"/status: {StatusCommand.help_text}"
+    ) == 1
     data.load.assert_not_called()
 
 

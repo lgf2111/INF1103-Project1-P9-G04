@@ -471,10 +471,6 @@ def test_main_shared_command_dispatch_preserves_content_and_exposure_save(
 
 def test_main_help_dispatch_uses_shared_metadata_without_assessment(monkeypatch, tmp_path):
     async def scenario():
-        module = import_module("phishreport.bot.main")
-        catalog = {command.command: command.description for command in module.COMMANDS}
-        assert catalog[CheckCommand.name] == CheckCommand.help_text
-        assert catalog[HelpCommand.name] == HelpCommand.help_text
         app, manager, ai, request, errors = offline_application(monkeypatch, tmp_path, "json")
         await app.initialize()
         await app.start()
@@ -482,7 +478,8 @@ def test_main_help_dispatch_uses_shared_metadata_without_assessment(monkeypatch,
             await app.process_update(message(app.bot, 100, "/help"))
             await request.until(lambda: any(e == "sendMessage" for e, _ in request.calls))
             reply = next(data["text"] for e, data in request.calls if e == "sendMessage")
-            assert "/check:" in reply and "/help:" in reply
+            assert f"/check: {CheckCommand.help_text}" in reply
+            assert f"/help: {HelpCommand.help_text}" in reply
             assert not manager._sessions and not manager._data_manager.load(strict=True)
             ai.assess.assert_not_called()
         finally:

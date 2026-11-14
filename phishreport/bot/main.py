@@ -20,14 +20,12 @@ from phishreport.assessment import AssessmentService
 from phishreport.bot.gmail import AccountStore
 from phishreport.bot.gmail_handlers import GmailLinkHandlers
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
-from phishreport.bot.messages import EXPOSURE_CALLBACK_PREFIX
+from phishreport.bot.messages import EXPOSURE_CALLBACK_PREFIX, ChatRecordBuilder
 from phishreport.bot.monitor import EmailMonitor
 from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
 from phishreport.feedback import FeedbackService, FeedbackStore
-from phishreport.io.check_command import CheckCommand
-from phishreport.io.help_command import HelpCommand
-from phishreport.io.status_command import StatusCommand
+from phishreport.io.command_catalog import CommandCapabilities, discover_commands
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
 
@@ -36,9 +34,6 @@ COMMANDS = [
     BotCommand("linkgmail", "Link Gmail to watch for phishing emails"),
     BotCommand("checkmail", "Check all unread emails for phishing now"),
     BotCommand("unlinkgmail", "Unlink Gmail and delete the saved password"),
-    BotCommand(CheckCommand.name, CheckCommand.help_text),
-    BotCommand(HelpCommand.name, HelpCommand.help_text),
-    BotCommand(StatusCommand.name, StatusCommand.help_text),
 ]
 
 
@@ -99,7 +94,27 @@ def main() -> int:
     AppLogging.setup()
 
     async def start_monitor(application: Application) -> None:
-        await application.bot.set_my_commands(COMMANDS)
+        builder = ChatRecordBuilder()
+        catalog = discover_commands(CommandCapabilities(
+            prepare_record=lambda request: builder.build(request.text),
+            assess_record=assessment.assess_with_findings,
+            session_status=lambda request: "Telegram startup",
+            report_count=lambda: len(data_manager.load(strict=True)),
+        ))
+        entries = list(COMMANDS)
+        names = {entry.command for entry in entries}
+        for command in catalog:
+            if command.name in names:
+                raise ValueError(f"Shared command conflicts with native command: {command.name}")
+            if len(command.name) > 32:
+                raise ValueError("Telegram command names must contain at most 32 characters.")
+            if not isinstance(command.help_text, str) or not 1 <= len(command.help_text) <= 256:
+                raise ValueError("Telegram command descriptions must contain 1-256 characters.")
+            entries.append(BotCommand(command.name, command.help_text))
+            names.add(command.name)
+        if len(entries) > 100:
+            raise ValueError("Telegram supports at most 100 menu commands.")
+        await application.bot.set_my_commands(entries)
         monitor = EmailMonitor(
             application.bot,
             store,
