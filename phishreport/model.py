@@ -1,5 +1,6 @@
 """Shared report contract foundations independent of storage and transports."""
 
+import math
 from collections.abc import Mapping
 from types import MappingProxyType
 
@@ -24,6 +25,56 @@ def _freeze_json(value: object) -> object:
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     raise ValueError(error_message)
+
+
+def _validate_legacy(record):
+    """Return historical data after checking the fields that are present.
+
+    Missing fields and unknown fields are retained unchanged. Validate both
+    root and nested outcomes because either can reach the history display.
+    Raise ValueError for unsafe stored field types; do not reassess the report.
+    """
+    for key in ("channel", "sender", "message", "link", "file_name", "submitted_category"):
+        value = record.get(key)
+        if value is not None and not isinstance(value, str):
+            raise ValueError("Invalid legacy text field: " + key)
+    for key in ("has_link", "has_file", "clicked", "downloaded"):
+        value = record.get(key)
+        if value is not None and type(value) is not bool:
+            raise ValueError("Invalid legacy action field: " + key)
+
+    result = record.get("result")
+    if result is not None and not isinstance(result, dict):
+        raise ValueError("Invalid legacy assessment.")
+
+    # Both historical outcome locations reach the public display functions.
+    for outcome in (record, result if result is not None else {}):
+        priority = outcome.get("priority")
+        if priority is not None and not isinstance(priority, str):
+            raise ValueError("Invalid legacy priority.")
+        value = outcome.get("score")
+        if value is not None and type(value) not in (int, float):
+            raise ValueError("Invalid legacy score.")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("Invalid nonfinite legacy score.")
+        for key in ("reasons", "checklist"):
+            if key in outcome and (
+                not isinstance(outcome[key], list)
+                or any(not isinstance(item, str) for item in outcome[key])
+            ):
+                raise ValueError("Invalid legacy assessment list: " + key)
+
+    if "details" in record:
+        details = record["details"]
+        if not isinstance(details, dict):
+            raise ValueError("Invalid legacy details.")
+        for key in ("emails", "phone_numbers", "ip_addresses"):
+            if key in details and (
+                not isinstance(details[key], list)
+                or any(not isinstance(item, str) for item in details[key])
+            ):
+                raise ValueError("Invalid legacy extraction list: " + key)
+    return record
 
 
 def _validate_v2(record):

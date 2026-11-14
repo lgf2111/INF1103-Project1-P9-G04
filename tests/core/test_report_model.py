@@ -14,6 +14,7 @@ from phishreport.model import (
     SCHEMA_VERSION,
     SCHEMA_VERSION_KEY,
     _freeze_json,
+    _validate_legacy,
     _validate_result,
     _validate_rule_trace,
     _validate_v2,
@@ -646,3 +647,100 @@ def test_v3_validator_uses_canonical_result_validation_for_each_result_branch(
     record["result"]["trace"] = [{"rule_name": "Winner", "matched": True, "score": 59}]
     with pytest.raises(ValueError, match="Stored rule trace does not match"):
         _validate_v3(record)
+
+
+@pytest.mark.parametrize("record", [
+    {},
+    {"message": None, "result": None, "clicked": None, "has_link": None},
+    {"channel": "", "sender": None, "message": "  ", "priority": "custom historical label",
+     "score": -12.5, "reasons": ["", "  "], "checklist": [],
+     "details": {"emails": [""], "unknown": {"values": [1, None]}},
+     "unknown_extra": {"values": ["unchanged", None]}},
+    {"score": 150, "result": {"score": -100, "priority": "", "reasons": [""],
+                               "unknown_extra": {"values": [False]}}},
+])
+def test_legacy_validator_preserves_optional_and_unknown_historical_values(record):
+    before = deepcopy(record)
+
+    assert _validate_legacy(record) is record
+    assert ReportValidator._validate_legacy is _validate_legacy
+    assert ReportValidator()._validate_legacy is _validate_legacy
+    assert ReportValidator().validate_stored(record) is record
+    assert record == before
+    assert ("result" in record) is ("result" in before)
+    assert "assessment_id" not in record
+
+
+@pytest.mark.parametrize("location", ["root", "nested"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+def test_legacy_validator_rejects_known_nonfinite_scores_at_either_location(location, value):
+    outcome = {"score": value}
+    record = outcome if location == "root" else {"result": outcome}
+    before = deepcopy(record)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_legacy(record)
+
+    assert str(caught.value) == "Invalid nonfinite legacy score."
+    assert record == before
+
+
+def test_legacy_validator_does_not_reinterpret_nonfinite_unknown_extra_fields():
+    value = float("nan")
+    record = {"unknown_extra": {"unrecognized_value": value}, "score": 0}
+
+    assert _validate_legacy(record) is record
+    frozen = _freeze_json(record)
+    assert frozen["unknown_extra"]["unrecognized_value"] is value
+
+
+@pytest.mark.parametrize("location", ["root", "nested"])
+@pytest.mark.parametrize("updates,expected", [
+    ({"score": True}, "Invalid legacy score."),
+    ({"score": "60"}, "Invalid legacy score."),
+    ({"priority": 1}, "Invalid legacy priority."),
+    ({"reasons": None}, "Invalid legacy assessment list: reasons"),
+    ({"checklist": ()}, "Invalid legacy assessment list: checklist"),
+    ({"reasons": ["valid", 1]}, "Invalid legacy assessment list: reasons"),
+])
+def test_legacy_validator_checks_root_and_nested_outcomes_without_mutation(
+    location, updates, expected,
+):
+    record = deepcopy(updates) if location == "root" else {"result": deepcopy(updates)}
+    before = deepcopy(record)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_legacy(record)
+
+    assert str(caught.value) == expected
+    assert record == before
+
+
+@pytest.mark.parametrize("record,expected", [
+    ({"sender": 1}, "Invalid legacy text field: sender"),
+    ({"submitted_category": False}, "Invalid legacy text field: submitted_category"),
+    ({"clicked": 1}, "Invalid legacy action field: clicked"),
+    ({"has_file": "yes"}, "Invalid legacy action field: has_file"),
+    ({"result": []}, "Invalid legacy assessment."),
+    ({"details": None}, "Invalid legacy details."),
+    ({"details": {"emails": "not a list"}}, "Invalid legacy extraction list: emails"),
+    ({"details": {"phone_numbers": [None]}}, "Invalid legacy extraction list: phone_numbers"),
+    ({"details": {"ip_addresses": ("127.0.0.1",)}}, "Invalid legacy extraction list: ip_addresses"),
+])
+def test_legacy_validator_rejects_unsafe_known_field_types_without_mutation(record, expected):
+    before = deepcopy(record)
+
+    with pytest.raises(ValueError) as caught:
+        _validate_legacy(record)
+
+    assert str(caught.value) == expected
+    assert record == before
+
+
+def test_legacy_validator_keeps_validation_order_and_dict_precondition():
+    record = {"message": 1, "score": True}
+    with pytest.raises(ValueError, match="Invalid legacy text field: message"):
+        _validate_legacy(record)
+
+    with pytest.raises(AttributeError):
+        _validate_legacy(None)
