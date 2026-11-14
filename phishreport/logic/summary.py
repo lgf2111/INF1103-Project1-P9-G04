@@ -42,7 +42,7 @@ class StoredReport:
 
     @property
     def channel(self) -> str | None:
-        value = self._record.get("channel")
+        value = self._report.channel
         return value.lower() if isinstance(value, str) else None
 
     @property
