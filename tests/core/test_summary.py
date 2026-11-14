@@ -88,6 +88,47 @@ def test_stored_report_ignores_malformed_values_instead_of_guessing():
     assert (report.channel, report.priority, report.score) == (None, None, None)
 
 
+@pytest.mark.parametrize("version", [None, 1, 2, 3])
+def test_stored_report_keeps_a_snapshot_when_source_history_changes(version):
+    record = {
+        "channel": "SMS", "clicked": True, "downloaded": False,
+        "submitted_category": "password",
+        "result": {"score": 45, "priority": "medium"},
+        "exposure": {"clicked": True, "downloaded": False,
+                     "submitted_category": "password", "disclosure_answered": True},
+    }
+    if version is not None:
+        record["schema_version"] = version
+    report = StoredReport(record)
+
+    record.update(channel="email", clicked=False, downloaded=True, submitted_category=None)
+    record["result"].update(score=90, priority="HIGH")
+    record["exposure"].update(clicked=False, downloaded=True, submitted_category=None,
+                              disclosure_answered=False)
+
+    assert (report.channel, report.priority, report.score) == ("sms", "MEDIUM", 45)
+    assert (report.clicked, report.downloaded, report.submitted_credentials) == (True, False, True)
+
+
+@pytest.mark.parametrize("result", [["invalid"], "invalid", 1, True])
+@pytest.mark.parametrize("root_outcome", [{}, {"score": 10, "priority": "low"}])
+def test_stored_report_tolerates_nonmapping_result_using_available_root_outcome(
+    result, root_outcome,
+):
+    report = StoredReport({"result": result, **root_outcome})
+
+    expected = ("LOW", 10) if root_outcome else (None, None)
+    assert (report.priority, report.score) == expected
+
+
+@pytest.mark.parametrize("score", [80.0, 80.5, float("inf"), float("nan"), True])
+def test_stored_report_summary_ignores_noninteger_scores(score):
+    report = StoredReport({"result": {"score": score, "priority": "high"}})
+
+    assert report.score is None
+    assert ScoreStatistics().compute([report]) == [("Scores", "None recorded")]
+
+
 def _exposure_report(clicked=None, downloaded=None, category=None, answered=False):
     return AssessmentService.build_exposure_report(
         {"channel": "chat", "message": "Original message", "sender": "@sender",

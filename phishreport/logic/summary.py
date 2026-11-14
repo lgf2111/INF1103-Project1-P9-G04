@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from dataclasses import dataclass
 
+from phishreport.model import SCHEMA_VERSION, Report
+
 PRIORITIES = ("HIGH", "MEDIUM", "LOW")
 CHANNELS = ("email", "sms", "chat")
 CHANNEL_LABELS = {"email": "Email", "sms": "SMS", "chat": "Chat"}
@@ -18,23 +20,25 @@ class StoredReport:
     """
 
     def __init__(self, record: dict) -> None:
-        self._record = record
-        if record.get("schema_version") == 3:
-            exposure = record.get("exposure")
-            if not isinstance(exposure, dict):
-                exposure = {}
-            # Project only confirmed actions; nested extras cannot replace metadata.
-            self._record = {
-                **record,
-                "clicked": exposure.get("clicked") is True,
-                "downloaded": exposure.get("downloaded") is True,
-                "submitted_category": (
-                    exposure.get("submitted_category")
-                    if exposure.get("disclosure_answered") is True
-                    else None
-                ),
-            }
-        self._result = record.get("result") or record
+        self._report = Report(record)
+        exposure = self._report.exposure
+        category = exposure.submitted_category if exposure is not None else None
+        if self._report.schema_version == SCHEMA_VERSION and (
+            exposure is None or exposure.disclosure_answered is not True
+        ):
+            category = None
+        # Temporary bridge until the properties read the canonical view directly.
+        self._record = {
+            "channel": self._report.channel,
+            "clicked": exposure is not None and exposure.clicked is True,
+            "downloaded": exposure is not None and exposure.downloaded is True,
+            "submitted_category": category,
+        }
+        result = self._report.result
+        self._result = {
+            "score": result.score if result is not None else None,
+            "priority": result.priority if result is not None else None,
+        }
 
     @property
     def channel(self) -> str | None:
