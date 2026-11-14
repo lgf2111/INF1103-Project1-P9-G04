@@ -36,6 +36,82 @@ def test_report_model_owns_schema_version_constants():
     assert SCHEMA_VERSION_KEY == "schema_version"
 
 
+def test_exposure_answers_defaults_preserve_unknown_as_distinct_from_confirmed_flags():
+    answers = model.ExposureAnswers()
+
+    assert answers.clicked is None
+    assert answers.downloaded is None
+    assert answers.submitted_category is None
+    assert answers.disclosure_answered is None
+    assert answers != model.ExposureAnswers(False, False, None, False)
+    assert answers != model.ExposureAnswers(True, True, None, True)
+
+
+@pytest.mark.parametrize("clicked,downloaded,category,disclosure_answered", [
+    (None, None, None, None),
+    (False, False, None, False),
+    (True, True, "password", True),
+    (None, False, "otp", None),
+    (True, None, " Legacy category ", False),
+    (False, True, "", None),
+    (None, True, " ", True),
+])
+def test_exposure_answers_preserves_independent_nullable_flags_and_historical_categories(
+    clicked, downloaded, disclosure_answered, category,
+):
+    answers = model.ExposureAnswers(clicked, downloaded, category, disclosure_answered)
+
+    assert answers.clicked is clicked
+    assert answers.downloaded is downloaded
+    assert answers.submitted_category is category
+    assert answers.disclosure_answered is disclosure_answered
+
+
+def test_exposure_answers_is_frozen_and_slotted():
+    answers = model.ExposureAnswers(False, True, "password", None)
+
+    assert not hasattr(answers, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        answers.clicked = True
+    with pytest.raises(FrozenInstanceError):
+        del answers.submitted_category
+
+
+@pytest.mark.parametrize("field", ["clicked", "downloaded", "disclosure_answered"])
+@pytest.mark.parametrize("value", [
+    0, 1, 0.0, 1.0, "private", [], {}, (), {"private"}, bytearray(b"private"),
+])
+def test_exposure_answers_rejects_boolean_lookalikes_and_collections(field, value):
+    with pytest.raises(ValueError) as caught:
+        model.ExposureAnswers(**{field: value})
+
+    assert str(caught.value) == "Invalid exposure answer flag."
+
+
+@pytest.mark.parametrize("value", [
+    False, True, 0, 1.0, [], {}, (), {"private"}, bytearray(b"private"), b"private",
+])
+def test_exposure_answers_rejects_non_string_categories_with_safe_errors(value):
+    with pytest.raises(ValueError) as caught:
+        model.ExposureAnswers(submitted_category=value)
+
+    assert str(caught.value) == "Invalid exposure answer category."
+
+
+def test_exposure_answers_never_formats_rejected_values():
+    class Unprintable:
+        def __repr__(self):
+            raise AssertionError("Private value formatted")
+
+        def __str__(self):
+            raise AssertionError("Private value formatted")
+
+    for field in ("clicked", "downloaded", "submitted_category", "disclosure_answered"):
+        with pytest.raises(ValueError) as caught:
+            model.ExposureAnswers(**{field: Unprintable()})
+        assert "Private" not in str(caught.value)
+
+
 def test_assessment_result_requires_nullable_score_and_priority_and_is_frozen_slotted():
     result = model.AssessmentResult(score=None, priority=None)
 

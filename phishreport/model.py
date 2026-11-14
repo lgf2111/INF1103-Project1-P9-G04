@@ -51,6 +51,24 @@ class RuleTrace:
 
 
 @dataclass(frozen=True, slots=True)
+class ExposureAnswers:
+    """Preserve independent exposure observations, including historical labels."""
+
+    clicked: bool | None = None
+    downloaded: bool | None = None
+    submitted_category: str | None = None
+    disclosure_answered: bool | None = None
+
+    def __post_init__(self) -> None:
+        """Validate immutable scalar types without inferring or normalizing answers."""
+        for value in (self.clicked, self.downloaded, self.disclosure_answered):
+            if value is not None and type(value) is not bool:
+                raise ValueError("Invalid exposure answer flag.")
+        if self.submitted_category is not None and not isinstance(self.submitted_category, str):
+            raise ValueError("Invalid exposure answer category.")
+
+
+@dataclass(frozen=True, slots=True)
 class AssessmentResult:
     """Own assessment values while preserving supported historical outcomes."""
 
