@@ -11,7 +11,7 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 | Path | Purpose |
 | --- | --- |
 | `phishreport/io_manager.py` | Compatibility functions for the I/O manager. |
-| `phishreport/io/` | Console adapter, input coordinator, email parsing, folder selection and report presentation. |
+| `phishreport/io/` | Console adapter, input coordinator, email parsing, folder selection and assessment document renderers. |
 | `phishreport/ai_manager.py` | Compatibility functions for AI prompting, requests and validation. |
 | `phishreport/ai/` | AI assessment coordinator, prompt builder, completion client and response validator. |
 | `phishreport/logic_manager.py` | Apply assessment rules, scoring and routing. |
@@ -37,9 +37,12 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 The CLI uses an `IOManager` instance to collect manual input and coordinate folder
 imports and browser uploads. All three paths use the same record builder.
 `EmlReader` parses email from disk or uploaded bytes. `EmlFolderPicker` handles
-folder selection, and `ReportPresenter` formats assessments and saved reports.
-The manager, picker, and presenter use the `Terminal` interface, which tests can
-exercise with scripted input and captured output.
+folder selection. `AssessmentRenderer` builds ordered, neutral assessment
+sections, and `PlainTextRenderer` formats them for the CLI and Telegram result
+replies. `HTMLAlertRenderer` renders the shared assessment fields in Gmail alert
+markup. `ReportPresenter` writes console results and continues to format saved
+reports. Telegram adapters keep HTML escaping, alert clipping, exposure notices
+and reply-length limits at the transport boundary.
 
 ### AI assessment
 

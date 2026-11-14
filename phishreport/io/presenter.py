@@ -1,5 +1,7 @@
 """Render assessments and saved reports through a terminal."""
 
+from .plain_text_renderer import PlainTextRenderer
+from .render import AssessmentRenderer
 from .terminal import Terminal
 
 
@@ -8,38 +10,17 @@ class ReportPresenter:
 
     def __init__(self, terminal: Terminal):
         self._terminal = terminal
+        self._assessment_renderer = AssessmentRenderer()
+        self._text_renderer = PlainTextRenderer()
 
     def display_result(self, result: dict | None) -> None:
         """Display a validated outcome or an explicit unavailable assessment."""
-        if not result:
-            self._terminal.write("\nNo assessment available.")
-            return
-
-        priority = (result.get("priority") or "unavailable").replace("_", " ").title()
-        self._terminal.write("\n=== Assessment ===")
-        self._terminal.write("Priority:", priority)
-        self._terminal.write("Rule-based score:", result.get("score", "Unavailable"))
-        if result.get("matched_rule"):
-            self._terminal.write("Matched rule:", result["matched_rule"])
-
-        trace = result.get("trace") or []
-        if trace:
-            self._terminal.write("\nRule evaluation trace:")
-            for step in trace:
-                rule_name = step.get("rule_name", "Unknown rule")
-                status = "matched" if step.get("matched") else "not matched"
-                score = step.get("score")
-                score_text = f" (score: {score})" if score is not None else ""
-                self._terminal.write(f" - {rule_name}: {status}{score_text}")
-
-        if result.get("reasons"):
-            self._terminal.write("\nReasons:")
-            for reason in result["reasons"]:
-                self._terminal.write(" -", reason)
-
-        self._terminal.write("\nRecommended actions:")
-        for number, step in enumerate(result.get("checklist", []), start=1):
-            self._terminal.write(f"{number}. {step}")
+        document = self._assessment_renderer.render(result)
+        rendered = self._text_renderer.render(document)
+        for section_number, section in enumerate(rendered.split("\n\n")):
+            for line_number, line in enumerate(section.split("\n")):
+                prefix = "\n" if line_number == 0 else ""
+                self._terminal.write(prefix + line)
 
     def display_record(self, record: dict) -> None:
         """Display a validated saved record, preserving absent historical fields."""
