@@ -47,7 +47,8 @@ class StoredReport:
 
     @property
     def priority(self) -> str | None:
-        value = self._result.get("priority")
+        result = self._report.result
+        value = result.priority if result is not None else None
         return value.upper() if isinstance(value, str) else None
 
     @property
