@@ -31,6 +31,7 @@ from phishreport.data import DataManager
 from phishreport.io.check_command import CheckOutcome
 from phishreport.io.command_catalog import CommandCapabilities, discover_commands
 from phishreport.io.commands import CommandRequest, CommandRouter
+from phishreport.model import SCHEMA_VERSION, Report
 
 CHECK_CONNECTION = "check_connection"
 
@@ -555,9 +556,10 @@ class TelegramIOManager:
 
     def _load_assessment_result(self, assessment_id: str) -> dict:
         """Load one v3 report by ID and return its result with the ID attached."""
-        for report in self._data_manager.load(strict=True):
-            if report.get("assessment_id") == assessment_id and report.get("schema_version") == 3:
-                return {**report["result"], "assessment_id": assessment_id}
+        for source in self._data_manager.load(strict=True):
+            report = Report(source)
+            if report.assessment_id == assessment_id and report.schema_version == SCHEMA_VERSION:
+                return {**report.to_dict()["result"], "assessment_id": assessment_id}
         raise ValueError("Assessment was not found.")
 
     @staticmethod

@@ -54,6 +54,81 @@ def callback_with(data, chat_id=ALLOWED_CHAT_ID, chat_type="private"):
     )
 
 
+@pytest.mark.parametrize("with_trace", [False, True])
+def test_saved_assessment_lookup_returns_an_independent_unchanged_result(with_trace):
+    saved_result = {
+        "score": 60,
+        "priority": "MEDIUM",
+        "reasons": ["Original reason."],
+        "checklist": ["Original action."],
+    }
+    if with_trace:
+        saved_result.update({
+            "matched_rule": "SuspiciousCredentialRule",
+            "trace": [{"rule_name": "SuspiciousCredentialRule", "matched": True, "score": 60}],
+        })
+    source = {
+        "schema_version": 3,
+        "assessment_id": "saved-assessment",
+        "channel": "chat",
+        "message": "Original message.",
+        "result": saved_result,
+    }
+    manager, data = build()
+    data.load.return_value = [source]
+
+    result = manager._load_assessment_result("saved-assessment")
+
+    expected = {
+        "assessment_id": "saved-assessment",
+        "score": 60,
+        "priority": "MEDIUM",
+        "reasons": ["Original reason."],
+        "checklist": ["Original action."],
+    }
+    if with_trace:
+        expected.update({
+            "matched_rule": "SuspiciousCredentialRule",
+            "trace": [{"rule_name": "SuspiciousCredentialRule", "matched": True, "score": 60}],
+        })
+    assert result == expected
+    saved_result["reasons"].append("Later source change.")
+    assert result == expected
+    result["checklist"].append("Later returned change.")
+    assert saved_result["checklist"] == ["Original action."]
+    if with_trace:
+        saved_result["trace"][0]["score"] = 90
+        assert result["trace"][0]["score"] == 60
+        result["trace"][0]["matched"] = False
+        assert saved_result["trace"][0]["matched"] is True
+    manager._assessment._ai_manager.assess.assert_not_called()
+    data.save.assert_not_called()
+
+
+@pytest.mark.parametrize("reports", [
+    [],
+    [{"schema_version": 3, "assessment_id": "another-assessment", "result": {}}],
+    [{"schema_version": 3, "result": {}}],
+    [{"schema_version": 2, "assessment_id": "saved-assessment", "result": {}}],
+    [{"assessment_id": "saved-assessment", "result": {}}],
+])
+def test_saved_assessment_lookup_rejects_missing_or_legacy_reports(reports):
+    manager, data = build()
+    data.load.return_value = reports
+
+    with pytest.raises(ValueError, match="Assessment was not found"):
+        manager._load_assessment_result("saved-assessment")
+
+
+def test_saved_assessment_lookup_propagates_strict_history_errors(tmp_path):
+    path = tmp_path / "reports.json"
+    path.write_text("invalid JSON", encoding="utf-8")
+    manager, _ = build(data_manager=DataManager(JsonReportStorage(path)))
+
+    with pytest.raises(ValueError):
+        manager._load_assessment_result("saved-assessment")
+
+
 def test_a_text_message_gets_provisional_questions_without_initial_save():
     manager, data_manager = build()
     update = update_with("Verify your password now")
