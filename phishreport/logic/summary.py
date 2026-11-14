@@ -59,7 +59,8 @@ class StoredReport:
 
     @property
     def clicked(self) -> bool:
-        return self._record.get("clicked") is True
+        exposure = self._report.exposure
+        return exposure is not None and exposure.clicked is True
 
     @property
     def downloaded(self) -> bool:
