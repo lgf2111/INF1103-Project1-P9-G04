@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+from copy import deepcopy
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -17,7 +18,7 @@ from phishreport.bot.messages import (
     ResultFormatter,
 )
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
-from phishreport.errors import AssessmentError, StorageFailure
+from phishreport.errors import AssessmentError, FeedbackRejected, StorageFailure
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.logic import LogicManager
 
@@ -54,6 +55,97 @@ def callback_with(data, chat_id=ALLOWED_CHAT_ID, chat_type="private"):
         effective_message=SimpleNamespace(reply_text=AsyncMock()),
         callback_query=SimpleNamespace(data=data, answer=AsyncMock()),
     )
+
+
+@pytest.mark.parametrize("stage", ["lookup", "service"])
+@pytest.mark.parametrize("failure_type", [StorageFailure, FeedbackRejected, AssessmentError])
+def test_feedback_submit_domain_failure_preserves_pending_for_one_safe_retry(
+    tmp_path, stage, failure_type,
+):
+    manager, data = build()
+    store = FeedbackStore(tmp_path / "feedback.json")
+    manager._feedback_service = Mock(wraps=FeedbackService(store))
+    report = {
+        "schema_version": 3, "assessment_id": "saved-assessment", "channel": "chat",
+        "message": "Original message.",
+        "result": {"score": 60, "priority": "MEDIUM", "reasons": ["Original reason."]},
+    }
+    original_report = deepcopy(report)
+    data.load.return_value = [report]
+    pending = {
+        "assessment_id": "saved-assessment", "category": "incorrect_priority",
+        "corrected_priority": "LOW",
+    }
+    original_pending = pending.copy()
+    context = SimpleNamespace(user_data={"pending_feedback": pending, "unrelated": "keep"})
+    error = failure_type()
+    error.__cause__ = OSError("private history path and credential details")
+    failing_boundary = data.load if stage == "lookup" else manager._feedback_service.submit
+    failing_boundary.side_effect = error
+
+    async def scenario():
+        failed = update_with("Please review this priority.")
+        await manager._submit_feedback(failed, context, pending, failed.effective_message.text)
+        failed.effective_message.reply_text.assert_awaited_once_with(
+            "Could not save your feedback. Please try again."
+        )
+        assert context.user_data["pending_feedback"] is pending
+        assert pending == original_pending
+        assert context.user_data["unrelated"] == "keep"
+        assert store.load() == []
+        if stage == "lookup":
+            manager._feedback_service.submit.assert_not_called()
+
+        failing_boundary.side_effect = None
+        retry = update_with("Please review this priority.")
+        await manager._submit_feedback(retry, context, pending, retry.effective_message.text)
+        retry.effective_message.reply_text.assert_awaited_once_with(
+            "Thank you. Your feedback was saved for review."
+        )
+        assert context.user_data == {"unrelated": "keep"}
+        [feedback] = store.load()
+        assert feedback.assessment_id == "saved-assessment"
+        assert feedback.category == "incorrect_priority"
+        assert feedback.corrected_priority == "LOW"
+        assert feedback.comment == "Please review this priority."
+        calls_after_retry = manager._feedback_service.submit.call_count
+        replay = callback_with("fb:s:saved-assessment")
+        await manager.handle_feedback_callback(replay, context)
+        replay.effective_message.reply_text.assert_awaited_once_with(
+            "This feedback session expired. Please start again."
+        )
+        assert manager._feedback_service.submit.call_count == calls_after_retry
+        assert store.load() == [feedback]
+
+    asyncio.run(scenario())
+    assert report == original_report
+    manager._assessment._ai_manager.assess.assert_not_called()
+    data.save.assert_not_called()
+
+
+@pytest.mark.parametrize("stage", ["lookup", "service"])
+@pytest.mark.parametrize("failure_type", [TypeError, KeyError])
+def test_feedback_submit_programmer_errors_surface(stage, failure_type):
+    manager, data = build()
+    manager._feedback_service = Mock(spec=FeedbackService)
+    data.load.return_value = [{
+        "schema_version": 3, "assessment_id": "saved-assessment", "channel": "chat",
+        "message": "Original message.",
+        "result": {"score": 60, "priority": "MEDIUM", "reasons": ["Original reason."]},
+    }]
+    pending = {"assessment_id": "saved-assessment", "category": "false_negative"}
+    context = SimpleNamespace(user_data={"pending_feedback": pending})
+    update = update_with("Review this.")
+    boundary = data.load if stage == "lookup" else manager._feedback_service.submit
+    boundary.side_effect = failure_type("programmer defect")
+
+    with pytest.raises(failure_type, match="programmer defect"):
+        asyncio.run(manager._submit_feedback(update, context, pending, "Review this."))
+
+    assert context.user_data["pending_feedback"] is pending
+    update.effective_message.reply_text.assert_not_called()
+    manager._assessment._ai_manager.assess.assert_not_called()
+    data.save.assert_not_called()
 
 
 @pytest.mark.parametrize("payload", ["fb:o:saved-assessment", "fb:c:fn:saved-assessment"])

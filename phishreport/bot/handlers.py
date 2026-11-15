@@ -563,7 +563,7 @@ class TelegramIOManager:
                     corrected_priority=pending.get("corrected_priority"),
                     comment=comment or None,
                 )
-            except (OSError, ValueError):
+            except (AssessmentError, OSError, ValueError):
                 await message.reply_text("Could not save your feedback. Please try again.")
                 return
             user_data.pop("pending_feedback", None)
