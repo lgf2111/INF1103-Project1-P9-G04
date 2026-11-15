@@ -10,7 +10,7 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 
 | Path | Purpose |
 | --- | --- |
-| `phishreport/io/` | Console adapter, input coordinator, email parsing, folder selection and report presentation. |
+| `phishreport/io/` | Console adapter, input coordinator, email parsing, folder selection and assessment document renderers. |
 | `phishreport/ai/` | AI assessment coordinator, prompt builder, completion client and response validator. |
 | `phishreport/logic/` | Assessment rules, scoring, routing, response guidance and report summaries. |
 | `phishreport/data/` | Report validation, JSON/SQLite storage, environment selection and explicit migration. |

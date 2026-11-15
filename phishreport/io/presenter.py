@@ -2,6 +2,8 @@
 
 from phishreport.model import AssessmentResult, Report
 
+from .plain_text_renderer import PlainTextRenderer
+from .render import AssessmentRenderer
 from .terminal import Terminal
 
 
@@ -10,38 +12,20 @@ class ReportPresenter:
 
     def __init__(self, terminal: Terminal):
         self._terminal = terminal
+        self._assessment_renderer = AssessmentRenderer()
+        self._text_renderer = PlainTextRenderer()
 
     def display_result(self, result: AssessmentResult | dict | None) -> None:
-        """Display an outcome through its tolerant, immutable assessment view."""
-        if isinstance(result, dict):
-            result = Report({"result": result}).result
-        if result is None:
-            self._terminal.write("\nNo assessment available.")
-            return
-
-        priority = (result.priority or "unavailable").replace("_", " ").title()
-        self._terminal.write("\n=== Assessment ===")
-        self._terminal.write("Priority:", priority)
-        score = result.score if result.score is not None else "Unavailable"
-        self._terminal.write("Rule-based score:", score)
-        if result.matched_rule:
-            self._terminal.write("Matched rule:", result.matched_rule)
-
-        if result.trace:
-            self._terminal.write("\nRule evaluation trace:")
-            for step in result.trace:
-                status = "matched" if step.matched else "not matched"
-                score_text = f" (score: {step.score})" if step.score is not None else ""
-                self._terminal.write(f" - {step.rule_name}: {status}{score_text}")
-
-        if result.reasons:
-            self._terminal.write("\nReasons:")
-            for reason in result.reasons:
-                self._terminal.write(" -", reason)
-
-        self._terminal.write("\nRecommended actions:")
-        for number, step in enumerate(result.checklist, start=1):
-            self._terminal.write(f"{number}. {step}")
+        """Render the canonical assessment view through the shared document pipeline."""
+        document = self._assessment_renderer.render(result)
+        section_start = True
+        for line in self._text_renderer.render_lines(document):
+            if line == "":
+                section_start = True
+                continue
+            prefix = "\n" if section_start else ""
+            self._terminal.write(prefix + line)
+            section_start = False
 
     def display_record(self, record: dict) -> None:
         """Display a saved report's tolerant view without inventing absent history."""
