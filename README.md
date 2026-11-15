@@ -532,27 +532,40 @@ Application callers can catch `AssessmentError` from `phishreport.errors` and
 display its non-empty `user_message`. Original diagnostic exceptions remain
 available through exception chaining; they are not user-facing messages.
 
-| Failure | Application error | Behaviour |
+| Phase / failure | Error at the boundary | Outcome and offline evidence |
 | --- | --- | --- |
-| AI provider unavailable or invalid provider envelope | `AIUnavailable` | No partial assessment; Gmail retains the email for retry. |
-| Invalid assessment input or AI findings | `InvalidInput` | No report saved; Gmail skips invalid input. |
-| Strict report/feedback history read or write failure | `StorageFailure` | Existing contents preserved; completed assessments can still be displayed. |
-| Invalid feedback or assessment context | `FeedbackRejected` | Feedback is not written; the assessment remains unchanged. |
+| AI provider configuration, timeout, transport, HTTP or invalid envelope | `ProviderFailure` becomes `AIUnavailable` | No partial assessment; controlled messages retain diagnostic causes. [Provider tests](tests/core/test_provider_errors.py), [service matrix](tests/core/test_error_handling_matrix.py). |
+| AI input or invalid completion findings | `InvalidInput` | Input is unchanged; no assessment is saved. [Service matrix](tests/core/test_error_handling_matrix.py), [AI tests](tests/core/test_ai_manager.py). |
+| Logic record or findings validation | `AssessmentValidationError` becomes `InvalidInput` | No outcome or snapshot; rescore makes no AI call. [Service matrix](tests/core/test_error_handling_matrix.py). |
+| Strict history read | `StorageFailure` | Corrupt history remains unchanged; tolerant `DataManager.load()` instead recovers with `[]`. [Service matrix](tests/core/test_error_handling_matrix.py), [data tests](tests/core/test_data_core.py). |
+| New report validation / history write | `InvalidInput` / `StorageFailure` | Invalid reports cause no storage I/O; failed writes preserve existing bytes. Completed assessments can still be displayed. [Service matrix](tests/core/test_error_handling_matrix.py), [CLI boundaries](tests/cli/test_assessment_errors.py). |
+| Feedback read | `StorageFailure` | Corrupt feedback is preserved. [Service matrix](tests/core/test_error_handling_matrix.py). |
+| Feedback identifier, category or context validation | `FeedbackRejected` | Invalid lookups never reach storage; rejected submissions leave assessment and feedback unchanged. [Service matrix](tests/core/test_error_handling_matrix.py). |
+| Feedback save | `StorageFailure` | Atomic replacement failure cleans temporary files; one later retry creates one correction. [Service matrix](tests/core/test_error_handling_matrix.py). |
+| UI input / upload | `InvalidInput`, native `ValueError` or `OSError`; HTTP parser rejection | Safe guidance, no AI call or save; malformed HTTP uploads are rejected before completion. [CLI boundaries](tests/cli/test_assessment_errors.py), [upload tests](tests/cli/test_web_upload.py), [Telegram boundaries](tests/bot/test_bot_assessment_errors.py). |
+| Gmail assessment / save | `AIUnavailable`, `InvalidInput` / `StorageFailure` | Provider failure retains UID for retry; invalid input advances UID; save failure still alerts without a feedback link or second AI call. [Mailbox tests](tests/bot/test_monitor_assessment_errors.py). |
+| Telegram delivery / malformed reply identifier | Native `OSError`, `asyncio.CancelledError` or rejected reply identifier | Retains the cached assessment for retry without repeating AI. [Delivery tests](tests/bot/test_assessment.py). |
+| Cancellation / end of input | Native `KeyboardInterrupt`, `EOFError`, `asyncio.CancelledError` | Propagates; pending Telegram saves resolve their write outcome before cancellation is returned. [CLI boundaries](tests/cli/test_assessment_errors.py), [Telegram save tests](tests/bot/test_handlers.py). |
+| Unexpected programmer errors | Native `TypeError`, `KeyError`, `RuntimeError` or unexpected `ValueError` | Propagate from collaborators instead of being relabelled as provider failures. [CLI boundaries](tests/cli/test_assessment_errors.py), [Telegram boundaries](tests/bot/test_bot_assessment_errors.py), [mailbox tests](tests/bot/test_monitor_assessment_errors.py). |
 
-`DataManager.load()` retains its default recovery behaviour; use `strict=True`
-when a read failure must be distinguished from empty history. Direct report
-storage implementations retain their `ValueError`/`OSError` contract.
-Completion-client implementations use the public `ProviderFailure` and
+Direct report storage implementations retain their `ValueError`/`OSError`
+contract. Completion clients use the public `ProviderFailure` and
 `ProviderFailureReason` exports from `phishreport.ai` for expected provider
-failures. Unknown programming errors are not reclassified as AI failures.
-Default failure logs contain controlled summaries; `LOG_LEVEL=DEBUG` retains
-the existing opt-in traceback behaviour.
+failures. Default failure logs contain controlled summaries; `LOG_LEVEL=DEBUG`
+retains the existing opt-in traceback behaviour.
 
-Run the offline service failure matrix with:
+Run the offline service matrix and architecture contracts in an activated
+Python 3.12 environment:
 
 ```text
-python -m pytest tests/core/test_error_handling_matrix.py -q
+python -m pytest tests/core/test_error_handling_matrix.py tests/core/test_refactor_contract.py tests/core/test_manager_contract.py -q
+python -m pytest tests/cli/test_assessment_errors.py tests/cli/test_web_upload.py tests/bot/test_bot_assessment_errors.py tests/bot/test_monitor_assessment_errors.py -q
 ```
+
+The structural checks enforce a single frozen `Report` in `model.py`, central
+ownership of the exact schema-version key, a singular AI `prompt` module and
+canonical manager imports. Existing model and history tests cover current and
+legacy serialization behaviour.
 
 ### Assessment policy
 

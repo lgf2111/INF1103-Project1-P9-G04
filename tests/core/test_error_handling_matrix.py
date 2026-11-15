@@ -7,9 +7,12 @@ from unittest.mock import Mock
 import pytest
 
 from phishreport.ai import AIManager, ProviderFailure, ProviderFailureReason
+from phishreport.assessment import AssessmentService
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
 from phishreport.errors import AIUnavailable, FeedbackRejected, InvalidInput, StorageFailure
 from phishreport.feedback import FeedbackService, FeedbackStore
+from phishreport.logic import LogicManager
+from phishreport.logic.validator import AssessmentValidationError
 
 PRIVATE = "PRIVATE-token-and-message"
 REPORT = {
@@ -151,3 +154,76 @@ def test_feedback_atomic_replace_failure_cleans_up_and_allows_one_retry(
     assert store.load() == [first, retried]
     assert service.for_assessment(CONTEXT["assessment_id"]) == [first, retried]
     assert sorted(item.name for item in tmp_path.iterdir()) == [path.name]
+
+
+def test_corrupt_feedback_read_preserves_file(tmp_path):
+    path = tmp_path / "feedback.json"
+    path.write_text(PRIVATE, encoding="utf-8")
+    before = path.read_bytes()
+    service = FeedbackService(FeedbackStore(path))
+
+    with pytest.raises(StorageFailure) as caught:
+        service.for_assessment(CONTEXT["assessment_id"])
+
+    assert_safe(caught.value, StorageFailure)
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert path.read_bytes() == before
+    assert list(tmp_path.iterdir()) == [path]
+
+
+@pytest.mark.parametrize("assessment_id", [None, "", "   ", 12])
+def test_invalid_feedback_lookup_is_rejected_before_storage(assessment_id):
+    store = Mock(spec=FeedbackStore)
+
+    with pytest.raises(FeedbackRejected) as caught:
+        FeedbackService(store).for_assessment(assessment_id)
+
+    assert type(caught.value) is FeedbackRejected
+    assert str(caught.value) == FeedbackRejected.user_message
+    assert caught.value.__cause__ is None
+    assert store.mock_calls == []
+
+
+def test_invalid_new_report_is_rejected_before_any_storage_io():
+    storage = Mock()
+    report = {**deepcopy(REPORT), "message": None}
+    before = deepcopy(report)
+
+    with pytest.raises(InvalidInput) as caught:
+        DataManager(storage=storage).save(report)
+
+    assert_safe(caught.value, InvalidInput)
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert report == before
+    assert storage.mock_calls == []
+
+
+@pytest.mark.parametrize("method", ["assess", "assess_with_findings", "rescore"])
+@pytest.mark.parametrize("invalid", ["record", "findings"])
+def test_real_logic_validation_has_typed_cause_without_mutating_inputs(method, invalid):
+    record = {
+        "channel": "chat", "sender": None, "message": PRIVATE,
+        "has_link": False, "link": None, "has_file": False, "file_name": None,
+        "clicked": False, "downloaded": False, "submitted_category": None,
+    }
+    findings = {"suspicious": False, "credential_request": False,
+                "insufficient_context": False}
+    if invalid == "record":
+        record["clicked"] = PRIVATE
+    else:
+        findings["suspicious"] = PRIVATE
+    before = deepcopy((record, findings))
+    ai = Mock()
+    ai.assess.return_value = findings
+    service = AssessmentService(ai, LogicManager())
+
+    with pytest.raises(InvalidInput) as caught:
+        if method == "rescore":
+            service.rescore(record, findings)
+        else:
+            getattr(service, method)(record)
+
+    assert_safe(caught.value, InvalidInput)
+    assert type(caught.value.__cause__) is AssessmentValidationError
+    assert (record, findings) == before
+    assert ai.assess.call_count == (0 if method == "rescore" else 1)
