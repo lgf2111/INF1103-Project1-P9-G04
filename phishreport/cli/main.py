@@ -9,6 +9,7 @@ from phishreport.ai.errors import AIErrorTranslator
 from phishreport.assessment import AssessmentService
 from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
+from phishreport.errors import AssessmentError
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
 from phishreport.io.command_catalog import CommandCapabilities, discover_commands
@@ -110,7 +111,7 @@ class PhishReportApp:
             else:
                 try:
                     reply = router.route(request)
-                except (OSError, ValueError, RuntimeError) as error:
+                except (AssessmentError, OSError, ValueError, RuntimeError) as error:
                     if resolved.policy.failure == "assessment":
                         if not isinstance(error, OSError):
                             raise
@@ -136,6 +137,10 @@ class PhishReportApp:
                 outcome = request.session["check_outcome"]
                 record, result = outcome.record, outcome.result
 
+        except AssessmentError as error:
+            AppLogging.log_failure(logger, "Assessment failed")
+            self._io_manager.show_message(self._error_translator.translate(error))
+            return
         # RuntimeError: the AI could not complete after its retries (service down,
         # offline, rate limited). Show an actionable message; the AI is never bypassed.
         except RuntimeError as error:
@@ -155,6 +160,9 @@ class PhishReportApp:
         try:
             self._data_manager.save(report)
             report_saved = True
+        except AssessmentError as error:
+            AppLogging.log_failure(logger, "Local report save failed")
+            self._io_manager.show_message(self._error_translator.translate(error))
         except (OSError, ValueError):
             AppLogging.log_failure(logger, "Local report save failed")
             self._io_manager.show_message(
