@@ -1001,11 +1001,20 @@ def test_connection_check_acks_then_reads_and_preserves_history(tmp_path, histor
         assert list(tmp_path.iterdir()) == [path]
 
 
-def test_connection_check_handles_io_error_without_disclosing_details():
+@pytest.mark.parametrize("error_type", [PermissionError, TypedStorageFailure, AssessmentError])
+def test_connection_check_handles_io_error_without_disclosing_details(error_type):
     data_manager = Mock(spec=DataManager)
-    data_manager.load.side_effect = PermissionError("sensitive path")
+    error = (
+        error_type() if issubclass(error_type, AssessmentError) else error_type("sensitive path")
+    )
+    error.__cause__ = OSError("private history path")
+    data_manager.load.side_effect = error
     manager = TelegramIOManager(data_manager, ALLOWED_CHAT_ID)
     update = fake_update()
+    sequence = Mock()
+    sequence.attach_mock(update.callback_query.answer, "answer")
+    sequence.attach_mock(data_manager.load, "load")
+    sequence.attach_mock(update.effective_message.reply_text, "reply")
 
     asyncio.run(manager.check_connection(update, None))
 
@@ -1013,7 +1022,11 @@ def test_connection_check_handles_io_error_without_disclosing_details():
     update.effective_message.reply_text.assert_awaited_once_with(
         "Could not read local history. Please try again."
     )
-    assert data_manager.mock_calls == [call.load(strict=True)]
+    data_manager.load.assert_called_once_with(strict=True)
+    assert sequence.mock_calls == [
+        call.answer(), call.load(strict=True),
+        call.reply("Could not read local history. Please try again."),
+    ]
 
 
 @pytest.mark.parametrize(

@@ -276,7 +276,7 @@ class TelegramIOManager:
         await query.answer()
         try:
             await asyncio.to_thread(self._data_manager.load, strict=True)
-        except (OSError, ValueError):
+        except (OSError, ValueError, AssessmentError):
             await message.reply_text("Could not read local history. Please try again.")
         else:
             await message.reply_text("Connection check passed.")
