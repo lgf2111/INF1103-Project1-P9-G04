@@ -1,6 +1,8 @@
 """Build a neutral document from the canonical assessment view."""
 from phishreport.model import AssessmentResult, Report
+
 from .assessment_document import AssessmentDocument, DocumentSection
+
 
 class AssessmentRenderer:
     """Project typed or historical assessment results into ordered sections."""
