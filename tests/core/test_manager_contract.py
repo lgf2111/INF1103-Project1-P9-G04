@@ -1,4 +1,4 @@
-"""Structural checks for the four manager modules."""
+"""Structural checks for the four canonical manager packages."""
 
 import ast
 import importlib
@@ -14,17 +14,55 @@ REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
 # ============================================================================
 manager_contract_ROOT = Path(__file__).resolve().parents[2]
 manager_contract_APP = manager_contract_ROOT / "phishreport"
-manager_contract_REQUIRED = ("io_manager", "ai_manager", "logic_manager", "data_manager")
+manager_contract_REQUIRED = (
+    ("io", "IOManager"),
+    ("ai", "AIManager"),
+    ("logic", "LogicManager"),
+    ("data", "DataManager"),
+)
 
 
-@pytest.mark.parametrize("name", manager_contract_REQUIRED)
-def test_manager_contract_required_manager_modules_are_importable(name):
-    """Keep the four manager modules identifiable while permitting class-based APIs."""
-    path = manager_contract_APP / (name + ".py")
-    assert path.is_file(), "Required manager module is missing: " + name
-    assert not (manager_contract_APP / name / "__init__.py").exists()
-    module = importlib.import_module("phishreport." + name)
-    assert Path(module.__file__).resolve() == path.resolve()
+@pytest.mark.parametrize("package_name,class_name", manager_contract_REQUIRED)
+def test_manager_contract_canonical_packages_export_manager_classes(package_name, class_name):
+    """Public package exports must resolve to the canonical manager implementation."""
+    package = importlib.import_module("phishreport." + package_name)
+    module = importlib.import_module("phishreport." + package_name + ".manager")
+    package_path = manager_contract_APP / package_name
+    assert Path(package.__file__).resolve() == (package_path / "__init__.py").resolve()
+    assert Path(module.__file__).resolve() == (package_path / "manager.py").resolve()
+    assert getattr(package, class_name) is getattr(module, class_name)
+    assert not (manager_contract_APP / (package_name + "_manager.py")).exists()
+
+
+def test_manager_contract_no_static_imports_of_removed_shims():
+    """Production and tests must use the canonical manager packages."""
+    shim_names = {name + "_manager" for name, _ in manager_contract_REQUIRED}
+    shim_modules = {"phishreport." + name for name in shim_names}
+    paths = list(manager_contract_APP.rglob("*.py"))
+    paths += list((manager_contract_ROOT / "tests").rglob("*.py"))
+    paths += list(manager_contract_ROOT.glob("*.py"))
+    for path in paths:
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Import):
+                imports = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                module_name = node.module or ""
+                if node.level:
+                    package = ".".join(path.parent.relative_to(manager_contract_ROOT).parts)
+                    module_name = importlib.util.resolve_name(
+                        "." * node.level + module_name, package
+                    )
+                imports = [module_name]
+                if module_name == "phishreport":
+                    imports += ["phishreport." + alias.name for alias in node.names]
+            else:
+                continue
+            assert not any(
+                imported == shim or imported.startswith(shim + ".")
+                for imported in imports
+                for shim in shim_modules
+            ), f"Removed manager shim imported at {path}:{node.lineno}"
+
 
 
 def test_manager_contract_raw_terminal_io_stays_in_console_adapter():

@@ -10,13 +10,9 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 
 | Path | Purpose |
 | --- | --- |
-| `phishreport/io_manager.py` | Compatibility functions for the I/O manager. |
 | `phishreport/io/` | Console adapter, input coordinator, email parsing, folder selection and report presentation. |
-| `phishreport/ai_manager.py` | Compatibility functions for AI prompting, requests and validation. |
 | `phishreport/ai/` | AI assessment coordinator, prompt builder, completion client and response validator. |
-| `phishreport/logic_manager.py` | Apply assessment rules, scoring and routing. |
 | `phishreport/logic/` | Assessment rules, scoring, routing, response guidance and report summaries. |
-| `phishreport/data_manager.py` | Public DataManager interface for saving, loading and querying reports. |
 | `phishreport/data/` | Report validation, JSON/SQLite storage, environment selection and explicit migration. |
 | `phishreport/cli/` | Terminal interface: `main.py` composes the four managers through `PhishReportApp`; `web_upload.py` handles browser-based `.eml` uploads. |
 | `phishreport/assessment.py` | Shared assessment workflow (AI findings, then business rules) used by the CLI and the bot. |
@@ -26,11 +22,20 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 | `phishreport/logging_setup.py` | Configure diagnostic logs. |
 | `docs/` | Organized guides, teammate handoffs, and project references. |
 | `requirements.txt` | Dependencies for Telegram and the offline tests. |
-| `tests/core/` | Offline tests for the shared core: AI, logic, data, I/O and the four manager modules. |
+| `tests/core/` | Offline tests for the shared core: AI, logic, data, I/O and the canonical manager package contracts. |
 | `tests/cli/` | Offline tests for the terminal interface, settings, uploads, the Docker helper and the feature showcase. |
 | `tests/bot/` | Offline Telegram handler and launcher checks. |
 | `tests/fixtures/` | Public sample emails for testing. |
 | `conftest.py` | Shared pytest configuration. |
+
+The public manager imports are:
+
+```python
+from phishreport.io import IOManager
+from phishreport.ai import AIManager
+from phishreport.logic import LogicManager
+from phishreport.data import DataManager
+```
 
 ### Input and output
 
