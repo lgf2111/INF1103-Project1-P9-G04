@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+from phishreport.ai._provider_errors import ProviderFailure, ProviderFailureReason
 from phishreport.assessment import AssessmentService
 from phishreport.bot.handlers import TelegramIOManager
 from phishreport.bot.messages import (
@@ -274,7 +275,9 @@ def test_without_an_assessment_service_the_bot_says_so():
 
 
 def test_an_ai_service_failure_gets_the_friendly_message_and_nothing_is_saved():
-    ai_manager = Mock(**{"assess.side_effect": RuntimeError("HTTP 429")})
+    ai_manager = Mock(**{
+        "assess.side_effect": ProviderFailure(ProviderFailureReason.HTTP, status_code=429),
+    })
     manager, data_manager = build(ai_manager)
     update = update_with("hello")
 
