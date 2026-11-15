@@ -60,4 +60,10 @@ class FeedbackService:
 
     def for_assessment(self, assessment_id: str) -> list[Feedback]:
         """Return feedback associated with a saved assessment identifier."""
-        return self._store.for_assessment(assessment_id)
+        if not isinstance(assessment_id, str) or not assessment_id.strip():
+            raise FeedbackRejected()
+
+        try:
+            return self._store.for_assessment(assessment_id)
+        except (OSError, ValueError) as error:
+            raise StorageFailure() from error

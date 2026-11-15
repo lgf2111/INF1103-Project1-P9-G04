@@ -280,3 +280,81 @@ def test_feedback_service_preserves_validation_cause_privately(
     assert caught.value.__cause__ is failure
     assert str(caught.value) == FeedbackRejected.user_message
     assert not (tmp_path / "feedback.json").exists()
+
+
+@pytest.mark.parametrize("assessment_id", [None, 123, False, [], "", " \t\n"])
+def test_feedback_read_rejects_invalid_identifier_before_store_access(
+    tmp_path, monkeypatch, assessment_id
+):
+    store = FeedbackStore(tmp_path / "feedback.json")
+
+    def unexpected_read(identifier):
+        pytest.fail("Invalid identifier reached storage")
+
+    monkeypatch.setattr(store, "for_assessment", unexpected_read)
+    with pytest.raises(FeedbackRejected) as caught:
+        FeedbackService(store).for_assessment(assessment_id)
+    assert caught.value.__cause__ is None
+    assert str(caught.value) == FeedbackRejected.user_message
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_feedback_read_translates_corrupt_history_without_writing(tmp_path):
+    path = tmp_path / "feedback.json"
+    contents = b"private corrupt history"
+    path.write_bytes(contents)
+
+    with pytest.raises(StorageFailure) as caught:
+        FeedbackService(FeedbackStore(path)).for_assessment("assessment-123")
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
+    assert path.read_bytes() == contents
+
+
+def test_feedback_read_translates_oserror_with_original_cause(tmp_path, monkeypatch):
+    store = FeedbackStore(tmp_path / "feedback.json")
+    failure = OSError("private read failure")
+
+    def fail(identifier):
+        raise failure
+
+    monkeypatch.setattr(store, "for_assessment", fail)
+    with pytest.raises(StorageFailure) as caught:
+        FeedbackService(store).for_assessment("assessment-123")
+    assert caught.value.__cause__ is failure
+    assert str(caught.value) == StorageFailure.user_message
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_feedback_read_preserves_identifier_and_returned_list(tmp_path, monkeypatch):
+    store = FeedbackStore(tmp_path / "feedback.json")
+    records = [object(), object()]
+    identifiers = []
+
+    def read(identifier):
+        identifiers.append(identifier)
+        return records
+
+    monkeypatch.setattr(store, "for_assessment", read)
+    assert FeedbackService(store).for_assessment(" Assessment-123 \t") is records
+    assert identifiers == [" Assessment-123 \t"]
+    assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [TypeError("bug"), KeyError("bug"), RuntimeError("bug"), FeedbackRejected(), StorageFailure()],
+)
+def test_feedback_read_preserves_programmer_and_domain_errors(
+    tmp_path, monkeypatch, failure
+):
+    store = FeedbackStore(tmp_path / "feedback.json")
+
+    def fail(identifier):
+        raise failure
+
+    monkeypatch.setattr(store, "for_assessment", fail)
+    with pytest.raises(type(failure)) as caught:
+        FeedbackService(store).for_assessment("assessment-123")
+    assert caught.value is failure
+    assert list(tmp_path.iterdir()) == []
