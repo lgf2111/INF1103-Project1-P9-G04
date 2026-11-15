@@ -28,6 +28,7 @@ from phishreport.bot.messages import (
     build_exposure_keyboard,
 )
 from phishreport.data import DataManager
+from phishreport.errors import AssessmentError
 from phishreport.io.check_command import CheckOutcome
 from phishreport.io.command_catalog import CommandCapabilities, discover_commands
 from phishreport.io.commands import CommandRequest, CommandRouter
@@ -329,10 +330,10 @@ class TelegramIOManager:
                     reply = await asyncio.to_thread(
                         router.route, CommandRequest(text, "telegram"),
                     )
-                except (OSError, ValueError, RuntimeError) as error:
+                except (AssessmentError, OSError, ValueError, RuntimeError) as error:
                     if command.policy.failure != "assessment":
                         failure_text = failure_messages[command.policy.failure]
-                    elif isinstance(error, RuntimeError):
+                    elif isinstance(error, (AssessmentError, RuntimeError)):
                         failure_text = self._error_translator.translate(error)
                     elif isinstance(error, ValueError):
                         failure_text = "Sorry, the check failed: " + str(error)
@@ -361,15 +362,19 @@ class TelegramIOManager:
                     )
                     return
                 if command is None:
-                    record = self._record_builder.build(text)
+                    try:
+                        record = self._record_builder.build(text)
+                    except AssessmentError as error:
+                        await message.reply_text(self._error_translator.translate(error))
+                        return
                 if command is not None:
                     request = CommandRequest(text, "telegram")
                     try:
                         reply = await asyncio.to_thread(router.route, request)
-                    except (OSError, ValueError, RuntimeError) as error:
+                    except (AssessmentError, OSError, ValueError, RuntimeError) as error:
                         if command.policy.failure != "assessment":
                             failure_text = failure_messages[command.policy.failure]
-                        elif isinstance(error, RuntimeError):
+                        elif isinstance(error, (AssessmentError, RuntimeError)):
                             failure_text = self._error_translator.translate(error)
                         elif isinstance(error, ValueError):
                             failure_text = "Sorry, the check failed: " + str(error)
@@ -394,7 +399,7 @@ class TelegramIOManager:
                         snapshot = await asyncio.to_thread(
                             self._assessment.assess_with_findings, record,
                         )
-                    except RuntimeError as error:
+                    except (AssessmentError, RuntimeError) as error:
                         await message.reply_text(self._error_translator.translate(error))
                         return
                     except ValueError as error:
