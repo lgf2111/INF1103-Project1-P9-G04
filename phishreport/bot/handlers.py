@@ -224,7 +224,7 @@ class TelegramIOManager:
                             if self._assessment is None:
                                 raise ValueError("Message assessment is not available")
                             session.apply_answer(action, self._assessment)
-            except (OSError, ValueError, RuntimeError):
+            except (AssessmentError, OSError, ValueError, RuntimeError):
                 feedback = "Could not update the assessment. Please try again.\n\n"
 
             # Hold the lock across the edit: another button cannot replace a

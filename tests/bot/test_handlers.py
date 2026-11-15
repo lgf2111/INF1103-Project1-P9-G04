@@ -22,6 +22,8 @@ from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.main import main
 from phishreport.bot.messages import EXPOSURE_CALLBACK_PREFIX, ChatRecordBuilder, ResultFormatter
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
+from phishreport.errors import AIUnavailable, AssessmentError, FeedbackRejected, InvalidInput
+from phishreport.errors import StorageFailure as TypedStorageFailure
 from phishreport.logic import LogicManager
 
 ALLOWED_CHAT_ID = 12345
@@ -173,9 +175,15 @@ def test_exposure_callback_no_query_and_failed_ack_never_lookup(callback_setup):
 
 
 @pytest.mark.parametrize("backend", ["json", "sqlite"])
-def test_exposure_callback_save_failure_retry_real_storage(callback_setup, tmp_path, backend):
+@pytest.mark.parametrize("error_type", [OSError, TypedStorageFailure])
+def test_exposure_callback_save_failure_retry_real_storage(
+    callback_setup, tmp_path, backend, error_type,
+):
     manager, session, ai, update = callback_setup
-    manager._data_manager.save.side_effect = OSError("SECRET path")
+    error = error_type() if issubclass(error_type, AssessmentError) else error_type("SECRET path")
+    error.__cause__ = RuntimeError("SECRET private storage cause")
+    manager._data_manager.save.side_effect = error
+    manager._assessment.rescore = Mock(wraps=manager._assessment.rescore)
 
     async def scenario():
         await manager.exposure_callback(update("password"), None)
@@ -185,21 +193,33 @@ def test_exposure_callback_save_failure_retry_real_storage(callback_setup, tmp_p
         assert "SECRET" not in text and "Retry saving" in text
         assert session.completed and not session.saved
         report = deepcopy(session.report)
+        assessment_id = report["assessment_id"]
+        manager._assessment.rescore.assert_called_once()
         session.expires_at = 0
         storage = (JsonReportStorage(tmp_path / "history.json") if backend == "json"
                    else SqliteReportStorage(tmp_path / "history.sqlite3"))
         manager._data_manager = DataManager(storage)
         await manager.exposure_callback(update("retry"), None)
         assert session.saved and manager._data_manager.load(strict=True) == [report]
+        assert session.report["assessment_id"] == assessment_id
+        await manager.exposure_callback(update("retry"), None)
+        assert manager._data_manager.load(strict=True) == [report]
+        manager._assessment.rescore.assert_called_once()
 
     asyncio.run(asyncio.wait_for(scenario(), 5))
     assert ai.assess.call_count == 1
 
 
-@pytest.mark.parametrize("error", [OSError, ValueError, RuntimeError])
+@pytest.mark.parametrize("error", [
+    OSError, ValueError, RuntimeError, AssessmentError, AIUnavailable, InvalidInput,
+    FeedbackRejected,
+])
 def test_exposure_callback_expected_answer_failure_safe_feedback(callback_setup, error):
     manager, session, _, update = callback_setup
-    manager._assessment.rescore = Mock(side_effect=error("SECRET"))
+    failure = error() if issubclass(error, AssessmentError) else error("SECRET")
+    failure.__cause__ = RuntimeError("SECRET private scoring cause")
+    manager._assessment.rescore = Mock(side_effect=failure)
+    before = deepcopy((session.exposure, session.result, session.record, session.findings))
     incoming = update("clicked")
     asyncio.run(manager.exposure_callback(incoming, None))
     text = incoming.callback_query.edit_message_text.call_args.args[0]
@@ -207,6 +227,9 @@ def test_exposure_callback_expected_answer_failure_safe_feedback(callback_setup,
     assert "SECRET" not in text and text.endswith(ResultFormatter.FOOTER)
     assert len(text.encode("utf-16-le")) // 2 <= 4096
     assert session.exposure["clicked"] is None
+    assert (session.exposure, session.result, session.record, session.findings) == before
+    assert not session.completed and not session.saved and session.report is None
+    manager._data_manager.save.assert_not_called()
 
 
 def test_exposure_callback_retry_pending_and_missing_service_do_not_write(callback_setup):
@@ -355,16 +378,22 @@ def test_exposure_callback_lookup_happens_after_ack(callback_setup):
     asyncio.run(manager.exposure_callback(incoming, None))
 
 
-@pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
+@pytest.mark.parametrize("error_type", [
+    ValueError, RuntimeError, AssessmentError, TypedStorageFailure,
+])
 def test_exposure_callback_completion_failure_preserves_pending(callback_setup, error_type):
     manager, session, _, update = callback_setup
-    manager._assessment.build_exposure_report = Mock(side_effect=error_type("SECRET"))
+    error = error_type() if issubclass(error_type, AssessmentError) else error_type("SECRET")
+    error.__cause__ = RuntimeError("SECRET private completion cause")
+    manager._assessment.build_exposure_report = Mock(side_effect=error)
+    before = deepcopy((session.exposure, session.result))
     incoming = update("finish")
     asyncio.run(manager.exposure_callback(incoming, None))
     text = incoming.callback_query.edit_message_text.call_args.args[0]
     assert text.startswith("Could not update the assessment. Please try again.")
     assert "SECRET" not in text
     assert not session.completed and session.report is None
+    assert not session.saved and (session.exposure, session.result) == before
     manager._data_manager.save.assert_not_called()
 
 
