@@ -43,7 +43,7 @@ class ResultFormatter:
                 notices.append("Provisional assessment.")
                 notices.append("Did you click the link / download the file?")
             for answer, label in ((clicked, "Clicked link"),
-                                  (downloaded, "Downloaded file")):
+                                (downloaded, "Downloaded file")):
                 value = "Yes" if answer is True else "No" if answer is False else "Unconfirmed"
                 notices.append(f"{label}: {value}")
             if pending:

@@ -42,9 +42,12 @@ from phishreport.data import DataManager
 The CLI uses an `IOManager` instance to collect manual input and coordinate folder
 imports and browser uploads. All three paths use the same record builder.
 `EmlReader` parses email from disk or uploaded bytes. `EmlFolderPicker` handles
-folder selection, and `ReportPresenter` formats assessments and saved reports.
-The manager, picker, and presenter use the `Terminal` interface, which tests can
-exercise with scripted input and captured output.
+folder selection. `AssessmentRenderer` builds ordered, neutral assessment
+sections, and `PlainTextRenderer` formats them for the CLI and Telegram result
+replies. `HTMLAlertRenderer` renders the shared assessment fields in Gmail alert
+markup. `ReportPresenter` writes console results and continues to format saved
+reports. Telegram adapters keep HTML escaping, alert clipping, exposure notices
+and reply-length limits at the transport boundary.
 
 ### AI assessment
 
