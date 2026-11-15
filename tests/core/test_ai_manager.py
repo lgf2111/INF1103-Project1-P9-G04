@@ -5,13 +5,14 @@ import logging
 import urllib.error
 from copy import deepcopy
 from email.utils import formatdate
-from http.client import IncompleteRead
+from http.client import HTTPException, IncompleteRead, RemoteDisconnected
 from pathlib import Path
 from unittest.mock import MagicMock, Mock
 
 import pytest
 
 from phishreport.ai import AIClient, AIResponseValidator, GroqClient, groq_client
+from phishreport.ai._provider_errors import ProviderFailure, ProviderFailureReason
 from phishreport.ai.prompt import PromptBuilder
 from phishreport.ai.validator import FINDING_KEYS, REQUIRED_KEYS
 from phishreport.io import IOManager
@@ -295,10 +296,14 @@ def test_ai_manager_call_api_rejects_refusal_with_content(ai_manager_provider_tr
 )
 def test_ai_manager_call_api_rejects_invalid_provider_json(ai_manager_provider_transport, raw):
     ai_manager_provider_transport.return_value.__enter__.return_value.read.return_value = raw
-    with pytest.raises(RuntimeError) as failure:
+    with pytest.raises(ProviderFailure) as failure:
         GroqClient().complete("Fictional phishing assessment")
     assert "fictional-sensitive-marker" not in str(failure.value)
     ai_manager_provider_transport.assert_called_once()
+
+    assert failure.value.reason is ProviderFailureReason.INVALID_RESPONSE
+    assert failure.value.status_code is None
+    assert failure.value.__suppress_context__ is True
 
 
 @pytest.mark.parametrize("code", [400, 401, 403, 404, 429])
@@ -355,9 +360,11 @@ def test_ai_manager_call_api_requires_key_before_http(monkeypatch):
     monkeypatch.delenv("GROQ_API_KEY", raising=False)
     transport = Mock()
     monkeypatch.setattr(groq_client.urllib.request, "urlopen", transport)
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ProviderFailure) as failure:
         GroqClient().complete("Fictional phishing assessment")
     transport.assert_not_called()
+    assert failure.value.reason is ProviderFailureReason.CONFIGURATION
+    assert failure.value.status_code is None
 
 
 @pytest.mark.parametrize(
@@ -412,9 +419,11 @@ def test_ai_manager_call_api_rejects_blank_model_before_http(
     ai_manager_provider_transport, monkeypatch, model
 ):
     monkeypatch.setenv("GROQ_MODEL", model)
-    with pytest.raises(RuntimeError, match="GROQ_MODEL"):
+    with pytest.raises(ProviderFailure) as failure:
         GroqClient().complete("Fictional phishing assessment")
     ai_manager_provider_transport.assert_not_called()
+    assert failure.value.reason is ProviderFailureReason.CONFIGURATION
+    assert failure.value.status_code is None
 
 
 @pytest.mark.parametrize(
@@ -1119,9 +1128,11 @@ def test_ai_manager_invalid_fallback_configuration_fails_before_http(
 ):
     monkeypatch.setenv("GROQ_MODEL", "fictional/primary")
     monkeypatch.setenv("GROQ_FALLBACK_MODEL", fallback)
-    with pytest.raises(RuntimeError, match="GROQ_FALLBACK_MODEL"):
+    with pytest.raises(ProviderFailure) as failure:
         GroqClient().complete("Fictional prompt")
     ai_manager_provider_transport.assert_not_called()
+    assert failure.value.reason is ProviderFailureReason.CONFIGURATION
+    assert failure.value.status_code is None
 
 
 def test_ai_manager_fallback_timeout_stops_after_second_request(
@@ -1263,3 +1274,57 @@ def test_ai_manager_repeated_rate_limit_stops_after_two_requests(ai_manager_prov
         GroqClient().complete("Fictional prompt")
     assert ai_manager_provider_transport.call_count == 2
     groq_client.time.sleep.assert_called_once_with(1)
+
+
+@pytest.mark.parametrize(
+    "error, reason, status, attempts",
+    [
+        (TimeoutError("PRIVATE_EXCEPTION"), ProviderFailureReason.TIMEOUT, None, 2),
+        (
+            urllib.error.URLError(TimeoutError("PRIVATE_EXCEPTION")),
+            ProviderFailureReason.TIMEOUT,
+            None,
+            2,
+        ),
+        (ConnectionResetError("PRIVATE_EXCEPTION"), ProviderFailureReason.TRANSPORT, None, 2),
+        (IncompleteRead(b"PRIVATE_BODY", 100), ProviderFailureReason.TRANSPORT, None, 2),
+        (RemoteDisconnected("PRIVATE_EXCEPTION"), ProviderFailureReason.TRANSPORT, None, 2),
+        (OSError("PRIVATE_EXCEPTION"), ProviderFailureReason.TRANSPORT, None, 1),
+        (HTTPException("PRIVATE_EXCEPTION"), ProviderFailureReason.TRANSPORT, None, 1),
+        (
+            urllib.error.URLError("timeout PRIVATE_EXCEPTION"),
+            ProviderFailureReason.TRANSPORT,
+            None,
+            1,
+        ),
+        *[
+            (
+                urllib.error.HTTPError(
+                    "https://example.test/PRIVATE_URL", code, "PRIVATE_EXCEPTION", {}, None
+                ),
+                ProviderFailureReason.HTTP,
+                code,
+                2 if code in (500, 502, 503, 504) else 1,
+            )
+            for code in (400, 401, 403, 404, 429, 500, 501, 502, 503, 504, 505)
+        ],
+    ],
+)
+def test_complete_exposes_typed_safe_transport_failure(
+    ai_manager_provider_transport, caplog, error, reason, status, attempts
+):
+    ai_manager_provider_transport.side_effect = error
+    with caplog.at_level(logging.INFO, logger="ai_manager"):
+        with pytest.raises(ProviderFailure) as failure:
+            GroqClient().complete("PRIVATE_PROMPT")
+    assert failure.value.reason is reason
+    assert failure.value.status_code == status
+    assert failure.value.__suppress_context__ is True
+    assert failure.value.__cause__ is None
+    assert "PRIVATE_" not in str(failure.value)
+    assert "PRIVATE_" not in caplog.text
+    assert "fictional-test-key" not in caplog.text
+    assert ai_manager_provider_transport.call_count == attempts
+    records = [r for r in caplog.records if r.name == "ai_manager"]
+    assert len([r for r in records if r.levelno == logging.WARNING]) == 1
+    assert len([r for r in records if r.levelno == logging.INFO]) == attempts - 1

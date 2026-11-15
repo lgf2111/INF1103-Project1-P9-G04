@@ -12,6 +12,7 @@ from email.utils import parsedate_to_datetime
 
 from ._diagnostics import FailureDiagnostics
 from ._json import StrictJsonParser
+from ._provider_errors import ProviderFailureReason
 
 DEFAULT_MODEL = "openai/gpt-oss-20b"
 URL = "https://api.groq.com/openai/v1/chat/completions"
@@ -35,8 +36,9 @@ class GroqClient:
 
         Require nonblank prompt text, otherwise raise ValueError before configuration/HTTP.
         Preserve valid prompt text exactly as supplied.
-        Raise RuntimeError for missing credentials, HTTP/connection/read failures,
-        invalid provider JSON, malformed envelopes or incomplete/refused answers.
+        Raise ProviderFailure for configuration, HTTP/connection/read failures and
+        invalid provider JSON. Malformed envelopes and incomplete/refused answers
+        currently raise RuntimeError.
         Error messages exclude provider bodies and underlying exception details.
         Read GROQ_MODEL at request time, after the caller has loaded its environment.
         An unset model uses DEFAULT_MODEL; an explicitly blank setting is rejected.
@@ -54,25 +56,17 @@ class GroqClient:
 
         api_key = os.environ.get("GROQ_API_KEY")
         if not api_key:
-            raise self._diagnostics.failure(
-                "call_api", "Set the GROQ_API_KEY environment variable first.", RuntimeError
-            )
+            raise self._diagnostics.provider_failure(ProviderFailureReason.CONFIGURATION)
 
         model = os.environ.get("GROQ_MODEL", DEFAULT_MODEL)
         if not model.strip():
-            raise self._diagnostics.failure(
-                "call_api", "GROQ_MODEL must not be blank.", RuntimeError
-            )
+            raise self._diagnostics.provider_failure(ProviderFailureReason.CONFIGURATION)
 
         fallback_model = os.environ.get("GROQ_FALLBACK_MODEL")
         if fallback_model is not None:
             fallback_model = fallback_model.strip()
             if not fallback_model or fallback_model == model.strip():
-                raise self._diagnostics.failure(
-                    "call_api",
-                    "GROQ_FALLBACK_MODEL must be nonblank and differ from GROQ_MODEL.",
-                    RuntimeError,
-                )
+                raise self._diagnostics.provider_failure(ProviderFailureReason.CONFIGURATION)
 
         body = json.dumps(
             {
@@ -130,7 +124,15 @@ class GroqClient:
                         else "Could not complete the AI request."
                     )
                 if attempt == max_attempts or not retryable:
-                    raise self._diagnostics.failure("call_api", reason, RuntimeError) from None
+                    if isinstance(error, urllib.error.HTTPError):
+                        raise self._diagnostics.provider_failure(
+                            ProviderFailureReason.HTTP, status_code=error.code
+                        ) from None
+                    raise self._diagnostics.provider_failure(
+                        ProviderFailureReason.TIMEOUT
+                        if timed_out
+                        else ProviderFailureReason.TRANSPORT
+                    ) from None
                 # Only fixed diagnostics are logged; never include raw exception/provider data.
                 retry_model = "same_model"
                 if timed_out and fallback_model is not None:
@@ -150,8 +152,8 @@ class GroqClient:
         try:
             data = self._json_parser.parse(raw)
         except (ValueError, RecursionError):
-            raise self._diagnostics.failure(
-                "call_api", "AI provider returned invalid JSON.", RuntimeError
+            raise self._diagnostics.provider_failure(
+                ProviderFailureReason.INVALID_RESPONSE
             ) from None
         return self._completed_content(data)
 
