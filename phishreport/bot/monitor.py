@@ -16,6 +16,7 @@ from phishreport.bot.gmail import (
     MailboxError,
 )
 from phishreport.bot.messages import ChatRecordBuilder, PhishingAlertFormatter
+from phishreport.errors import AssessmentError, InvalidInput
 from phishreport.io.eml import EmlReader
 from phishreport.logging_setup import AppLogging
 
@@ -146,6 +147,14 @@ class EmailMonitor:
         record = {**self._builder.build(text, sender), "channel": "email"}
         try:
             result = await asyncio.to_thread(self._assessment.assess, record)
+        except InvalidInput:
+            AppLogging.log_failure(logger, "Skipped an email the AI could not assess")
+            self._say("Skipped an email the AI could not assess.")
+            return SKIPPED
+        except AssessmentError as error:
+            AppLogging.log_failure(logger, "Email assessment failed after AI retries")
+            self._say(f"AI check failed, will retry: {self._errors.translate(error)}")
+            return RETRY
         except RuntimeError as error:
             AppLogging.log_failure(logger, "Email assessment failed after AI retries")
             self._say(f"AI check failed, will retry: {self._errors.translate(error)}")
@@ -161,7 +170,7 @@ class EmailMonitor:
                     self._data_manager.save, self._assessment.build_report(record, result)
                 )
             saved = True
-        except (OSError, ValueError):
+        except (AssessmentError, OSError, ValueError):
             AppLogging.log_failure(logger, "Could not save an email report")
         alert = result["priority"] in ALERT_PRIORITIES
         self._say(
