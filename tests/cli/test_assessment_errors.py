@@ -114,3 +114,53 @@ def test_programmer_type_error_still_propagates(app_parts, command):
     data.save.assert_not_called()
     io.display_result.assert_not_called()
     feedback.submit.assert_not_called()
+
+
+def test_typed_history_load_failure_is_safe_then_recovers(app_parts, monkeypatch):
+    app, io, _, data, _ = app_parts
+    error = StorageFailure()
+    error.__cause__ = OSError("PRIVATE history path and credentials")
+    data.load.side_effect = [error, []]
+    log_failure = Mock()
+    monkeypatch.setattr("phishreport.cli.main.AppLogging.log_failure", log_failure)
+
+    assert app.load_reports() is None
+    assert app.load_reports() == []
+
+    assert data.load.call_count == 2
+    assert all(call.kwargs == {"strict": True} for call in data.load.call_args_list)
+    io.show_message.assert_called_once_with(
+        "Could not load local report history; existing file preserved."
+    )
+    assert log_failure.call_count == 1
+
+
+@pytest.mark.parametrize("operation", ["view_reports", "summarize_reports"])
+def test_typed_history_failure_stops_history_consumers(app_parts, operation):
+    app, io, _, data, _ = app_parts
+    error = StorageFailure()
+    error.__cause__ = OSError("PRIVATE history path")
+    data.load.side_effect = error
+
+    getattr(app, operation)()
+
+    data.load.assert_called_once_with(strict=True)
+    io.show_message.assert_called_once_with(
+        "Could not load local report history; existing file preserved."
+    )
+    io.display_list.assert_not_called()
+    io.collect_summary_filter.assert_not_called()
+    io.display_summary.assert_not_called()
+    app._logic_manager.build_filter.assert_not_called()
+    app._logic_manager.summarize.assert_not_called()
+    data.query.assert_not_called()
+
+
+def test_history_load_programmer_type_error_propagates(app_parts):
+    app, io, _, data, _ = app_parts
+    data.load.side_effect = TypeError("history programmer bug")
+
+    with pytest.raises(TypeError, match="history programmer bug"):
+        app.load_reports()
+
+    io.show_message.assert_not_called()

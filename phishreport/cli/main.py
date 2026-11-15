@@ -217,7 +217,7 @@ class PhishReportApp:
         """
         try:
             return self._data_manager.load(strict=True)
-        except (OSError, ValueError):
+        except (AssessmentError, OSError, ValueError):
             AppLogging.log_failure(logger, "Reading local report history failed")
             self._io_manager.show_message(
                 "Could not load local report history; existing file preserved."
