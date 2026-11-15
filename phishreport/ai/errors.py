@@ -5,6 +5,15 @@ from phishreport.errors import AIUnavailable, AssessmentError
 from ._provider_errors import ProviderFailure, ProviderFailureReason
 
 
+def provider_failure_to_assessment_error(error: ProviderFailure) -> AIUnavailable:
+    """Wrap a provider failure safely, retaining its typed cause for guidance."""
+    if not isinstance(error, ProviderFailure):
+        raise TypeError("error must be a ProviderFailure")
+    mapped = AIUnavailable()
+    mapped.__cause__ = error
+    return mapped
+
+
 class AIErrorTranslator:
     """Return safe guidance without inspecting arbitrary exception text."""
 
