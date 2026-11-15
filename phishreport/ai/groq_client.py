@@ -191,41 +191,40 @@ class GroqClient:
     def _completed_content(self, data: object) -> str:
         """Return the first completed, non-refused choice as unchanged response text.
 
-        Validate the provider envelope before extracting content. Raise RuntimeError
-        for rejected responses; content JSON/schema checks belong to later stages.
+        Validate the provider envelope before extracting content. Raise ProviderFailure
+        with INVALID_RESPONSE for rejected responses; content JSON/schema checks
+        belong to later stages.
         """
         if not isinstance(data, dict) or data.get("error") is not None:
-            raise self._diagnostics.failure(
-                "call_api",
-                "AI provider returned an invalid response envelope.",
-                RuntimeError,
+            raise self._diagnostics.provider_failure(
+                ProviderFailureReason.INVALID_RESPONSE
             )
         choices = data.get("choices")
         if not isinstance(choices, list) or not choices:
-            raise self._diagnostics.failure(
-                "call_api", "AI provider response has no valid choices.", RuntimeError
+            raise self._diagnostics.provider_failure(
+                ProviderFailureReason.INVALID_RESPONSE
             )
         choice = choices[0]
         if not isinstance(choice, dict):
-            raise self._diagnostics.failure(
-                "call_api", "AI provider returned an invalid choice.", RuntimeError
+            raise self._diagnostics.provider_failure(
+                ProviderFailureReason.INVALID_RESPONSE
             )
         if choice.get("finish_reason") != "stop":
-            raise self._diagnostics.failure(
-                "call_api", "AI provider did not return a completed answer.", RuntimeError
+            raise self._diagnostics.provider_failure(
+                ProviderFailureReason.INVALID_RESPONSE
             )
         message = choice.get("message")
         if not isinstance(message, dict):
-            raise self._diagnostics.failure(
-                "call_api", "AI provider returned an invalid message.", RuntimeError
+            raise self._diagnostics.provider_failure(
+                ProviderFailureReason.INVALID_RESPONSE
             )
         if message.get("refusal") is not None:
-            raise self._diagnostics.failure(
-                "call_api", "AI provider refused the assessment.", RuntimeError
+            raise self._diagnostics.provider_failure(
+                ProviderFailureReason.INVALID_RESPONSE
             )
         content = message.get("content")
         if not isinstance(content, str) or not content.strip():
-            raise self._diagnostics.failure(
-                "call_api", "AI provider returned no usable response text.", RuntimeError
+            raise self._diagnostics.provider_failure(
+                ProviderFailureReason.INVALID_RESPONSE
             )
         return content

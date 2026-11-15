@@ -242,8 +242,10 @@ def test_ai_manager_call_api_rejects_malformed_envelopes(ai_manager_provider_tra
     ai_manager_provider_transport.return_value.__enter__.return_value.read.return_value = (
         json.dumps(envelope).encode()
     )
-    with pytest.raises(RuntimeError) as failure:
+    with pytest.raises(ProviderFailure) as failure:
         GroqClient().complete("Fictional phishing assessment")
+    assert failure.value.reason is ProviderFailureReason.INVALID_RESPONSE
+    assert failure.value.status_code is None
     assert "fictional-sensitive-marker" not in str(failure.value)
     ai_manager_provider_transport.assert_called_once()
 
@@ -259,8 +261,10 @@ def test_ai_manager_call_api_rejects_incomplete_completions(ai_manager_provider_
     ai_manager_provider_transport.return_value.__enter__.return_value.read.return_value = (
         json.dumps(envelope).encode()
     )
-    with pytest.raises(RuntimeError):
+    with pytest.raises(ProviderFailure) as failure:
         GroqClient().complete("Fictional phishing assessment")
+    assert failure.value.reason is ProviderFailureReason.INVALID_RESPONSE
+    assert failure.value.status_code is None
     ai_manager_provider_transport.assert_called_once()
 
 
@@ -279,8 +283,10 @@ def test_ai_manager_call_api_rejects_refusal_with_content(ai_manager_provider_tr
     ai_manager_provider_transport.return_value.__enter__.return_value.read.return_value = (
         json.dumps(envelope).encode()
     )
-    with pytest.raises(RuntimeError) as failure:
+    with pytest.raises(ProviderFailure) as failure:
         GroqClient().complete("Fictional phishing assessment")
+    assert failure.value.reason is ProviderFailureReason.INVALID_RESPONSE
+    assert failure.value.status_code is None
     assert "fictional-sensitive-marker" not in str(failure.value)
     ai_manager_provider_transport.assert_called_once()
 
@@ -1047,8 +1053,10 @@ def test_ai_manager_retry_does_not_accept_invalid_provider_response(ai_manager_p
     response = ai_manager_provider_transport.return_value
     response.__enter__.return_value.read.return_value = b'{"choices": []}'
     ai_manager_provider_transport.side_effect = [TimeoutError(), response]
-    with pytest.raises(RuntimeError, match="choices"):
+    with pytest.raises(ProviderFailure) as failure:
         GroqClient().complete("Fictional prompt")
+    assert failure.value.reason is ProviderFailureReason.INVALID_RESPONSE
+    assert failure.value.status_code is None
     assert ai_manager_provider_transport.call_count == 2
 
 
@@ -1189,8 +1197,10 @@ def test_ai_manager_invalid_fallback_response_is_rejected(
     response = ai_manager_provider_transport.return_value
     response.__enter__.return_value.read.return_value = b'{"choices": []}'
     ai_manager_provider_transport.side_effect = [TimeoutError(), response]
-    with pytest.raises(RuntimeError, match="choices"):
+    with pytest.raises(ProviderFailure) as failure:
         GroqClient().complete("Fictional prompt")
+    assert failure.value.reason is ProviderFailureReason.INVALID_RESPONSE
+    assert failure.value.status_code is None
     assert ai_manager_provider_transport.call_count == 2
 
 
