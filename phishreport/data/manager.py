@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 
-from phishreport.errors import StorageFailure
+from phishreport.errors import InvalidInput, StorageFailure
 from phishreport.logging_setup import AppLogging
 
 from .json_storage import JsonReportStorage
@@ -26,12 +26,18 @@ class DataManager:
     def save(self, record: dict) -> None:
         """Append a new v2 or v3 report after validating the complete history.
 
-        Validation and storage failures propagate without retrying. Storage
+        Validation and storage failures become domain errors without retrying. Storage
         replacement provides single-process semantics, not concurrent writes.
         """
-        self._validator.validate_new(record)
+        try:
+            self._validator.validate_new(record)
+        except ValueError as error:
+            raise InvalidInput() from error
         records = self.load(strict=True)
-        self._storage.write_records([*records, record])
+        try:
+            self._storage.write_records([*records, record])
+        except (OSError, ValueError) as error:
+            raise StorageFailure() from error
 
     def load(self, *, strict: bool = False) -> list[dict]:
         """Return complete validated history, or recover with [] by default.

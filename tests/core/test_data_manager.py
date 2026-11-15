@@ -11,7 +11,7 @@ import pytest
 
 from phishreport.ai import AIManager
 from phishreport.data import DataManager, JsonReportStorage, json_storage
-from phishreport.errors import StorageFailure
+from phishreport.errors import InvalidInput, StorageFailure
 from phishreport.logging_setup import AppLogging
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
@@ -149,8 +149,9 @@ def test_data_manager_invalid_result(data_manager_storage, field, value):
     record = data_manager_report()
     record["result"][field] = value
     data_manager_storage.write_text("[]", encoding="utf-8")
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidInput) as caught:
         data_manager_for(data_manager_storage).save(record)
+    assert isinstance(caught.value.__cause__, ValueError)
     assert data_manager_storage.read_text() == "[]"
 
     # The same invalid value must be rejected when it already exists on disk.
@@ -173,8 +174,9 @@ def test_data_manager_missing_field(data_manager_storage, field):
     """Require every field in new version-2 records before writing."""
     record = data_manager_report()
     del record[field]
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidInput) as caught:
         data_manager_for(data_manager_storage).save(record)
+    assert isinstance(caught.value.__cause__, ValueError)
     assert not data_manager_storage.exists()
 
 
@@ -295,8 +297,9 @@ def test_data_manager_invalid_report(data_manager_storage, key, value):
     data_manager_storage.write_text("[]")
     record = data_manager_report()
     record[key] = value
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidInput) as caught:
         data_manager_for(data_manager_storage).save(record)
+    assert isinstance(caught.value.__cause__, ValueError)
     assert data_manager_storage.read_text() == "[]"
 
 
@@ -305,9 +308,11 @@ def test_data_manager_failed_atomic_replace_preserves_old_history(
 ):
     data_manager_storage.write_text('[{"message":"Older report"}]')
     before = data_manager_storage.read_bytes()
-    monkeypatch.setattr(json_storage.os, "replace", Mock(side_effect=OSError("write failed")))
-    with pytest.raises(OSError):
+    error = OSError("write failed")
+    monkeypatch.setattr(json_storage.os, "replace", Mock(side_effect=error))
+    with pytest.raises(StorageFailure) as caught:
         data_manager_for(data_manager_storage).save(data_manager_report())
+    assert caught.value.__cause__ is error
     assert data_manager_storage.read_bytes() == before
     assert list(data_manager_storage.parent.glob("*.tmp")) == []
 
@@ -356,21 +361,22 @@ def test_data_manager_io_failures_preserve_history(data_manager_storage, monkeyp
     before = data_manager_storage.read_bytes()
     subject = data_manager_for(data_manager_storage)
     if failure == "serialization":
-        monkeypatch.setattr(json_storage.json, "dump", Mock(side_effect=ValueError("Invalid JSON")))
+        error = ValueError("Invalid JSON")
+        monkeypatch.setattr(json_storage.json, "dump", Mock(side_effect=error))
     elif failure == "flush":
-        monkeypatch.setattr(json_storage.os, "fsync", Mock(side_effect=OSError("Disk unavailable")))
+        error = OSError("Disk unavailable")
+        monkeypatch.setattr(json_storage.os, "fsync", Mock(side_effect=error))
     else:
+        error = PermissionError("Read denied")
         storage = JsonReportStorage(data_manager_storage)
         monkeypatch.setattr(
-            storage, "read_records", Mock(side_effect=PermissionError("Read denied"))
+            storage, "read_records", Mock(side_effect=error)
         )
         subject = DataManager(storage=storage)
-    expected = StorageFailure if failure == "read" else (ValueError, OSError)
-    with pytest.raises(expected) as caught:
+    with pytest.raises(StorageFailure) as caught:
         subject.save(data_manager_report())
-    if failure == "read":
-        assert isinstance(caught.value.__cause__, PermissionError)
-        assert str(caught.value) == StorageFailure.user_message
+    assert caught.value.__cause__ is error
+    assert str(caught.value) == StorageFailure.user_message
     assert data_manager_storage.read_bytes() == before
     assert list(data_manager_storage.parent.glob("*.tmp")) == []
 

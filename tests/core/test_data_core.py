@@ -6,7 +6,7 @@ from importlib import import_module
 import pytest
 
 from phishreport.data import JsonReportStorage, SqliteReportStorage
-from phishreport.errors import StorageFailure
+from phishreport.errors import InvalidInput, StorageFailure
 
 
 def validator():
@@ -964,8 +964,9 @@ def backend_spy():
 
 def test_manager_invalid_new_input_never_touches_storage(backend_spy):
     subject = manager(backend_spy)
-    with pytest.raises(ValueError):
+    with pytest.raises(InvalidInput) as caught:
         subject.save(v1_report())
+    assert isinstance(caught.value.__cause__, ValueError)
     assert backend_spy.calls == []
 
 
@@ -1019,13 +1020,61 @@ def test_manager_read_failure_prevents_write(backend_spy):
     assert backend_spy.calls == ["read"]
 
 
-def test_manager_write_error_propagates_without_retry(backend_spy):
-    error = OSError("unwritable")
+@pytest.mark.parametrize("error", [OSError("unwritable"), ValueError("invalid JSON")])
+def test_manager_write_error_translates_without_retry(backend_spy, error, caplog):
     backend_spy.write_error = error
-    with pytest.raises(OSError) as caught:
+    with pytest.raises(StorageFailure) as caught:
         manager(backend_spy).save(v2_report())
-    assert caught.value is error
+    assert caught.value.__cause__ is error
     assert backend_spy.calls == ["read", "write"]
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize("error", [TypeError("defect"), KeyError("defect"), RuntimeError("defect")])
+@pytest.mark.parametrize("stage", ["validation", "write"])
+def test_manager_save_programmer_errors_propagate_unchanged(backend_spy, error, stage):
+    class FailingValidator:
+        def validate_new(self, record):
+            raise error
+
+    if stage == "validation":
+        subject = manager(backend_spy, FailingValidator())
+    else:
+        backend_spy.write_error = error
+        subject = manager(backend_spy)
+    with pytest.raises(type(error)) as caught:
+        subject.save(v2_report())
+    assert caught.value is error
+    assert backend_spy.calls == ([] if stage == "validation" else ["read", "write"])
+
+
+def test_manager_new_validation_failure_preserves_original_cause(backend_spy):
+    error = ValueError("private invalid report")
+
+    class FailingValidator:
+        def validate_new(self, record):
+            raise error
+
+    with pytest.raises(InvalidInput) as caught:
+        manager(backend_spy, FailingValidator()).save(v2_report())
+    assert caught.value.__cause__ is error
+    assert str(caught.value) == InvalidInput.user_message
+    assert backend_spy.calls == []
+
+
+def test_manager_save_preserves_strict_load_failure_identity(backend_spy, monkeypatch):
+    error = StorageFailure()
+    subject = manager(backend_spy)
+
+    def fail(*, strict):
+        assert strict is True
+        raise error
+
+    monkeypatch.setattr(subject, "load", fail)
+    with pytest.raises(StorageFailure) as caught:
+        subject.save(v2_report())
+    assert caught.value is error
+    assert backend_spy.calls == []
 
 
 def test_manager_injected_validator_and_falsey_backend_are_used(backend_spy):
