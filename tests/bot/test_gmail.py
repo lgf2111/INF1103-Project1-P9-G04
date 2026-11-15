@@ -6,11 +6,14 @@ import stat
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
+import pytest
+
 from phishreport.assessment import AssessmentService
 from phishreport.bot.gmail import AccountStore, EmailSource, LinkedAccount, MailboxError
 from phishreport.bot.gmail_handlers import GmailLinkHandlers
 from phishreport.bot.monitor import EmailMonitor
 from phishreport.data import DataManager, JsonReportStorage
+from phishreport.errors import AIUnavailable
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.logic import LogicManager
 
@@ -174,7 +177,7 @@ def test_a_safe_email_is_saved_without_an_alert(tmp_path):
 
 def test_a_temporary_ai_failure_keeps_the_email_for_the_next_cycle(tmp_path):
     monitor, store, bot, _ = monitor_for(tmp_path, FakeMailbox([(9, RAW)]))
-    monitor._assessment = Mock(assess=Mock(side_effect=RuntimeError("down")))
+    monitor._assessment = Mock(assess=Mock(side_effect=AIUnavailable()))
 
     asyncio.run(monitor.poll_once())
 
@@ -292,3 +295,51 @@ def test_polling_a_healthy_inbox_prints_no_failure(tmp_path, capsys):
     asyncio.run(two_cycles())
 
     assert "failed" not in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("retryable", [True, False])
+def test_mailbox_failures_never_render_private_text(tmp_path, capsys, retryable):
+    mailbox = FakeMailbox(error=MailboxError("PRIVATE credentials", retryable))
+    monitor, store, bot, _ = monitor_for(tmp_path, mailbox)
+    reply = asyncio.run(monitor.check_unread(1))
+    assert "PRIVATE" not in reply
+    asyncio.run(monitor.poll_once())
+    assert "PRIVATE" not in capsys.readouterr().out
+    up = update()
+    asyncio.run(GmailLinkHandlers(store, lambda u: True, lambda a, p: mailbox).link(
+        up, SimpleNamespace(args=["a@gmail.com", "password"]),
+    ))
+    assert "PRIVATE" not in up.effective_chat.send_message.call_args.args[0]
+
+
+@pytest.mark.parametrize("operation", ["link", "unlink", "check"])
+@pytest.mark.parametrize("error_type", [OSError, ValueError])
+def test_account_storage_failures_get_safe_replies(operation, error_type):
+    store = Mock()
+    error = error_type("PRIVATE storage path")
+    store.save.side_effect = error
+    store.remove.side_effect = error
+    store.get.side_effect = error
+    up = update()
+    handlers = GmailLinkHandlers(store, lambda u: True, lambda a, p: FakeMailbox())
+    monitor = EmailMonitor(Mock(), store, Mock(), Mock(), asyncio.Lock())
+    context = SimpleNamespace(args=["a@gmail.com", "password"],
+        application=SimpleNamespace(bot_data={"monitor": monitor}))
+    asyncio.run(getattr(handlers, operation)(up, context))
+    replies = (up.effective_chat.send_message.call_args_list if operation == "link"
+               else up.effective_message.reply_text.call_args_list)
+    final = replies[-1].args[0]
+    assert "PRIVATE" not in final
+    assert "try again" in final.lower()
+    assert "Linked" not in final and "unlinked" not in final
+
+
+@pytest.mark.parametrize("manual", [False, True])
+def test_progress_save_failure_retains_in_memory_uid(tmp_path, manual):
+    monitor, store, _, _ = monitor_for(tmp_path, FakeMailbox([(9, RAW)]))
+    account = store.get(1)
+    monitor._store = Mock(get=Mock(return_value=account),
+                          save=Mock(side_effect=OSError("PRIVATE progress")))
+    asyncio.run(monitor.check_unread(1) if manual else monitor._poll_account(account))
+    assert account.last_uid == 5
+    assert store.get(1).last_uid == 5

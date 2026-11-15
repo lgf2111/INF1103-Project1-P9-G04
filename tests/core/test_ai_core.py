@@ -5,7 +5,7 @@ import json
 import pytest
 
 from phishreport import ai as ai_core
-from phishreport.ai._provider_errors import ProviderFailure, ProviderFailureReason
+from phishreport.ai import ProviderFailure, ProviderFailureReason
 from phishreport.errors import AIUnavailable, InvalidInput
 
 

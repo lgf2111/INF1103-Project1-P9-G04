@@ -18,7 +18,13 @@ from phishreport.bot.messages import (
     ResultFormatter,
 )
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
-from phishreport.errors import AssessmentError, FeedbackRejected, StorageFailure
+from phishreport.errors import (
+    AIUnavailable,
+    AssessmentError,
+    FeedbackRejected,
+    InvalidInput,
+    StorageFailure,
+)
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.logic import LogicManager
 
@@ -434,9 +440,9 @@ def test_without_an_assessment_service_the_bot_says_so():
 
 
 def test_an_ai_service_failure_gets_the_friendly_message_and_nothing_is_saved():
-    ai_manager = Mock(**{
-        "assess.side_effect": ProviderFailure(ProviderFailureReason.HTTP, status_code=429),
-    })
+    error = AIUnavailable()
+    error.__cause__ = ProviderFailure(ProviderFailureReason.HTTP, status_code=429)
+    ai_manager = Mock(**{"assess.side_effect": error})
     manager, data_manager = build(ai_manager)
     update = update_with("hello")
 
@@ -447,13 +453,13 @@ def test_an_ai_service_failure_gets_the_friendly_message_and_nothing_is_saved():
 
 
 def test_an_invalid_ai_reply_is_reported_and_nothing_is_saved():
-    ai_manager = Mock(**{"assess.side_effect": ValueError("AI response is not valid JSON")})
+    ai_manager = Mock(**{"assess.side_effect": InvalidInput()})
     manager, data_manager = build(ai_manager)
     update = update_with("hello")
 
     asyncio.run(manager.assess_message(update, None))
 
-    assert reply_text(update) == "Sorry, the check failed: AI response is not valid JSON"
+    assert reply_text(update) == "Invalid input. Please revise it and try again."
     data_manager.save.assert_not_called()
 
 

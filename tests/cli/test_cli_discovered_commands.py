@@ -127,16 +127,15 @@ def test_custom_assessment_policy_retains_assessment_error_presentation(
     app, terminal, ai, logic, data, feedback = extension_app
     app._error_translator = Mock(**{"translate.return_value": "Assessment temporarily unavailable"})
 
-    app.check_message(command_text="/extension_probe")
-
-    text = terminal.write.call_args.args[0]
     if error_type == "OSError":
-        assert text == "Sorry, the check failed. Please try again."
-    elif error_type == "ValueError":
-        assert text == "Sorry, the check failed: Assessment unavailable"
+        app.check_message(command_text="/extension_probe")
+        terminal.write.assert_called_once_with("Sorry, the check failed. Please try again.")
     else:
-        app._error_translator.translate.assert_called_once()
-        assert text == "Assessment temporarily unavailable"
+        expected = ValueError if error_type == "ValueError" else RuntimeError
+        with pytest.raises(expected, match="Assessment unavailable"):
+            app.check_message(command_text="/extension_probe")
+        terminal.write.assert_not_called()
+        app._error_translator.translate.assert_not_called()
     data.save.assert_not_called()
 
 

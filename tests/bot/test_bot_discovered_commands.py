@@ -152,16 +152,16 @@ def test_custom_assessment_failures_keep_assessment_presentation(
     )
     update = update_for("/extension_probe")
 
-    asyncio.run(manager.assess_message(update, None))
-
-    text = update.effective_message.reply_text.await_args.args[0]
-    if error_type == "RuntimeError":
-        manager._error_translator.translate.assert_called_once()
-        assert text == "Assessment temporarily unavailable"
-    elif error_type == "ValueError":
-        assert text == "Sorry, the check failed: Assessment unavailable"
+    if error_type in {"RuntimeError", "ValueError"}:
+        with pytest.raises(getattr(__import__("builtins"), error_type)):
+            asyncio.run(manager.assess_message(update, None))
+        update.effective_message.reply_text.assert_not_awaited()
     else:
-        assert text == "Sorry, the check failed. Please try again."
+        asyncio.run(manager.assess_message(update, None))
+        update.effective_message.reply_text.assert_awaited_once_with(
+            "Sorry, the check failed. Please try again."
+        )
+    manager._error_translator.translate.assert_not_called()
     assert not manager._sessions
 
 

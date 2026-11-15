@@ -94,7 +94,7 @@ def test_typed_storage_failure_still_alerts_without_feedback_or_second_ai_call(t
     assert SECRET not in capsys.readouterr().out
 
 
-@pytest.mark.parametrize("error_type", [TypeError, KeyError])
+@pytest.mark.parametrize("error_type", [TypeError, KeyError, RuntimeError, ValueError])
 def test_programming_errors_escape_assessment_boundary(tmp_path, error_type):
     monitor, store, _, _, _ = monitor_for(tmp_path)
     monitor._assessment = SimpleNamespace(assess=Mock(side_effect=error_type(SECRET)))

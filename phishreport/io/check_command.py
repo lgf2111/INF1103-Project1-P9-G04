@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 
 from phishreport.assessment import AssessmentSnapshot
+from phishreport.errors import InvalidInput
 
 from .commands import Command, CommandPolicy, CommandReply, CommandRequest
 
@@ -39,7 +40,10 @@ class CheckCommand(Command):
         if not request.text.strip():
             return CommandReply("Usage: /check <text>", "usage")
 
-        record = self.prepare_record(request)
+        try:
+            record = self.prepare_record(request)
+        except ValueError as error:
+            raise InvalidInput() from error
         assessment = self.assess_record(record)
         if isinstance(assessment, AssessmentSnapshot):
             outcome = CheckOutcome(record, assessment.result, assessment.findings)

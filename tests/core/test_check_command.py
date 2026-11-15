@@ -5,6 +5,7 @@ from unittest.mock import Mock
 import pytest
 
 from phishreport.assessment import AssessmentSnapshot
+from phishreport.errors import InvalidInput
 from phishreport.io.check_command import CheckCommand, CheckOutcome
 from phishreport.io.commands import CommandReply, CommandRequest, CommandRouter
 
@@ -70,10 +71,10 @@ def test_check_service_failure_propagates_without_replacing_previous_outcome(fai
     error = ValueError("Invalid input or assessment")
     (prepare if failure_stage == "prepare" else assess).side_effect = error
 
-    with pytest.raises(ValueError) as caught:
+    with pytest.raises(InvalidInput if failure_stage == "prepare" else ValueError) as caught:
         CheckCommand(prepare, assess).execute(request)
 
-    assert caught.value is error
+    assert (caught.value.__cause__ if failure_stage == "prepare" else caught.value) is error
     assert request.session == {"check_outcome": previous}
     prepare.assert_called_once_with(request)
     if failure_stage == "prepare":

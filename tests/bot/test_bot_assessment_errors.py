@@ -126,14 +126,20 @@ def test_programming_errors_propagate(parts, error_type, stage):
 
 
 @pytest.mark.parametrize("text", ["Check me", "/check Check me"])
-@pytest.mark.parametrize("error,expected", [
-    (ValueError("legacy validation"), "Sorry, the check failed: legacy validation"),
-    (RuntimeError("PRIVATE token"),
-     "The check failed: the AI could not complete the assessment. Please try again."),
-])
-def test_legacy_assessment_failure_behavior_is_preserved(parts, text, error, expected):
+@pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
+def test_unknown_assessment_failures_propagate(parts, text, error_type):
+    error = error_type("PRIVATE validation token")
     parts[1].assess_with_findings.side_effect = error
+    with pytest.raises(error_type) as caught:
+        invoke(parts, text)
+    assert caught.value is error
+    parts[3].effective_message.reply_text.assert_not_awaited()
+    assert parts[0]._sessions == {}
 
-    invoke(parts, text)
 
-    assert_stopped(parts, expected)
+@pytest.mark.parametrize("error_type", [OSError, ValueError])
+def test_free_text_builder_legacy_failure_is_safe(parts, error_type):
+    parts[0]._record_builder = Mock(build=Mock(side_effect=error_type("PRIVATE input")))
+    invoke(parts, "Check me")
+    assert_stopped(parts, "Invalid input. Please revise it and try again.")
+    parts[1].assess_with_findings.assert_not_called()

@@ -521,6 +521,34 @@ local Python 3.12 full-suite run recorded 1630 passed, 18 skipped and one unchan
 Windows Gmail permission failure (`0600` expected, `0666` observed); it was not a
 clean full-suite pass or a container/remote CI result.
 
+### Expected failures
+
+Application callers can catch `AssessmentError` from `phishreport.errors` and
+display its non-empty `user_message`. Original diagnostic exceptions remain
+available through exception chaining; they are not user-facing messages.
+
+| Failure | Application error | Behaviour |
+| --- | --- | --- |
+| AI provider unavailable or invalid provider envelope | `AIUnavailable` | No partial assessment; Gmail retains the email for retry. |
+| Invalid assessment input or AI findings | `InvalidInput` | No report saved; Gmail skips invalid input. |
+| Strict report/feedback history read or write failure | `StorageFailure` | Existing contents preserved; completed assessments can still be displayed. |
+| Invalid feedback or assessment context | `FeedbackRejected` | Feedback is not written; the assessment remains unchanged. |
+
+`DataManager.load()` retains its default recovery behaviour; use `strict=True`
+when a read failure must be distinguished from empty history. Direct report
+storage implementations retain their `ValueError`/`OSError` contract.
+Completion-client implementations use the public `ProviderFailure` and
+`ProviderFailureReason` exports from `phishreport.ai` for expected provider
+failures. Unknown programming errors are not reclassified as AI failures.
+Default failure logs contain controlled summaries; `LOG_LEVEL=DEBUG` retains
+the existing opt-in traceback behaviour.
+
+Run the offline service failure matrix with:
+
+```text
+python -m pytest tests/core/test_error_handling_matrix.py -q
+```
+
 ### Assessment policy
 
 The first matching rule determines the score and priority. Every new assessment requires valid AI findings.

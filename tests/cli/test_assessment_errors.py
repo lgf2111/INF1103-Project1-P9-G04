@@ -225,3 +225,111 @@ def test_feedback_programmer_error_propagates(app_parts, error_type):
 
     feedback.submit.assert_called_once()
     io.show_message.assert_not_called()
+
+
+@pytest.mark.parametrize("command", [False, True])
+@pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
+def test_unexpected_assessment_errors_propagate(app_parts, command, error_type):
+    app, io, ai, data, _ = app_parts
+    ai.assess.side_effect = error_type("PRIVATE programmer failure")
+    with pytest.raises(error_type):
+        invoke(app, command)
+    io.show_message.assert_not_called()
+    data.save.assert_not_called()
+
+
+@pytest.mark.parametrize("error_type", [ValueError, OSError])
+def test_input_collection_failure_is_safe(app_parts, error_type):
+    app, io, ai, data, _ = app_parts
+    io.collect_input.side_effect = error_type("PRIVATE input path")
+    app.check_message()
+    io.show_message.assert_called_once_with("Sorry, the check failed. Please try again.")
+    ai.assess.assert_not_called()
+    data.save.assert_not_called()
+
+
+def test_feedback_collection_validation_is_safe(app_parts):
+    app, io, _, _, feedback = app_parts
+    io.collect_feedback.side_effect = ValueError("PRIVATE feedback")
+    app._collect_feedback({"assessment_id": "completed"})
+    io.show_message.assert_called_once_with(
+        "Could not save your feedback. The assessment result is unchanged."
+    )
+    feedback.submit.assert_not_called()
+
+
+def test_summary_filter_failure_is_safe(app_parts):
+    app, io, _, data, _ = app_parts
+    data.load.return_value = []
+    io.collect_summary_filter.side_effect = ValueError("PRIVATE filter")
+    app.summarize_reports()
+    io.show_message.assert_called_once_with(
+        "Invalid report filter. Check the channel, priority and minimum score, then try again."
+    )
+    io.display_summary.assert_not_called()
+
+
+def test_summary_uses_the_strictly_loaded_snapshot(app_parts):
+    app, io, _, data, _ = app_parts
+    records = [{"message": "retained"}]
+    data.load.return_value = records
+    io.collect_summary_filter.return_value = {}
+    app._logic_manager.build_filter.return_value.matches.return_value = True
+    app.summarize_reports()
+    app._logic_manager.summarize.assert_called_once_with(records)
+    data.load.assert_called_once_with(strict=True)
+    data.query.assert_not_called()
+
+
+@pytest.mark.parametrize("error_type", [ValueError, OSError, InvalidInput])
+def test_upload_failure_does_not_expose_details(app_parts, monkeypatch, error_type):
+    app, io, ai, data, _ = app_parts
+    error = error_type() if error_type is InvalidInput else error_type("PRIVATE upload")
+    monkeypatch.setattr(
+        "phishreport.cli.web_upload.BrowserUploadService.receive_upload",
+        Mock(side_effect=error),
+    )
+    app.upload_file()
+    assert "PRIVATE" not in io.show_message.call_args.args[0]
+    ai.assess.assert_not_called()
+    data.save.assert_not_called()
+
+
+@pytest.mark.parametrize("operation", ["input", "upload", "feedback", "filter"])
+@pytest.mark.parametrize("error_type", [TypeError, KeyError, EOFError, KeyboardInterrupt])
+def test_input_boundaries_preserve_programming_errors_and_cancellation(
+    app_parts, monkeypatch, operation, error_type,
+):
+    app, io, _, data, _ = app_parts
+    error = error_type("PRIVATE cancellation or defect")
+    if operation == "input":
+        io.collect_input.side_effect = error
+        action = app.check_message
+    elif operation == "upload":
+        monkeypatch.setattr(
+            "phishreport.cli.web_upload.BrowserUploadService.receive_upload",
+            Mock(side_effect=error),
+        )
+        action = app.upload_file
+    elif operation == "feedback":
+        io.collect_feedback.side_effect = error
+        def action():
+            app._collect_feedback({"assessment_id": "completed"})
+    else:
+        data.load.return_value = []
+        io.collect_summary_filter.side_effect = error
+        action = app.summarize_reports
+    with pytest.raises(error_type):
+        action()
+    io.show_message.assert_not_called()
+
+
+def test_upload_unexpected_runtime_error_propagates(app_parts, monkeypatch):
+    app, io, _, _, _ = app_parts
+    monkeypatch.setattr(
+        "phishreport.cli.web_upload.BrowserUploadService.receive_upload",
+        Mock(side_effect=RuntimeError("PRIVATE programmer defect")),
+    )
+    with pytest.raises(RuntimeError):
+        app.upload_file()
+    io.show_message.assert_not_called()

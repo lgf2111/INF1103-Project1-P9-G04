@@ -90,7 +90,16 @@ class PhishReportApp:
         version-3 outcome locally, then display it even if persistence fails.
         """
         if command_text is None and record is None:
-            record = self._io_manager.collect_input()
+            try:
+                record = self._io_manager.collect_input()
+            except AssessmentError as error:
+                AppLogging.log_failure(logger, "Input collection failed")
+                self._io_manager.show_message(self._error_translator.translate(error))
+                return
+            except (OSError, ValueError):
+                AppLogging.log_failure(logger, "Input collection failed")
+                self._io_manager.show_message("Sorry, the check failed. Please try again.")
+                return
 
         if command_text is not None:
             catalog = discover_commands(CommandCapabilities(
@@ -141,19 +150,6 @@ class PhishReportApp:
             AppLogging.log_failure(logger, "Assessment failed")
             self._io_manager.show_message(self._error_translator.translate(error))
             return
-        # RuntimeError: the AI could not complete after its retries (service down,
-        # offline, rate limited). Show an actionable message; the AI is never bypassed.
-        except RuntimeError as error:
-            AppLogging.log_failure(logger, "Assessment failed after AI retries")
-            self._io_manager.show_message(self._error_translator.translate(error))
-            return
-        # ValueError: bad input or an invalid AI reply - not retryable. KeyError and
-        # TypeError would be programming bugs, so let them surface.
-        except ValueError as error:
-            AppLogging.log_failure(logger, "Assessment failed")
-            self._io_manager.show_message("Sorry, the check failed: " + str(error))
-            return
-
         # Retain the original message and assessment with an identifier for feedback.
         report = self._assessment.build_report(record, result)
         report_saved = False
@@ -176,10 +172,10 @@ class PhishReportApp:
 
     def _collect_feedback(self, result: dict) -> None:
         """Store optional user feedback without changing the completed assessment."""
-        feedback = self._io_manager.collect_feedback()
-        if feedback is None:
-            return
         try:
+            feedback = self._io_manager.collect_feedback()
+            if feedback is None:
+                return
             self._feedback_service.submit(
                 assessment_id=result["assessment_id"],
                 assessment_result=result,
@@ -202,9 +198,13 @@ class PhishReportApp:
             self._io_manager.show_upload_instructions(web_upload.DISPLAY_HOST, web_upload.PORT)
             upload = web_upload.BrowserUploadService().receive_upload()
             record = self._io_manager.collect_input_from_upload(upload)
-        except (OSError, RuntimeError, ValueError) as error:
+        except AssessmentError as error:
             AppLogging.log_failure(logger, "File upload failed")
-            self._io_manager.show_message("Upload failed: " + str(error))
+            self._io_manager.show_message(error.user_message)
+            return
+        except (OSError, ValueError):
+            AppLogging.log_failure(logger, "File upload failed")
+            self._io_manager.show_message("Upload failed. Please try again with an .eml email.")
             return
 
         self.check_message(record)
@@ -239,10 +239,18 @@ class PhishReportApp:
             report_filter = self._logic_manager.build_filter(
                 **self._io_manager.collect_summary_filter()
             )
-        except ValueError as error:
-            self._io_manager.show_message(str(error))
+        except AssessmentError as error:
+            AppLogging.log_failure(logger, "Report filter validation failed")
+            self._io_manager.show_message(error.user_message)
             return
-        matching = self._data_manager.query(report_filter.matches)
+        except ValueError:
+            AppLogging.log_failure(logger, "Report filter validation failed")
+            self._io_manager.show_message(
+                "Invalid report filter. Check the channel, priority and minimum score, "
+                "then try again."
+            )
+            return
+        matching = [record for record in records if report_filter.matches(record)]
         summary = self._logic_manager.summarize(matching)
         self._io_manager.display_summary(summary, report_filter.describe())
 

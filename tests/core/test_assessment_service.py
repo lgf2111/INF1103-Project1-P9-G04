@@ -7,6 +7,7 @@ from uuid import UUID
 import pytest
 
 from phishreport.assessment import AssessmentService
+from phishreport.errors import InvalidInput
 from phishreport.logic import LogicManager
 from phishreport.model import Report
 
@@ -555,9 +556,11 @@ def test_rescore_isolates_inputs_and_result_from_mutating_logic():
 def test_rescore_propagates_validation_errors_without_ai(record, findings, message):
     service, ai_manager = _service()
 
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(InvalidInput) as caught:
         service.rescore(record, findings)
 
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert message in str(caught.value.__cause__)
     ai_manager.assess.assert_not_called()
 
 
@@ -584,3 +587,53 @@ def test_rescore_propagates_logic_failure_without_ai_or_input_mutation(error):
     assert record == record_before
     assert findings == findings_before
     ai_manager.assess.assert_not_called()
+
+
+@pytest.mark.parametrize("method", ["assess", "assess_with_findings", "rescore"])
+@pytest.mark.parametrize("invalid", ["record", "findings"])
+def test_known_logic_validation_becomes_safe_invalid_input(method, invalid):
+    record = {**RECORD, "clicked": "PRIVATE invalid"} if invalid == "record" else dict(RECORD)
+    findings = ({**FINDINGS, "suspicious": "PRIVATE invalid"}
+                if invalid == "findings" else dict(FINDINGS))
+    before = deepcopy((record, findings))
+    service, ai = _service(findings)
+    with pytest.raises(InvalidInput) as caught:
+        if method == "rescore":
+            service.rescore(record, findings)
+        else:
+            getattr(service, method)(record)
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert "PRIVATE" not in str(caught.value)
+    assert (record, findings) == before
+    assert ai.assess.call_count == (0 if method == "rescore" else 1)
+
+
+@pytest.mark.parametrize("method", ["assess", "assess_with_findings", "rescore"])
+@pytest.mark.parametrize("error_type", [ValueError, RuntimeError, TypeError, KeyError])
+def test_unknown_logic_errors_keep_their_identity(method, error_type):
+    error = error_type("PRIVATE rule or guidance defect")
+    service = AssessmentService(Mock(assess=Mock(return_value=FINDINGS)),
+                                Mock(evaluate=Mock(side_effect=error)))
+    with pytest.raises(error_type) as caught:
+        if method == "rescore":
+            service.rescore(RECORD, FINDINGS)
+        else:
+            getattr(service, method)(RECORD)
+    assert caught.value is error
+
+
+@pytest.mark.parametrize("method", ["assess", "assess_with_findings", "rescore"])
+@pytest.mark.parametrize("stage", ["rule", "guidance"])
+def test_plain_rule_and_guidance_value_errors_are_not_input_failures(method, stage):
+    error = ValueError("PRIVATE collaborator defect")
+    collaborators = ({"rule_engine": Mock(evaluate=Mock(side_effect=error))}
+                     if stage == "rule" else
+                     {"guidance_builder": Mock(build=Mock(side_effect=error))})
+    service = AssessmentService(Mock(assess=Mock(return_value=FINDINGS)),
+                                LogicManager(**collaborators))
+    with pytest.raises(ValueError) as caught:
+        if method == "rescore":
+            service.rescore(RECORD, FINDINGS)
+        else:
+            getattr(service, method)(RECORD)
+    assert caught.value is error

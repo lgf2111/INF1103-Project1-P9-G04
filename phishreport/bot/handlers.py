@@ -333,10 +333,10 @@ class TelegramIOManager:
                 except (AssessmentError, OSError, ValueError, RuntimeError) as error:
                     if command.policy.failure != "assessment":
                         failure_text = failure_messages[command.policy.failure]
-                    elif isinstance(error, (AssessmentError, RuntimeError)):
+                    elif isinstance(error, AssessmentError):
                         failure_text = self._error_translator.translate(error)
-                    elif isinstance(error, ValueError):
-                        failure_text = "Sorry, the check failed: " + str(error)
+                    elif isinstance(error, (ValueError, RuntimeError)):
+                        raise
                     else:
                         failure_text = "Sorry, the check failed. Please try again."
                     await message.reply_text(failure_text)
@@ -367,6 +367,9 @@ class TelegramIOManager:
                     except AssessmentError as error:
                         await message.reply_text(self._error_translator.translate(error))
                         return
+                    except (ValueError, OSError):
+                        await message.reply_text("Invalid input. Please revise it and try again.")
+                        return
                 if command is not None:
                     request = CommandRequest(text, "telegram")
                     try:
@@ -374,10 +377,10 @@ class TelegramIOManager:
                     except (AssessmentError, OSError, ValueError, RuntimeError) as error:
                         if command.policy.failure != "assessment":
                             failure_text = failure_messages[command.policy.failure]
-                        elif isinstance(error, (AssessmentError, RuntimeError)):
+                        elif isinstance(error, AssessmentError):
                             failure_text = self._error_translator.translate(error)
-                        elif isinstance(error, ValueError):
-                            failure_text = "Sorry, the check failed: " + str(error)
+                        elif isinstance(error, (ValueError, RuntimeError)):
+                            raise
                         else:
                             failure_text = "Sorry, the check failed. Please try again."
                         await message.reply_text(failure_text)
@@ -399,11 +402,8 @@ class TelegramIOManager:
                         snapshot = await asyncio.to_thread(
                             self._assessment.assess_with_findings, record,
                         )
-                    except (AssessmentError, RuntimeError) as error:
+                    except AssessmentError as error:
                         await message.reply_text(self._error_translator.translate(error))
-                        return
-                    except ValueError as error:
-                        await message.reply_text("Sorry, the check failed: " + str(error))
                         return
 
                 session = ExposureSession(
