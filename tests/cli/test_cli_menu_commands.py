@@ -6,6 +6,7 @@ import pytest
 
 from phishreport.cli.main import PhishReportApp
 from phishreport.data import DataManager, JsonReportStorage
+from phishreport.errors import AIUnavailable, InvalidInput
 from phishreport.io import IOManager
 from phishreport.io.check_command import CheckCommand
 from phishreport.io.commands import CommandRouter
@@ -89,13 +90,13 @@ def test_menu_continues_after_usage_and_unknown_commands_then_assesses(menu_app)
     terminal.write.assert_any_call("Bye!")
 
 
-@pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
+@pytest.mark.parametrize("error_type", [InvalidInput, AIUnavailable])
 def test_menu_continues_after_failed_command_and_saves_only_next_success(menu_app, error_type):
     app, terminal, ai, logic, data = menu_app([
         "/check Failed Message", "no", "no", "no",
         "/check Next Message", "no", "no", "no", "6",
     ])
-    ai.assess.side_effect = [error_type("Assessment failed"), {"suspicious": True}]
+    ai.assess.side_effect = [error_type(), {"suspicious": True}]
 
     app.run()
 

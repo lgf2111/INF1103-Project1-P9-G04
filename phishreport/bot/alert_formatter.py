@@ -6,6 +6,7 @@ from html import escape
 from phishreport.io.assessment_document import AssessmentDocument
 from phishreport.io.html_alert_renderer import HTMLAlertRenderer
 from phishreport.io.render import AssessmentRenderer
+from phishreport.model import AssessmentResult
 
 
 class PhishingAlertFormatter:
@@ -45,7 +46,8 @@ class PhishingAlertFormatter:
         return replace(document, sections=tuple(sections))
 
     def format(
-        self, result: dict, sender: str | None, subject: str = "", source_url: str | None = None
+        self, result: AssessmentResult | dict | None, sender: str | None,
+        subject: str = "", source_url: str | None = None,
     ) -> str:
         document = self._prepare_document(self._assessment_renderer.render(result))
         context = {

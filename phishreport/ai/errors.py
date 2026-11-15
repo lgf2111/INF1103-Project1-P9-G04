@@ -1,22 +1,42 @@
-"""User-facing wording for AI service failures."""
+"""User-facing wording selected from trusted AI failure metadata."""
+
+from phishreport.errors import AIUnavailable, AssessmentError
+
+from ._provider_errors import ProviderFailure, ProviderFailureReason
+
+
+def provider_failure_to_assessment_error(error: ProviderFailure) -> AIUnavailable:
+    """Wrap a provider failure safely, retaining its typed cause for guidance."""
+    if not isinstance(error, ProviderFailure):
+        raise TypeError("error must be a ProviderFailure")
+    mapped = AIUnavailable()
+    mapped.__cause__ = error
+    return mapped
 
 
 class AIErrorTranslator:
-    """Turn an AI RuntimeError into a short, actionable message for the user.
-
-    Keeps the word 'failed' so the reason is clear, and adds guidance based on
-    the kind of failure (offline, service error, rate limit).
-    """
+    """Return safe guidance without inspecting arbitrary exception text."""
 
     def translate(self, error) -> str:
-        text = str(error).lower()
-        if "timed out" in text or "could not complete" in text:
-            return (
-                "The check failed: could not reach the AI service. "
-                "Check your internet connection and try again."
-            )
-        if "http 5" in text:
-            return "The check failed: the AI service is temporarily unavailable. Try again shortly."
-        if "http 429" in text:
-            return "The check failed: the AI service is busy (rate limited). Try again shortly."
+        if isinstance(error, AIUnavailable) and isinstance(error.__cause__, ProviderFailure):
+            error = error.__cause__
+        if isinstance(error, AssessmentError):
+            return error.user_message
+        if isinstance(error, ProviderFailure):
+            if error.reason in (ProviderFailureReason.TIMEOUT, ProviderFailureReason.TRANSPORT):
+                return (
+                    "The check failed: could not reach the AI service. "
+                    "Check your internet connection and try again."
+                )
+            if error.reason is ProviderFailureReason.HTTP:
+                if 500 <= error.status_code <= 599:
+                    return (
+                        "The check failed: the AI service is temporarily unavailable. "
+                        "Try again shortly."
+                    )
+                if error.status_code == 429:
+                    return (
+                        "The check failed: the AI service is busy (rate limited). "
+                        "Try again shortly."
+                    )
         return "The check failed: the AI could not complete the assessment. Please try again."

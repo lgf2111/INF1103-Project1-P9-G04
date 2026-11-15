@@ -201,7 +201,8 @@ def test_demo_failed_ai_differs_from_failed_save(cli, demo_transport, monkeypatc
     assert DataManager().load() == []
     assert "Private transport detail" not in output
     if failure == "save":
-        assert "Could not save" in output and "Rule-based score: 60" in output
+        assert "Could not access local report history. Please try again." in output
+        assert "Rule-based score: 60" in output
     else:
         assert "check failed" in output and "=== Assessment ===" not in output
 

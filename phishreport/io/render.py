@@ -1,49 +1,45 @@
-"""Build a neutral document from an assessment result."""
+"""Build a neutral document from the canonical assessment view."""
+from phishreport.model import AssessmentResult, Report
 
 from .assessment_document import AssessmentDocument, DocumentSection
 
 
 class AssessmentRenderer:
-    """Project an assessment result into ordered, labelled sections."""
+    """Project typed or historical assessment results into ordered sections."""
 
-    def render(self, result: dict | None) -> AssessmentDocument:
-        """Return result fields in a format-independent document."""
-        if not result:
+    def render(self, result: AssessmentResult | dict | None) -> AssessmentDocument:
+        """Read tolerant model attributes without mutating or rebuilding the payload."""
+        assessment = (
+            result if isinstance(result, AssessmentResult) else Report({"result": result}).result
+        )
+        if assessment is None:
             return AssessmentDocument(available=False, sections=())
 
-        priority = result.get("priority") or "unavailable"
-        score = result.get("score") if "score" in result else None
         fields = [
-            ("Priority", priority),
-            ("Rule-based score", score),
+            ("Priority", assessment.priority or "unavailable"),
+            ("Rule-based score", assessment.score),
         ]
-        if result.get("matched_rule"):
-            fields.append(("Matched rule", result["matched_rule"]))
+        if assessment.matched_rule:
+            fields.append(("Matched rule", assessment.matched_rule))
 
         sections: list[DocumentSection] = [
             ("fields", "Assessment", tuple(fields)),
         ]
-
-        trace = result.get("trace") or []
-        if trace:
-            trace_entries = []
-            for step in trace:
-                rule_name = str(step.get("rule_name", "Unknown rule"))
-                trace_entries.append((rule_name, (bool(step.get("matched")), step.get("score"))))
-            sections.append(("trace", "Rule evaluation trace", tuple(trace_entries)))
-
-        reasons = result.get("reasons") or []
-        if reasons:
+        if assessment.trace:
+            sections.append((
+                "trace",
+                "Rule evaluation trace",
+                tuple((step.rule_name, (step.matched, step.score)) for step in assessment.trace),
+            ))
+        if assessment.reasons:
             sections.append((
                 "bullets",
                 "Reasons",
-                tuple(("Reason", reason) for reason in reasons),
+                tuple(("Reason", reason) for reason in assessment.reasons),
             ))
-
-        checklist = result.get("checklist") or []
         sections.append((
             "numbered",
             "Recommended actions",
-            tuple(("Action", step) for step in checklist),
+            tuple(("Action", step) for step in assessment.checklist),
         ))
         return AssessmentDocument(available=True, sections=tuple(sections))

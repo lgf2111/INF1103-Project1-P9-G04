@@ -13,8 +13,12 @@ class PlainTextRenderer(DocumentRenderer):
         context: RenderContext | None = None,
     ) -> str:
         del context  # Alert metadata is not part of a plain assessment result.
+        return "\n".join(self.render_lines(document))
+
+    def render_lines(self, document: AssessmentDocument) -> tuple[str, ...]:
+        """Return logical entries, preserving newlines inside historical guidance."""
         if not document.available:
-            return "No assessment available."
+            return ("No assessment available.",)
 
         lines = []
         for kind, title, entries in document.sections:
@@ -39,4 +43,4 @@ class PlainTextRenderer(DocumentRenderer):
                     lines.append(f" - {value}")
                 elif kind == "numbered":
                     lines.append(f"{number}. {value}")
-        return "\n".join(lines)
+        return tuple(lines)

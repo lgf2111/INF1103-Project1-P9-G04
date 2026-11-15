@@ -2,11 +2,14 @@
 
 from copy import deepcopy
 from unittest.mock import Mock
+from uuid import UUID
 
 import pytest
 
 from phishreport.assessment import AssessmentService
+from phishreport.errors import InvalidInput
 from phishreport.logic import LogicManager
+from phishreport.model import Report
 
 RECORD = {
     "channel": "chat",
@@ -75,6 +78,105 @@ def test_build_report_keeps_the_message_and_its_assessment():
     }
 
 
+def test_build_report_delegates_to_the_canonical_factory_and_serializer(monkeypatch):
+    service, _ = _service()
+    result = service.assess(RECORD)
+    factory = Mock(wraps=Report.from_assessment)
+    serialized = []
+    to_dict = Report.to_dict
+
+    def serialize(report):
+        serialized.append(report)
+        return to_dict(report)
+
+    monkeypatch.setattr(Report, "from_assessment", factory)
+    monkeypatch.setattr(Report, "to_dict", serialize)
+
+    report = service.build_report(RECORD, result)
+
+    factory.assert_called_once_with(RECORD, result)
+    assert len(serialized) == 1
+    assert isinstance(serialized[0], Report)
+    assert type(report) is dict
+    assert report["assessment_id"] == result["assessment_id"]
+    assert report["result"]["score"] == 60
+
+
+@pytest.mark.parametrize(
+    ("record_changes", "result_changes"),
+    [
+        ({"channel": " "}, {}),
+        ({"message": None}, {}),
+        ({}, {"score": 101}),
+        ({}, {"priority": "UNKNOWN"}),
+        ({}, {"reasons": None}),
+        ({}, {"trace": []}),
+        ({}, {"assessment_id": "x" * 101}),
+    ],
+)
+def test_build_report_rejects_invalid_current_reports(record_changes, result_changes):
+    record = {**RECORD, **record_changes}
+    result = {
+        "assessment_id": "stable-id", "score": 60, "priority": "MEDIUM",
+        "reasons": [], "checklist": [], **result_changes,
+    }
+    before = deepcopy((record, result))
+
+    with pytest.raises(ValueError):
+        AssessmentService.build_report(record, result)
+
+    assert (record, result) == before
+
+
+@pytest.mark.parametrize("assessment_id", [None, "", " ", 123])
+def test_build_report_rejects_bad_id_before_reading_source(assessment_id):
+    with pytest.raises(ValueError, match="missing its identifier"):
+        AssessmentService.build_report({}, {"assessment_id": assessment_id})
+
+
+def test_build_report_propagates_the_canonical_validation_error(monkeypatch):
+    from phishreport import model
+
+    error = ValueError("canonical validation failure")
+    monkeypatch.setattr(model, "_validate_new", Mock(side_effect=error))
+    result = {"assessment_id": "stable-id"}
+
+    with pytest.raises(ValueError) as caught:
+        AssessmentService.build_report(RECORD, result)
+
+    assert caught.value is error
+
+
+def test_build_report_owns_nested_result_without_reassessing_or_generating_id(monkeypatch):
+    from phishreport import assessment
+
+    result = {
+        "assessment_id": "stable-id", "score": 60, "priority": "MEDIUM",
+        "reasons": ["Credential request"], "checklist": ["Verify the sender"],
+        "matched_rule": "credential", "trace": [
+            {"rule_name": "credential", "matched": True, "score": 60},
+        ],
+    }
+    before = deepcopy(result)
+    ai_manager, logic_manager = Mock(), Mock()
+    uuid = Mock(side_effect=AssertionError("Builder must reuse the assessment ID"))
+    monkeypatch.setattr(assessment, "uuid4", uuid)
+    service = AssessmentService(ai_manager, logic_manager)
+
+    report = service.build_report(RECORD, result)
+
+    assert result == before
+    assert report["assessment_id"] == "stable-id"
+    report["result"]["reasons"].append("Output mutation")
+    report["result"]["trace"][0]["rule_name"] = "Output mutation"
+    assert result == before
+    result["checklist"].append("Input mutation")
+    assert report["result"]["checklist"] == ["Verify the sender"]
+    ai_manager.assess.assert_not_called()
+    logic_manager.evaluate.assert_not_called()
+    uuid.assert_not_called()
+
+
 @pytest.mark.parametrize(
     ("clicked", "downloaded", "category", "answered"),
     [
@@ -141,19 +243,22 @@ def test_build_exposure_report_preserves_source_text_and_metadata(file_name):
         "disclosure_answered": False,
     }
 
-    report = AssessmentService.build_exposure_report(record, {}, exposure)
+    result = {"score": 60, "priority": "MEDIUM", "reasons": [], "checklist": []}
+    report = AssessmentService.build_exposure_report(record, result, exposure)
 
     for field in ("message", "sender", "has_link", "link", "has_file", "file_name"):
         assert report[field] == record[field]
 
 
-def test_build_exposure_report_only_constructs_and_isolates_nested_inputs():
-    # Deliberately unvalidated nested values exercise copying without introducing
-    # schema/type validation, which belongs to ReportValidator.
-    record = {**RECORD, "sender": {"labels": ["original"]}}
-    result = {"reasons": [{"text": "urgent"}]}
+def test_build_exposure_report_isolates_nested_inputs_without_reassessment():
+    record = dict(RECORD)
+    result = {
+        "score": 60, "priority": "MEDIUM", "reasons": ["urgent"],
+        "checklist": ["Verify the sender"], "matched_rule": "credential",
+        "trace": [{"rule_name": "credential", "matched": True, "score": 60}],
+    }
     exposure = {
-        "clicked": {"values": [True]},
+        "clicked": None,
         "downloaded": None,
         "submitted_category": None,
         "disclosure_answered": False,
@@ -165,18 +270,90 @@ def test_build_exposure_report_only_constructs_and_isolates_nested_inputs():
     report = service.build_exposure_report(record, result, exposure)
 
     assert (record, result, exposure) == before
-    report["sender"]["labels"].append("report mutation")
-    report["result"]["reasons"][0]["text"] = "report mutation"
-    report["exposure"]["clicked"]["values"].append(False)
+    report["result"]["reasons"].append("report mutation")
+    report["result"]["trace"][0]["rule_name"] = "report mutation"
+    report["exposure"]["clicked"] = False
     assert (record, result, exposure) == before
-    record["sender"]["labels"].append("input mutation")
-    result["reasons"].append({"text": "input mutation"})
-    exposure["clicked"]["values"].append(None)
-    assert report["sender"]["labels"] == ["original", "report mutation"]
-    assert report["result"]["reasons"] == [{"text": "report mutation"}]
-    assert report["exposure"]["clicked"]["values"] == [True, False]
+    result["checklist"].append("input mutation")
+    result["trace"][0]["score"] = 0
+    exposure["clicked"] = True
+    assert report["result"]["reasons"] == ["urgent", "report mutation"]
+    assert report["result"]["checklist"] == ["Verify the sender"]
+    assert report["result"]["trace"][0]["score"] == 60
+    assert report["exposure"]["clicked"] is False
     ai_manager.assess.assert_not_called()
     logic_manager.evaluate.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("record_changes", "result_changes", "exposure_changes"),
+    [
+        ({"channel": " "}, {}, {}),
+        ({"sender": {"labels": ["original"]}}, {}, {}),
+        ({"has_link": True, "link": None}, {}, {}),
+        ({}, {"score": 101}, {}),
+        ({}, {"reasons": [{"text": "urgent"}]}, {}),
+        ({}, {"assessment_id": "nested-id"}, {}),
+        ({}, {}, {"clicked": {"values": [True]}}),
+        ({}, {}, {"disclosure_answered": None}),
+        ({}, {}, {"submitted_category": "password"}),
+    ],
+)
+def test_build_exposure_report_rejects_invalid_v3_payloads_without_mutation(
+    record_changes, result_changes, exposure_changes
+):
+    record = {**RECORD, **record_changes}
+    result = {
+        "score": 60, "priority": "MEDIUM", "reasons": [], "checklist": [],
+        **result_changes,
+    }
+    exposure = {
+        "clicked": None, "downloaded": None, "submitted_category": None,
+        "disclosure_answered": False, **exposure_changes,
+    }
+    before = deepcopy((record, result, exposure))
+    ai_manager, logic_manager = Mock(), Mock()
+    service = AssessmentService(ai_manager, logic_manager)
+
+    with pytest.raises(ValueError):
+        service.build_exposure_report(record, result, exposure)
+
+    assert (record, result, exposure) == before
+    ai_manager.assess.assert_not_called()
+    logic_manager.evaluate.assert_not_called()
+
+
+def test_build_exposure_report_generates_a_fresh_uuid_for_each_report():
+    result = {"score": 60, "priority": "MEDIUM", "reasons": [], "checklist": []}
+    exposure = {
+        "clicked": None, "downloaded": None, "submitted_category": None,
+        "disclosure_answered": False,
+    }
+
+    first = AssessmentService.build_exposure_report(RECORD, result, exposure)
+    second = AssessmentService.build_exposure_report(RECORD, result, exposure)
+
+    assert UUID(first["assessment_id"]).version == 4
+    assert UUID(second["assessment_id"]).version == 4
+    assert first["assessment_id"] != second["assessment_id"]
+    assert "assessment_id" not in result
+
+
+def test_build_exposure_report_propagates_canonical_validation_error(monkeypatch):
+    from phishreport import model
+
+    error = ValueError("canonical exposure validation failure")
+    monkeypatch.setattr(model, "_validate_new", Mock(side_effect=error))
+    result = {"score": 60, "priority": "MEDIUM", "reasons": [], "checklist": []}
+    exposure = {
+        "clicked": None, "downloaded": None, "submitted_category": None,
+        "disclosure_answered": False,
+    }
+
+    with pytest.raises(ValueError) as caught:
+        AssessmentService.build_exposure_report(RECORD, result, exposure)
+
+    assert caught.value is error
 
 
 def test_assess_with_findings_retains_findings_and_scores_with_one_ai_call():
@@ -379,9 +556,11 @@ def test_rescore_isolates_inputs_and_result_from_mutating_logic():
 def test_rescore_propagates_validation_errors_without_ai(record, findings, message):
     service, ai_manager = _service()
 
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(InvalidInput) as caught:
         service.rescore(record, findings)
 
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert message in str(caught.value.__cause__)
     ai_manager.assess.assert_not_called()
 
 
@@ -408,3 +587,53 @@ def test_rescore_propagates_logic_failure_without_ai_or_input_mutation(error):
     assert record == record_before
     assert findings == findings_before
     ai_manager.assess.assert_not_called()
+
+
+@pytest.mark.parametrize("method", ["assess", "assess_with_findings", "rescore"])
+@pytest.mark.parametrize("invalid", ["record", "findings"])
+def test_known_logic_validation_becomes_safe_invalid_input(method, invalid):
+    record = {**RECORD, "clicked": "PRIVATE invalid"} if invalid == "record" else dict(RECORD)
+    findings = ({**FINDINGS, "suspicious": "PRIVATE invalid"}
+                if invalid == "findings" else dict(FINDINGS))
+    before = deepcopy((record, findings))
+    service, ai = _service(findings)
+    with pytest.raises(InvalidInput) as caught:
+        if method == "rescore":
+            service.rescore(record, findings)
+        else:
+            getattr(service, method)(record)
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert "PRIVATE" not in str(caught.value)
+    assert (record, findings) == before
+    assert ai.assess.call_count == (0 if method == "rescore" else 1)
+
+
+@pytest.mark.parametrize("method", ["assess", "assess_with_findings", "rescore"])
+@pytest.mark.parametrize("error_type", [ValueError, RuntimeError, TypeError, KeyError])
+def test_unknown_logic_errors_keep_their_identity(method, error_type):
+    error = error_type("PRIVATE rule or guidance defect")
+    service = AssessmentService(Mock(assess=Mock(return_value=FINDINGS)),
+                                Mock(evaluate=Mock(side_effect=error)))
+    with pytest.raises(error_type) as caught:
+        if method == "rescore":
+            service.rescore(RECORD, FINDINGS)
+        else:
+            getattr(service, method)(RECORD)
+    assert caught.value is error
+
+
+@pytest.mark.parametrize("method", ["assess", "assess_with_findings", "rescore"])
+@pytest.mark.parametrize("stage", ["rule", "guidance"])
+def test_plain_rule_and_guidance_value_errors_are_not_input_failures(method, stage):
+    error = ValueError("PRIVATE collaborator defect")
+    collaborators = ({"rule_engine": Mock(evaluate=Mock(side_effect=error))}
+                     if stage == "rule" else
+                     {"guidance_builder": Mock(build=Mock(side_effect=error))})
+    service = AssessmentService(Mock(assess=Mock(return_value=FINDINGS)),
+                                LogicManager(**collaborators))
+    with pytest.raises(ValueError) as caught:
+        if method == "rescore":
+            service.rescore(RECORD, FINDINGS)
+        else:
+            getattr(service, method)(RECORD)
+    assert caught.value is error

@@ -6,6 +6,7 @@ import pytest
 
 from phishreport.cli.main import PhishReportApp
 from phishreport.data import DataManager, JsonReportStorage
+from phishreport.errors import AIUnavailable, InvalidInput
 from phishreport.io.check_command import CheckCommand
 from phishreport.io.commands import CommandRouter
 from phishreport.io.help_command import HelpCommand
@@ -91,7 +92,7 @@ def test_cli_empty_command_shows_usage_before_any_prompts_or_assessment(command_
 
 
 @pytest.mark.parametrize("stage", ["builder", "assessment"])
-@pytest.mark.parametrize("error_type", [ValueError, RuntimeError])
+@pytest.mark.parametrize("error_type", [InvalidInput, AIUnavailable])
 def test_cli_command_failure_keeps_history_and_stops_before_save_or_feedback(
     command_app, stage, error_type,
 ):
@@ -102,9 +103,9 @@ def test_cli_command_failure_keeps_history_and_stops_before_save_or_feedback(
     }]
     data.save(history[0])
     if stage == "builder":
-        io.build_record_from_message.side_effect = error_type("Check failed")
+        io.build_record_from_message.side_effect = error_type()
     else:
-        ai.assess.side_effect = error_type("Check failed")
+        ai.assess.side_effect = error_type()
 
     app.check_message(command_text="/check Message")
 

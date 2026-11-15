@@ -80,6 +80,10 @@ _DONE_PAGE = (
 ).encode()
 
 
+class UploadTooLarge(ValueError):
+    """A bounded upload exceeded the supported email or request size."""
+
+
 class UploadParser:
     """Validate one bounded multipart request and extract its .eml file."""
 
@@ -91,7 +95,7 @@ class UploadParser:
         layer after upload, so accepted bytes are not rewritten here.
         """
         if len(body) > MAX_REQUEST_BYTES:
-            raise ValueError(SIZE_ERROR)
+            raise UploadTooLarge(SIZE_ERROR)
         if not isinstance(content_type, str) or "\r" in content_type or "\n" in content_type:
             raise ValueError("Invalid upload content type.")
         message = BytesHeaderParser(policy=policy.default).parsebytes(
@@ -134,7 +138,7 @@ class UploadParser:
         if not content:
             raise ValueError("Email file is empty.")
         if len(content) > MAX_UPLOAD_BYTES:
-            raise ValueError(SIZE_ERROR)
+            raise UploadTooLarge(SIZE_ERROR)
         return {"filename": filename, "content": content}
 
 
@@ -158,8 +162,11 @@ class _UploadRequestHandler(http.server.BaseHTTPRequestHandler):
             if len(body) != length:
                 raise ValueError("Incomplete upload.")
             upload = self.server.parser.parse(self.headers.get("Content-Type"), body)
-        except ValueError as error:
-            self.send_error(413 if str(error) == SIZE_ERROR else 400, str(error))
+        except UploadTooLarge:
+            self.send_error(413, SIZE_ERROR)
+            return
+        except ValueError:
+            self.send_error(400, "Upload failed. Please try again with an .eml email.")
             return
         except (OSError, RecursionError):
             self.send_error(400, "Upload failed. Please try again with an .eml email.")

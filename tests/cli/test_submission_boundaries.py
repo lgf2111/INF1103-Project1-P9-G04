@@ -11,6 +11,7 @@ from phishreport import local_settings as local_settings_module
 from phishreport.ai import AIResponseValidator, groq_client
 from phishreport.cli import web_upload
 from phishreport.data import DataManager
+from phishreport.errors import StorageFailure
 from phishreport.io import IOManager
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.local_settings import LocalSettings
@@ -75,16 +76,18 @@ def test_submission_boundaries_invalid_history_is_preserved_and_cannot_be_append
     path.write_text(payload, encoding="utf-8")
     before = path.read_bytes()
     assert DataManager().load() == []
-    with pytest.raises(ValueError):
+    with pytest.raises(StorageFailure) as failure:
         DataManager().load(strict=True)
+    assert isinstance(failure.value.__cause__, ValueError)
     report = {
         "schema_version": 2,
         "channel": "email",
         "message": "Existing record",
         "result": {"score": 10, "priority": "LOW", "reasons": [], "checklist": []},
     }
-    with pytest.raises(ValueError):
+    with pytest.raises(StorageFailure) as failure:
         DataManager().save(report)
+    assert isinstance(failure.value.__cause__, ValueError)
     assert path.read_bytes() == before
 
 

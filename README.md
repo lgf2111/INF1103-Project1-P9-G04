@@ -10,13 +10,9 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 
 | Path | Purpose |
 | --- | --- |
-| `phishreport/io_manager.py` | Compatibility functions for the I/O manager. |
 | `phishreport/io/` | Console adapter, input coordinator, email parsing, folder selection and assessment document renderers. |
-| `phishreport/ai_manager.py` | Compatibility functions for AI prompting, requests and validation. |
 | `phishreport/ai/` | AI assessment coordinator, prompt builder, completion client and response validator. |
-| `phishreport/logic_manager.py` | Apply assessment rules, scoring and routing. |
 | `phishreport/logic/` | Assessment rules, scoring, routing, response guidance and report summaries. |
-| `phishreport/data_manager.py` | Public DataManager interface for saving, loading and querying reports. |
 | `phishreport/data/` | Report validation, JSON/SQLite storage, environment selection and explicit migration. |
 | `phishreport/cli/` | Terminal interface: `main.py` composes the four managers through `PhishReportApp`; `web_upload.py` handles browser-based `.eml` uploads. |
 | `phishreport/assessment.py` | Shared assessment workflow (AI findings, then business rules) used by the CLI and the bot. |
@@ -26,11 +22,20 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 | `phishreport/logging_setup.py` | Configure diagnostic logs. |
 | `docs/` | Organized guides, teammate handoffs, and project references. |
 | `requirements.txt` | Dependencies for Telegram and the offline tests. |
-| `tests/core/` | Offline tests for the shared core: AI, logic, data, I/O and the four manager modules. |
+| `tests/core/` | Offline tests for the shared core: AI, logic, data, I/O and the canonical manager package contracts. |
 | `tests/cli/` | Offline tests for the terminal interface, settings, uploads, the Docker helper and the feature showcase. |
 | `tests/bot/` | Offline Telegram handler and launcher checks. |
 | `tests/fixtures/` | Public sample emails for testing. |
 | `conftest.py` | Shared pytest configuration. |
+
+The public manager imports are:
+
+```python
+from phishreport.io import IOManager
+from phishreport.ai import AIManager
+from phishreport.logic import LogicManager
+from phishreport.data import DataManager
+```
 
 ### Input and output
 
@@ -523,6 +528,47 @@ and WSL was not installed at the exposure documentation checkpoint. The precedin
 local Python 3.12 full-suite run recorded 1630 passed, 18 skipped and one unchanged
 Windows Gmail permission failure (`0600` expected, `0666` observed); it was not a
 clean full-suite pass or a container/remote CI result.
+
+### Expected failures
+
+Application callers can catch `AssessmentError` from `phishreport.errors` and
+display its non-empty `user_message`. Original diagnostic exceptions remain
+available through exception chaining; they are not user-facing messages.
+
+| Phase / failure | Error at the boundary | Outcome and offline evidence |
+| --- | --- | --- |
+| AI provider configuration, timeout, transport, HTTP or invalid envelope | `ProviderFailure` becomes `AIUnavailable` | No partial assessment; controlled messages retain diagnostic causes. [Provider tests](tests/core/test_provider_errors.py), [service matrix](tests/core/test_error_handling_matrix.py). |
+| AI input or invalid completion findings | `InvalidInput` | Input is unchanged; no assessment is saved. [Service matrix](tests/core/test_error_handling_matrix.py), [AI tests](tests/core/test_ai_manager.py). |
+| Logic record or findings validation | `AssessmentValidationError` becomes `InvalidInput` | No outcome or snapshot; rescore makes no AI call. [Service matrix](tests/core/test_error_handling_matrix.py). |
+| Strict history read | `StorageFailure` | Corrupt history remains unchanged; tolerant `DataManager.load()` instead recovers with `[]`. [Service matrix](tests/core/test_error_handling_matrix.py), [data tests](tests/core/test_data_core.py). |
+| New report validation / history write | `InvalidInput` / `StorageFailure` | Invalid reports cause no storage I/O; failed writes preserve existing bytes. Completed assessments can still be displayed. [Service matrix](tests/core/test_error_handling_matrix.py), [CLI boundaries](tests/cli/test_assessment_errors.py). |
+| Feedback read | `StorageFailure` | Corrupt feedback is preserved. [Service matrix](tests/core/test_error_handling_matrix.py). |
+| Feedback identifier, category or context validation | `FeedbackRejected` | Invalid lookups never reach storage; rejected submissions leave assessment and feedback unchanged. [Service matrix](tests/core/test_error_handling_matrix.py). |
+| Feedback save | `StorageFailure` | Atomic replacement failure cleans temporary files; one later retry creates one correction. [Service matrix](tests/core/test_error_handling_matrix.py). |
+| UI input / upload | `InvalidInput`, native `ValueError` or `OSError`; HTTP parser rejection | Safe guidance, no AI call or save; malformed HTTP uploads are rejected before completion. [CLI boundaries](tests/cli/test_assessment_errors.py), [upload tests](tests/cli/test_web_upload.py), [Telegram boundaries](tests/bot/test_bot_assessment_errors.py). |
+| Gmail assessment / save | `AIUnavailable`, `InvalidInput` / `StorageFailure` | Provider failure retains UID for retry; invalid input advances UID; save failure still alerts without a feedback link or second AI call. [Mailbox tests](tests/bot/test_monitor_assessment_errors.py). |
+| Telegram delivery / malformed reply identifier | Native `OSError`, `asyncio.CancelledError` or rejected reply identifier | Retains the cached assessment for retry without repeating AI. [Delivery tests](tests/bot/test_assessment.py). |
+| Cancellation / end of input | Native `KeyboardInterrupt`, `EOFError`, `asyncio.CancelledError` | Propagates; pending Telegram saves resolve their write outcome before cancellation is returned. [CLI boundaries](tests/cli/test_assessment_errors.py), [Telegram save tests](tests/bot/test_handlers.py). |
+| Unexpected programmer errors | Native `TypeError`, `KeyError`, `RuntimeError` or unexpected `ValueError` | Propagate from collaborators instead of being relabelled as provider failures. [CLI boundaries](tests/cli/test_assessment_errors.py), [Telegram boundaries](tests/bot/test_bot_assessment_errors.py), [mailbox tests](tests/bot/test_monitor_assessment_errors.py). |
+
+Direct report storage implementations retain their `ValueError`/`OSError`
+contract. Completion clients use the public `ProviderFailure` and
+`ProviderFailureReason` exports from `phishreport.ai` for expected provider
+failures. Default failure logs contain controlled summaries; `LOG_LEVEL=DEBUG`
+retains the existing opt-in traceback behaviour.
+
+Run the offline service matrix and architecture contracts in an activated
+Python 3.12 environment:
+
+```text
+python -m pytest tests/core/test_error_handling_matrix.py tests/core/test_refactor_contract.py tests/core/test_manager_contract.py -q
+python -m pytest tests/cli/test_assessment_errors.py tests/cli/test_web_upload.py tests/bot/test_bot_assessment_errors.py tests/bot/test_monitor_assessment_errors.py -q
+```
+
+The structural checks enforce a single frozen `Report` in `model.py`, central
+ownership of the exact schema-version key, a singular AI `prompt` module and
+canonical manager imports. Existing model and history tests cover current and
+legacy serialization behaviour.
 
 ### Assessment policy
 

@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from dataclasses import dataclass
 
+from phishreport.model import SCHEMA_VERSION, Report
+
 PRIORITIES = ("HIGH", "MEDIUM", "LOW")
 CHANNELS = ("email", "sms", "chat")
 CHANNEL_LABELS = {"email": "Email", "sms": "SMS", "chat": "Chat"}
@@ -18,50 +20,46 @@ class StoredReport:
     """
 
     def __init__(self, record: dict) -> None:
-        self._record = record
-        if record.get("schema_version") == 3:
-            exposure = record.get("exposure")
-            if not isinstance(exposure, dict):
-                exposure = {}
-            # Project only confirmed actions; nested extras cannot replace metadata.
-            self._record = {
-                **record,
-                "clicked": exposure.get("clicked") is True,
-                "downloaded": exposure.get("downloaded") is True,
-                "submitted_category": (
-                    exposure.get("submitted_category")
-                    if exposure.get("disclosure_answered") is True
-                    else None
-                ),
-            }
-        self._result = record.get("result") or record
+        self._report = Report(record)
 
     @property
     def channel(self) -> str | None:
-        value = self._record.get("channel")
+        value = self._report.channel
         return value.lower() if isinstance(value, str) else None
 
     @property
     def priority(self) -> str | None:
-        value = self._result.get("priority")
+        result = self._report.result
+        value = result.priority if result is not None else None
         return value.upper() if isinstance(value, str) else None
 
     @property
     def score(self) -> int | None:
-        value = self._result.get("score")
+        result = self._report.result
+        value = result.score if result is not None else None
         return value if isinstance(value, int) and not isinstance(value, bool) else None
 
     @property
     def clicked(self) -> bool:
-        return self._record.get("clicked") is True
+        exposure = self._report.exposure
+        return exposure is not None and exposure.clicked is True
 
     @property
     def downloaded(self) -> bool:
-        return self._record.get("downloaded") is True
+        exposure = self._report.exposure
+        return exposure is not None and exposure.downloaded is True
 
     @property
     def submitted_credentials(self) -> bool:
-        return self._record.get("submitted_category") in ("password", "otp")
+        exposure = self._report.exposure
+        if exposure is None:
+            return False
+        if (
+            self._report.schema_version == SCHEMA_VERSION
+            and exposure.disclosure_answered is not True
+        ):
+            return False
+        return exposure.submitted_category in ("password", "otp")
 
 
 @dataclass(frozen=True)

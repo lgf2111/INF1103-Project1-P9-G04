@@ -1,6 +1,10 @@
 """Coordinate one validated AI assessment."""
 
+from phishreport.errors import InvalidInput
+
+from ._provider_errors import ProviderFailure
 from .client import AIClient
+from .errors import provider_failure_to_assessment_error
 from .groq_client import GroqClient
 from .prompt import PromptBuilder
 from .validator import AIResponseValidator
@@ -17,10 +21,19 @@ class AIManager:
         self._validator = AIResponseValidator()
 
     def assess(self, record: dict) -> dict:
-        """Return validated findings, propagating input, reply or client failures."""
-        prompt = self._prompt_builder.build(record)
-        raw = self._client.complete(prompt)
-        reply = self._validator.parse_response(raw)
-        findings = self._validator.validate_response(reply)
-        self._validator.validate_details(findings["details"], record["message"])
+        """Return validated findings or a safe domain failure for expected errors."""
+        try:
+            prompt = self._prompt_builder.build(record)
+        except ValueError as error:
+            raise InvalidInput() from error
+        try:
+            raw = self._client.complete(prompt)
+        except ProviderFailure as error:
+            raise provider_failure_to_assessment_error(error) from error
+        try:
+            reply = self._validator.parse_response(raw)
+            findings = self._validator.validate_response(reply)
+            self._validator.validate_details(findings["details"], record["message"])
+        except ValueError as error:
+            raise InvalidInput() from error
         return findings

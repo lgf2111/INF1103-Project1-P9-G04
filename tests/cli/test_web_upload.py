@@ -273,10 +273,11 @@ def test_web_upload_valid_web_eml_matches_folder_input(tmp_path, monkeypatch):
 )
 def test_web_upload_web_upload_is_eml_only_with_clear_rejection(monkeypatch, filename):
 
-    message = "Only .eml email files are supported. Images and attachments are not analysed."
     handler = web_upload_request_handler(web_upload_form(b"Not an email.", filename=filename))
     handler.do_POST()
-    handler.send_error.assert_called_once_with(400, message)
+    handler.send_error.assert_called_once_with(
+        400, "Upload failed. Please try again with an .eml email."
+    )
     handler.server.accept_upload.assert_not_called()
     monkeypatch.setattr("builtins.input", lambda _: pytest.fail("Invalid upload asked for input"))
     with pytest.raises(ValueError, match=r"Only \.eml email files"):
@@ -295,3 +296,15 @@ def test_web_upload_web_upload_limit_rejects_oversize_before_completion(large_re
     handler.server.accept_upload.assert_not_called()
     if large_request:
         handler.rfile.read.assert_not_called()
+
+
+@pytest.mark.parametrize("detail", ["PRIVATE upload path", web_upload.SIZE_ERROR])
+def test_handler_value_error_is_safe_and_not_classified_by_message(detail):
+    handler = web_upload_request_handler(web_upload_form())
+    handler.server.parser = Mock()
+    handler.server.parser.parse.side_effect = ValueError(detail)
+    handler.do_POST()
+    handler.send_error.assert_called_once_with(
+        400, "Upload failed. Please try again with an .eml email."
+    )
+    handler.server.accept_upload.assert_not_called()

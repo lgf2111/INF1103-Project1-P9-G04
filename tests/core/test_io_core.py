@@ -97,6 +97,168 @@ def test_report_presenter_shortens_only_the_history_preview():
     assert record == {"channel": "chat", "message": message, "priority": "review", "score": 0}
 
 
+def test_display_list_tolerates_mixed_history_without_changing_records():
+    from phishreport.io import ReportPresenter
+
+    records = [
+        {"channel": "sms", "message": "  First\n\tmessage ", "score": 0, "priority": "LOW"},
+        {"channel": ["email"], "message": {"text": "invalid"},
+         "result": {"priority": ["HIGH"], "score": True}},
+        {"channel": "email", "message": "x" * 50,
+         "result": {"priority": "urgent_review", "score": 101.5}},
+        {"channel": "chat", "message": "y" * 51, "result": "malformed",
+         "priority": "review", "score": -2.5},
+        {},
+    ]
+    before = deepcopy(records)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_list(records)
+
+    assert terminal.lines == [
+        "\n=== Saved reports ===",
+        "1. SMS | Low | Score: 0", "   First message",
+        "2. Unknown | Unavailable | Score: Unavailable", "   ",
+        "3. Email | Urgent Review | Score: 101.5", "   " + "x" * 50,
+        "4. Chat | Review | Score: -2.5", "   " + "y" * 47 + "...",
+        "5. Unknown | Unavailable | Score: Unavailable", "   ",
+    ]
+    assert records == before
+
+
+@pytest.mark.parametrize("score", [None, "invalid", True, [], {}, float("nan"), float("inf")])
+def test_display_list_marks_unknown_scores_unavailable(score):
+    from phishreport.io import ReportPresenter
+
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_list([{"result": {"priority": "LOW", "score": score}}])
+
+    assert terminal.lines == [
+        "\n=== Saved reports ===", "1. Unknown | Low | Score: Unavailable", "   ",
+    ]
+
+
+@pytest.mark.parametrize("nested,expected", [
+    ({}, "Low | Score: 0"),
+    (None, "Low | Score: 0"),
+    ({"priority": "HIGH"}, "High | Score: Unavailable"),
+    ({"score": 60}, "Unavailable | Score: 60"),
+    ({"historical_metadata": True}, "Unavailable | Score: Unavailable"),
+])
+def test_display_list_selects_nested_result_without_merging_root_fields(nested, expected):
+    from phishreport.io import ReportPresenter
+
+    record = {"channel": "chat", "priority": "LOW", "score": 0, "result": nested}
+    before = deepcopy(record)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_list([record])
+
+    assert terminal.lines == ["\n=== Saved reports ===", f"1. Chat | {expected}", "   "]
+    assert record == before
+
+
+@pytest.mark.parametrize("typed", [False, True], ids=["dictionary", "model"])
+def test_display_result_preserves_guidance_and_validated_trace_order(typed):
+    from phishreport.io import ReportPresenter
+    from phishreport.model import AssessmentResult, RuleTrace
+
+    result = {
+        "score": 80, "priority": "urgent_review", "matched_rule": "Clicked link",
+        "reasons": ["  First reason\n ", "Second reason"],
+        "checklist": ["  First action  ", "Second action"],
+        "trace": [
+            {"rule_name": "Disclosure", "matched": False, "score": None},
+            {"rule_name": "Clicked link", "matched": True, "score": 80},
+        ],
+    }
+    before = deepcopy(result)
+    if typed:
+        result = AssessmentResult(
+            80, "urgent_review", result["reasons"], result["checklist"], "Clicked link",
+            [RuleTrace("Disclosure", False), RuleTrace("Clicked link", True, 80)],
+        )
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_result(result)
+
+    assert terminal.lines == [
+        "\n=== Assessment ===", "Priority: Urgent Review", "Rule-based score: 80",
+        "Matched rule: Clicked link", "\nRule evaluation trace:",
+        " - Disclosure: not matched", " - Clicked link: matched (score: 80)",
+        "\nReasons:", " -   First reason\n ", " - Second reason",
+        "\nRecommended actions:", "1.   First action  ", "2. Second action",
+    ]
+    if not typed:
+        assert result == before
+
+
+@pytest.mark.parametrize("fields", [
+    {}, {"score": None}, {"score": "invalid"}, {"score": True},
+    {"score": float("nan")}, {"score": float("inf")},
+])
+def test_display_result_reports_unknown_scores_without_inventing_zero(fields):
+    from phishreport.io import ReportPresenter
+
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_result({"priority": "LOW", **fields})
+
+    assert terminal.lines == [
+        "\n=== Assessment ===", "Priority: Low", "Rule-based score: Unavailable",
+        "\nRecommended actions:",
+    ]
+
+
+def test_display_result_tolerates_partial_malformed_guidance_and_priority():
+    from phishreport.io import ReportPresenter
+
+    result = {"score": 0, "priority": ["HIGH"], "matched_rule": 7,
+              "reasons": [" Keep reason ", None, 3, ""], "checklist": "not a list"}
+    before = deepcopy(result)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_result(result)
+
+    assert terminal.lines == [
+        "\n=== Assessment ===", "Priority: Unavailable", "Rule-based score: 0",
+        "\nReasons:", " -  Keep reason ", " - ", "\nRecommended actions:",
+    ]
+    assert result == before
+
+
+@pytest.mark.parametrize("trace", [
+    ["malformed step"],
+    [{"rule_name": "Claimed rule", "matched": "yes", "score": 80}],
+    [{"rule_name": "Claimed rule", "matched": True, "score": 90}],
+])
+def test_display_result_omits_unvalidated_trace(trace):
+    from phishreport.io import ReportPresenter
+
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_result({
+        "score": 80, "matched_rule": "Claimed rule", "trace": trace,
+    })
+
+    assert terminal.lines == [
+        "\n=== Assessment ===", "Priority: Unavailable", "Rule-based score: 80",
+        "Matched rule: Claimed rule", "\nRecommended actions:",
+    ]
+
+
+@pytest.mark.parametrize("result", [None, {}])
+def test_display_result_describes_absent_assessment(result):
+    from phishreport.io import ReportPresenter
+
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_result(result)
+
+    assert terminal.lines == ["\nNo assessment available."]
+
+
 @pytest.fixture
 def exposure_record():
     return {
@@ -267,6 +429,91 @@ def test_saved_v3_partial_exposure_displays_after_reload(tmp_path, backend, expo
     assert "  Original message\nKeep this text.  " in terminal.lines
     assert loaded == [before]
     assert exposure_record == before
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_plain_v3_history_does_not_invent_exposure_answers(tmp_path, backend):
+    from phishreport.assessment import AssessmentService
+    from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
+    from phishreport.io import ReportPresenter
+
+    record = AssessmentService.build_report(
+        {"channel": "chat", "message": " Original message\n "},
+        {"assessment_id": "existing-id", "score": 0, "priority": "LOW",
+         "reasons": [], "checklist": []},
+    )
+    before = deepcopy(record)
+    storage_type = JsonReportStorage if backend == "json" else SqliteReportStorage
+    path = tmp_path / f"reports.{backend}"
+    DataManager(storage=storage_type(path)).save(record)
+    loaded = DataManager(storage=storage_type(path)).load(strict=True)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_record(loaded[0])
+
+    assert terminal.lines == [
+        "\n=== Report details ===", "Channel: Chat", "Sender: Unknown", "Message:",
+        " Original message\n ", "Included link: None reported", "Included file: None reported",
+        "Clicked link: Not recorded", "Downloaded file: Not recorded",
+        "Information submitted: None reported", "\n=== Assessment ===", "Priority: Low",
+        "Rule-based score: 0", "\nRecommended actions:",
+    ]
+    assert loaded == [before]
+    assert record == before
+
+
+@pytest.mark.parametrize("nested", [None, {}, {"clicked": None}])
+def test_v3_history_never_falls_back_to_root_exposure(nested):
+    from phishreport.io import ReportPresenter
+
+    record = {"schema_version": 3, "channel": "chat", "message": "Original",
+              "clicked": True, "downloaded": True, "submitted_category": "password"}
+    if nested is not None:
+        record["exposure"] = nested
+    before = deepcopy(record)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_record(record)
+
+    missing = "Not recorded" if nested is None else "Unconfirmed"
+    assert terminal.lines[7:10] == [
+        f"Clicked link: {missing}", f"Downloaded file: {missing}",
+        "Information submitted: None reported" if nested is None
+        else "Information submitted: Unconfirmed",
+    ]
+    assert ("Exposure unconfirmed" in terminal.lines) is (nested is not None)
+    assert record == before
+
+
+def test_display_record_projects_legacy_root_assessment_without_mutation():
+    from phishreport.io import ReportPresenter
+
+    record = {"channel": "sms", "message": "Historical", "score": 0, "priority": "LOW",
+              "reasons": [" Original reason "], "checklist": [" Original action "]}
+    before = deepcopy(record)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_record(record)
+
+    assert terminal.lines[-7:] == [
+        "\n=== Assessment ===", "Priority: Low", "Rule-based score: 0", "\nReasons:",
+        " -  Original reason ", "\nRecommended actions:", "1.  Original action ",
+    ]
+    assert record == before
+
+
+@pytest.mark.parametrize("score", [{}, {"score": None}, {"score": "invalid"}])
+def test_display_record_describes_unknown_assessment_score_as_unavailable(score):
+    from phishreport.io import ReportPresenter
+
+    record = {"result": {"priority": "LOW", **score}}
+    before = deepcopy(record)
+    terminal = ScriptedTerminal()
+
+    ReportPresenter(terminal).display_record(record)
+
+    assert "Rule-based score: Unavailable" in terminal.lines
+    assert record == before
 
 
 def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, monkeypatch):

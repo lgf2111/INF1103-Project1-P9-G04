@@ -28,9 +28,11 @@ from phishreport.bot.messages import (
     build_exposure_keyboard,
 )
 from phishreport.data import DataManager
+from phishreport.errors import AssessmentError
 from phishreport.io.check_command import CheckOutcome
 from phishreport.io.command_catalog import CommandCapabilities, discover_commands
 from phishreport.io.commands import CommandRequest, CommandRouter
+from phishreport.model import SCHEMA_VERSION, Report
 
 CHECK_CONNECTION = "check_connection"
 
@@ -222,7 +224,7 @@ class TelegramIOManager:
                             if self._assessment is None:
                                 raise ValueError("Message assessment is not available")
                             session.apply_answer(action, self._assessment)
-            except (OSError, ValueError, RuntimeError):
+            except (AssessmentError, OSError, ValueError, RuntimeError):
                 feedback = "Could not update the assessment. Please try again.\n\n"
 
             # Hold the lock across the edit: another button cannot replace a
@@ -274,7 +276,7 @@ class TelegramIOManager:
         await query.answer()
         try:
             await asyncio.to_thread(self._data_manager.load, strict=True)
-        except (OSError, ValueError):
+        except (OSError, ValueError, AssessmentError):
             await message.reply_text("Could not read local history. Please try again.")
         else:
             await message.reply_text("Connection check passed.")
@@ -328,13 +330,13 @@ class TelegramIOManager:
                     reply = await asyncio.to_thread(
                         router.route, CommandRequest(text, "telegram"),
                     )
-                except (OSError, ValueError, RuntimeError) as error:
+                except (AssessmentError, OSError, ValueError, RuntimeError) as error:
                     if command.policy.failure != "assessment":
                         failure_text = failure_messages[command.policy.failure]
-                    elif isinstance(error, RuntimeError):
+                    elif isinstance(error, AssessmentError):
                         failure_text = self._error_translator.translate(error)
-                    elif isinstance(error, ValueError):
-                        failure_text = "Sorry, the check failed: " + str(error)
+                    elif isinstance(error, (ValueError, RuntimeError)):
+                        raise
                     else:
                         failure_text = "Sorry, the check failed. Please try again."
                     await message.reply_text(failure_text)
@@ -360,18 +362,25 @@ class TelegramIOManager:
                     )
                     return
                 if command is None:
-                    record = self._record_builder.build(text)
+                    try:
+                        record = self._record_builder.build(text)
+                    except AssessmentError as error:
+                        await message.reply_text(self._error_translator.translate(error))
+                        return
+                    except (ValueError, OSError):
+                        await message.reply_text("Invalid input. Please revise it and try again.")
+                        return
                 if command is not None:
                     request = CommandRequest(text, "telegram")
                     try:
                         reply = await asyncio.to_thread(router.route, request)
-                    except (OSError, ValueError, RuntimeError) as error:
+                    except (AssessmentError, OSError, ValueError, RuntimeError) as error:
                         if command.policy.failure != "assessment":
                             failure_text = failure_messages[command.policy.failure]
-                        elif isinstance(error, RuntimeError):
+                        elif isinstance(error, AssessmentError):
                             failure_text = self._error_translator.translate(error)
-                        elif isinstance(error, ValueError):
-                            failure_text = "Sorry, the check failed: " + str(error)
+                        elif isinstance(error, (ValueError, RuntimeError)):
+                            raise
                         else:
                             failure_text = "Sorry, the check failed. Please try again."
                         await message.reply_text(failure_text)
@@ -393,11 +402,8 @@ class TelegramIOManager:
                         snapshot = await asyncio.to_thread(
                             self._assessment.assess_with_findings, record,
                         )
-                    except RuntimeError as error:
+                    except AssessmentError as error:
                         await message.reply_text(self._error_translator.translate(error))
-                        return
-                    except ValueError as error:
-                        await message.reply_text("Sorry, the check failed: " + str(error))
                         return
 
                 session = ExposureSession(
@@ -446,6 +452,11 @@ class TelegramIOManager:
         if action == "o" and len(parts) == 3:
             try:
                 await asyncio.to_thread(self._load_assessment_result, assessment_id)
+            except AssessmentError:
+                await message.reply_text(
+                    "Could not load the assessment for feedback. Please try again."
+                )
+                return
             except (OSError, ValueError):
                 await message.reply_text("This assessment is no longer available for feedback.")
                 return
@@ -473,6 +484,11 @@ class TelegramIOManager:
                 return
             try:
                 await asyncio.to_thread(self._load_assessment_result, assessment_id)
+            except AssessmentError:
+                await message.reply_text(
+                    "Could not load the assessment for feedback. Please try again."
+                )
+                return
             except (OSError, ValueError):
                 await message.reply_text("This assessment is no longer available for feedback.")
                 return
@@ -547,7 +563,7 @@ class TelegramIOManager:
                     corrected_priority=pending.get("corrected_priority"),
                     comment=comment or None,
                 )
-            except (OSError, ValueError):
+            except (AssessmentError, OSError, ValueError):
                 await message.reply_text("Could not save your feedback. Please try again.")
                 return
             user_data.pop("pending_feedback", None)
@@ -555,9 +571,10 @@ class TelegramIOManager:
 
     def _load_assessment_result(self, assessment_id: str) -> dict:
         """Load one v3 report by ID and return its result with the ID attached."""
-        for report in self._data_manager.load(strict=True):
-            if report.get("assessment_id") == assessment_id and report.get("schema_version") == 3:
-                return {**report["result"], "assessment_id": assessment_id}
+        for source in self._data_manager.load(strict=True):
+            report = Report(source)
+            if report.assessment_id == assessment_id and report.schema_version == SCHEMA_VERSION:
+                return {**report.to_dict()["result"], "assessment_id": assessment_id}
         raise ValueError("Assessment was not found.")
 
     @staticmethod

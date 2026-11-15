@@ -1,5 +1,7 @@
 """Render assessments and saved reports through a terminal."""
 
+from phishreport.model import AssessmentResult, Report
+
 from .plain_text_renderer import PlainTextRenderer
 from .render import AssessmentRenderer
 from .terminal import Terminal
@@ -13,68 +15,75 @@ class ReportPresenter:
         self._assessment_renderer = AssessmentRenderer()
         self._text_renderer = PlainTextRenderer()
 
-    def display_result(self, result: dict | None) -> None:
-        """Display a validated outcome or an explicit unavailable assessment."""
+    def display_result(self, result: AssessmentResult | dict | None) -> None:
+        """Render the canonical assessment view through the shared document pipeline."""
         document = self._assessment_renderer.render(result)
-        rendered = self._text_renderer.render(document)
-        for section_number, section in enumerate(rendered.split("\n\n")):
-            for line_number, line in enumerate(section.split("\n")):
-                prefix = "\n" if line_number == 0 else ""
-                self._terminal.write(prefix + line)
+        section_start = True
+        for line in self._text_renderer.render_lines(document):
+            if line == "":
+                section_start = True
+                continue
+            prefix = "\n" if section_start else ""
+            self._terminal.write(prefix + line)
+            section_start = False
 
     def display_record(self, record: dict) -> None:
-        """Display a validated saved record, preserving absent historical fields."""
-        is_exposure_report = record.get("schema_version") == 3
+        """Display a saved report's tolerant view without inventing absent history."""
+        report = Report(record)
+        is_exposure_report = report.has_nested_exposure
         self._terminal.write("\n=== Report details ===")
         channels = {"email": "Email", "sms": "SMS", "chat": "Chat"}
-        self._terminal.write("Channel:", channels.get(record.get("channel"), "Unknown"))
-        self._terminal.write("Sender:", record.get("sender") or "Unknown")
+        self._terminal.write("Channel:", channels.get(report.channel, "Unknown"))
+        self._terminal.write("Sender:", report.sender or "Unknown")
         self._terminal.write("Message:")
-        self._terminal.write(record.get("message") or "No message recorded.")
-        self._terminal.write("Included link:", record.get("link") or "None reported")
-        file_label = record.get("file_name") or "None reported"
-        if is_exposure_report and record["has_file"] and record["file_name"] is None:
+        self._terminal.write(report.message or "No message recorded.")
+        self._terminal.write("Included link:", report.link or "None reported")
+        file_label = report.file_name or "None reported"
+        if is_exposure_report and report.has_file and report.file_name is None:
             file_label = "Mentioned (filename unknown)"
         self._terminal.write("Included file:", file_label)
 
-        exposure = record["exposure"] if is_exposure_report else record
+        exposure = report.exposure
+        clicked = exposure.clicked if exposure is not None else None
+        downloaded = exposure.downloaded if exposure is not None else None
+        submitted = exposure.submitted_category if exposure is not None else None
+        disclosure_answered = exposure.disclosure_answered if exposure is not None else None
         answers = {
             True: "Yes", False: "No",
             None: "Unconfirmed" if is_exposure_report else "Not recorded",
         }
-        self._terminal.write("Clicked link:", answers[exposure.get("clicked")])
-        self._terminal.write("Downloaded file:", answers[exposure.get("downloaded")])
-        submitted = exposure.get("submitted_category")
+        self._terminal.write("Clicked link:", answers[clicked])
+        self._terminal.write("Downloaded file:", answers[downloaded])
         labels = {"password": "Password", "otp": "One-time code"}
         disclosure_label = labels.get(submitted, submitted or "None reported")
-        if is_exposure_report and not exposure["disclosure_answered"]:
+        if is_exposure_report and not disclosure_answered:
             disclosure_label = "Unconfirmed"
         self._terminal.write("Information submitted:", disclosure_label)
         if is_exposure_report and (
-            exposure["clicked"] is None
-            or exposure["downloaded"] is None
-            or not exposure["disclosure_answered"]
+            clicked is None or downloaded is None or not disclosure_answered
         ):
             self._terminal.write("Exposure unconfirmed")
 
-        self.display_result(record.get("result") or {})
+        self.display_result(report.result)
 
     def display_list(self, records: list[dict]) -> None:
-        """Display saved summaries with a shortened preview of each message."""
+        """Display tolerant report views with a shortened preview of each message."""
         if not records:
             self._terminal.write("No saved reports yet.")
             return
 
         self._terminal.write("\n=== Saved reports ===")
         for number, record in enumerate(records, start=1):
-            result = record.get("result") or record
-            priority = (result.get("priority") or "unavailable").replace("_", " ").title()
+            report = Report(record)
+            result = report.result
+            priority = result.priority if result is not None else None
+            priority = (priority or "unavailable").replace("_", " ").title()
             channels = {"email": "Email", "sms": "SMS", "chat": "Chat"}
-            channel = channels.get(record.get("channel"), "Unknown")
-            score = result.get("score")
+            channel = channels.get(report.channel, "Unknown")
+            score = result.score if result is not None else None
             if score is None:
                 score = "Unavailable"
-            preview = " ".join((record.get("message") or "").split())
+            preview = " ".join((report.message or "").split())
             if len(preview) > 50:
                 preview = preview[:47] + "..."
             self._terminal.write(f"{number}. {channel} | {priority} | Score: {score}")

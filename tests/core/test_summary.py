@@ -88,6 +88,47 @@ def test_stored_report_ignores_malformed_values_instead_of_guessing():
     assert (report.channel, report.priority, report.score) == (None, None, None)
 
 
+@pytest.mark.parametrize("version", [None, 1, 2, 3])
+def test_stored_report_keeps_a_snapshot_when_source_history_changes(version):
+    record = {
+        "channel": "SMS", "clicked": True, "downloaded": False,
+        "submitted_category": "password",
+        "result": {"score": 45, "priority": "medium"},
+        "exposure": {"clicked": True, "downloaded": False,
+                     "submitted_category": "password", "disclosure_answered": True},
+    }
+    if version is not None:
+        record["schema_version"] = version
+    report = StoredReport(record)
+
+    record.update(channel="email", clicked=False, downloaded=True, submitted_category=None)
+    record["result"].update(score=90, priority="HIGH")
+    record["exposure"].update(clicked=False, downloaded=True, submitted_category=None,
+                              disclosure_answered=False)
+
+    assert (report.channel, report.priority, report.score) == ("sms", "MEDIUM", 45)
+    assert (report.clicked, report.downloaded, report.submitted_credentials) == (True, False, True)
+
+
+@pytest.mark.parametrize("result", [["invalid"], "invalid", 1, True])
+@pytest.mark.parametrize("root_outcome", [{}, {"score": 10, "priority": "low"}])
+def test_stored_report_tolerates_nonmapping_result_using_available_root_outcome(
+    result, root_outcome,
+):
+    report = StoredReport({"result": result, **root_outcome})
+
+    expected = ("LOW", 10) if root_outcome else (None, None)
+    assert (report.priority, report.score) == expected
+
+
+@pytest.mark.parametrize("score", [80.0, 80.5, float("inf"), float("nan"), True])
+def test_stored_report_summary_ignores_noninteger_scores(score):
+    report = StoredReport({"result": {"score": score, "priority": "high"}})
+
+    assert report.score is None
+    assert ScoreStatistics().compute([report]) == [("Scores", "None recorded")]
+
+
 def _exposure_report(clicked=None, downloaded=None, category=None, answered=False):
     return AssessmentService.build_exposure_report(
         {"channel": "chat", "message": "Original message", "sender": "@sender",
@@ -115,7 +156,11 @@ def _exposure_report(clicked=None, downloaded=None, category=None, answered=Fals
          "otp", "truthy-not-confirmed", "unconfirmed-disclosure"],
 )
 def test_stored_report_v3_uses_confirmed_nested_answers_over_stale_root(answers, expected):
-    record = _exposure_report(*answers)
+    record = _exposure_report()
+    # History can contain malformed answers that the current builder rejects.
+    record["exposure"].update(zip(
+        ("clicked", "downloaded", "submitted_category", "disclosure_answered"), answers,
+    ))
     record.update(clicked=not expected[0], downloaded=not expected[1],
                   submitted_category=None if expected[2] else "password")
     # Nested extras must not replace saved metadata or the original assessment.
@@ -158,7 +203,9 @@ def test_stored_report_v3_missing_exposure_never_falls_back_to_root():
 
 @pytest.mark.parametrize("category", ["password", "otp", ["password"], {"category": "otp"}])
 def test_stored_report_v3_unanswered_disclosure_ignores_even_malformed_category(category):
-    report = StoredReport(_exposure_report(category=category))
+    record = _exposure_report()
+    record["exposure"]["submitted_category"] = category
+    report = StoredReport(record)
 
     assert report.submitted_credentials is False
 

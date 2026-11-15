@@ -7,6 +7,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 
 from phishreport.bot.gmail import AccountStore, GmailMailbox, LinkedAccount, MailboxError
+from phishreport.errors import AssessmentError
 
 LINK_HELP = (
     "Link your Gmail so I can check new emails for phishing.\n\n"
@@ -64,10 +65,19 @@ class GmailLinkHandlers:
             # Proves the login works and marks "now": only later mail is checked.
             newest = await asyncio.to_thread(self._mailbox_factory(address, password).latest_uid)
         except MailboxError as error:
-            hint = " Check the app password (not your normal one)." if not error.retryable else ""
-            await reply(f"{error}{hint}")
+            await reply(
+                "Could not reach Gmail. Please try again shortly."
+                if error.retryable else
+                "Gmail rejected the login. Check the app password (not your normal one)."
+            )
             return
-        await asyncio.to_thread(self._store.save, LinkedAccount(chat.id, address, password, newest))
+        try:
+            await asyncio.to_thread(
+                self._store.save, LinkedAccount(chat.id, address, password, newest),
+            )
+        except (AssessmentError, OSError, ValueError):
+            await reply("Could not save the Gmail link. Please try again.")
+            return
         await reply(
             f"Linked {address}. I will check new emails and message you here "
             "if one looks like phishing."
@@ -78,7 +88,11 @@ class GmailLinkHandlers:
         chat = update.effective_chat
         if not self._is_allowed(update) or message is None or chat is None:
             return
-        removed = await asyncio.to_thread(self._store.remove, chat.id)
+        try:
+            removed = await asyncio.to_thread(self._store.remove, chat.id)
+        except (AssessmentError, OSError, ValueError):
+            await message.reply_text("Could not remove the Gmail link. Please try again.")
+            return
         await message.reply_text(
             "Gmail unlinked and the saved app password deleted."
             if removed

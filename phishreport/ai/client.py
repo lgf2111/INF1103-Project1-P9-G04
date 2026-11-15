@@ -10,6 +10,7 @@ class AIClient(Protocol):
         """Return unchanged nonblank completion text for a nonblank prompt.
 
         Send the prompt unchanged. Raise ValueError for invalid input or
-        RuntimeError for unavailable or invalid provider completions.
+        ProviderFailure for known provider failures, including unavailable or
+        invalid completions. Unexpected programming errors propagate unchanged.
         """
         ...
