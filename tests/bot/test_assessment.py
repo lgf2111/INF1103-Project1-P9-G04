@@ -17,6 +17,7 @@ from phishreport.bot.messages import (
     ResultFormatter,
 )
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
+from phishreport.errors import AssessmentError, StorageFailure
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.logic import LogicManager
 
@@ -53,6 +54,70 @@ def callback_with(data, chat_id=ALLOWED_CHAT_ID, chat_type="private"):
         effective_message=SimpleNamespace(reply_text=AsyncMock()),
         callback_query=SimpleNamespace(data=data, answer=AsyncMock()),
     )
+
+
+@pytest.mark.parametrize("payload", ["fb:o:saved-assessment", "fb:c:fn:saved-assessment"])
+@pytest.mark.parametrize("failure_type", [StorageFailure, AssessmentError, OSError, ValueError])
+@pytest.mark.parametrize("has_pending", [False, True])
+def test_feedback_lookup_failures_preserve_state_without_opening_a_menu(
+    payload, failure_type, has_pending,
+):
+    manager, data = build()
+    manager._feedback_service = Mock(spec=FeedbackService)
+    update = callback_with(payload)
+    pending = {
+        "assessment_id": "earlier-assessment", "category": "incorrect_priority",
+        "corrected_priority": "HIGH",
+    }
+    original = {"unrelated": "keep"}
+    if has_pending:
+        original["pending_feedback"] = pending.copy()
+    context = SimpleNamespace(user_data=original.copy())
+    error = failure_type()
+    error.__cause__ = OSError("private history path and credential details")
+
+    def fail_load(*, strict):
+        assert strict is True
+        update.callback_query.answer.assert_awaited_once_with()
+        raise error
+
+    data.load.side_effect = fail_load
+
+    asyncio.run(manager.handle_feedback_callback(update, context))
+
+    expected = (
+        "Could not load the assessment for feedback. Please try again."
+        if issubclass(failure_type, AssessmentError)
+        else "This assessment is no longer available for feedback."
+    )
+    update.effective_message.reply_text.assert_awaited_once_with(expected)
+    data.load.assert_called_once_with(strict=True)
+    assert context.user_data == original
+    if has_pending:
+        assert context.user_data["pending_feedback"] is original["pending_feedback"]
+    manager._assessment._ai_manager.assess.assert_not_called()
+    manager._feedback_service.submit.assert_not_called()
+    data.save.assert_not_called()
+
+
+@pytest.mark.parametrize("payload", ["fb:o:saved-assessment", "fb:c:fn:saved-assessment"])
+@pytest.mark.parametrize("failure_type", [TypeError, KeyError])
+def test_feedback_lookup_programmer_errors_surface(payload, failure_type):
+    manager, data = build()
+    manager._feedback_service = Mock(spec=FeedbackService)
+    update = callback_with(payload)
+    context = SimpleNamespace(user_data={"pending_feedback": {"assessment_id": "earlier"}})
+    data.load.side_effect = failure_type("programmer defect")
+
+    with pytest.raises(failure_type, match="programmer defect"):
+        asyncio.run(manager.handle_feedback_callback(update, context))
+
+    update.callback_query.answer.assert_awaited_once_with()
+    update.effective_message.reply_text.assert_not_called()
+    data.load.assert_called_once_with(strict=True)
+    assert context.user_data == {"pending_feedback": {"assessment_id": "earlier"}}
+    manager._assessment._ai_manager.assess.assert_not_called()
+    manager._feedback_service.submit.assert_not_called()
 
 
 @pytest.mark.parametrize("with_trace", [False, True])

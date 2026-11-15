@@ -452,6 +452,11 @@ class TelegramIOManager:
         if action == "o" and len(parts) == 3:
             try:
                 await asyncio.to_thread(self._load_assessment_result, assessment_id)
+            except AssessmentError:
+                await message.reply_text(
+                    "Could not load the assessment for feedback. Please try again."
+                )
+                return
             except (OSError, ValueError):
                 await message.reply_text("This assessment is no longer available for feedback.")
                 return
@@ -479,6 +484,11 @@ class TelegramIOManager:
                 return
             try:
                 await asyncio.to_thread(self._load_assessment_result, assessment_id)
+            except AssessmentError:
+                await message.reply_text(
+                    "Could not load the assessment for feedback. Please try again."
+                )
+                return
             except (OSError, ValueError):
                 await message.reply_text("This assessment is no longer available for feedback.")
                 return
