@@ -164,3 +164,64 @@ def test_history_load_programmer_type_error_propagates(app_parts):
         app.load_reports()
 
     io.show_message.assert_not_called()
+
+
+@pytest.mark.parametrize("error_type", [StorageFailure, FeedbackRejected, AssessmentError])
+def test_typed_feedback_failure_preserves_assessment_then_recovers(app_parts, error_type, caplog):
+    app, io, ai, data, feedback = app_parts
+    error = error_type()
+    error.__cause__ = OSError("PRIVATE feedback path and credentials")
+    feedback.submit.side_effect = [error, None]
+    io.collect_feedback.return_value = {"category": "incorrect"}
+    caplog.set_level("WARNING", logger="phishreport.cli.main")
+
+    invoke(app, False)
+
+    io.show_message.assert_called_once_with(
+        "Could not save your feedback. The assessment result is unchanged."
+    )
+    displayed = io.display_result.call_args.args[0]
+    assert displayed == {
+        "assessment_id": data.save.call_args.args[0]["assessment_id"],
+        "score": 10, "priority": "LOW", "reasons": [], "checklist": [],
+    }
+    feedback.submit.assert_called_once_with(
+        assessment_id=displayed["assessment_id"], assessment_result=displayed,
+        category="incorrect",
+    )
+    ai.assess.assert_called_once()
+    data.save.assert_called_once()
+    io.display_result.assert_called_once()
+    assert "Saving assessment feedback failed" in caplog.text
+    assert "PRIVATE" not in caplog.text
+
+    invoke(app, False)
+
+    assert feedback.submit.call_count == 2
+    assert io.show_message.call_count == 2
+    assert io.show_message.call_args.args == (
+        "Thank you. Your feedback was saved for review.",
+    )
+
+
+def test_skipped_feedback_never_submits(app_parts):
+    app, io, _, _, feedback = app_parts
+    io.collect_feedback.return_value = None
+
+    app._collect_feedback({"assessment_id": "completed"})
+
+    feedback.submit.assert_not_called()
+    io.show_message.assert_not_called()
+
+
+@pytest.mark.parametrize("error_type", [TypeError, KeyError])
+def test_feedback_programmer_error_propagates(app_parts, error_type):
+    app, io, _, _, feedback = app_parts
+    io.collect_feedback.return_value = {"category": "incorrect"}
+    feedback.submit.side_effect = error_type("feedback programmer bug")
+
+    with pytest.raises(error_type, match="feedback programmer bug"):
+        app._collect_feedback({"assessment_id": "completed"})
+
+    feedback.submit.assert_called_once()
+    io.show_message.assert_not_called()

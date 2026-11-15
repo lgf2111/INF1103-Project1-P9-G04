@@ -185,7 +185,7 @@ class PhishReportApp:
                 assessment_result=result,
                 **feedback,
             )
-        except (OSError, ValueError):
+        except (AssessmentError, OSError, ValueError):
             AppLogging.log_failure(logger, "Saving assessment feedback failed")
             self._io_manager.show_message(
                 "Could not save your feedback. The assessment result is unchanged."
