@@ -451,7 +451,12 @@ def test_main_failed_assessment_never_reaches_logic_storage_or_success_display(
     save.assert_not_called()
     cli.io_manager.display_result.assert_not_called()
     cli.io_manager.show_message.assert_called_once()
-    assert "failed" in cli.io_manager.show_message.call_args.args[0]
+    if failure in ("input", "schema"):
+        assert cli.io_manager.show_message.call_args.args[0] == (
+            "Invalid input. Please revise it and try again."
+        )
+    else:
+        assert "failed" in cli.io_manager.show_message.call_args.args[0]
     assert "PRIVATE_" not in cli.io_manager.show_message.call_args.args[0]
     assert record == original
     expected_calls = 0 if failure == "input" else 2 if failure in ("timeout", "http") else 1
