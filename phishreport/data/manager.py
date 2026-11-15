@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 
+from phishreport.errors import StorageFailure
 from phishreport.logging_setup import AppLogging
 
 from .json_storage import JsonReportStorage
@@ -35,20 +36,21 @@ class DataManager:
     def load(self, *, strict: bool = False) -> list[dict]:
         """Return complete validated history, or recover with [] by default.
 
-        Strict callers receive the original read/validation error. Either mode
-        logs one fixed diagnostic, with traceback detail only in debug mode.
+        Strict callers receive StorageFailure chained from the original error.
+        Either mode logs one fixed diagnostic, with traceback detail only in
+        debug mode.
         """
         try:
             records = self._storage.read_records()
             for record in records:
                 self._validator.validate_stored(record)
             return records
-        except (OSError, ValueError):
+        except (OSError, ValueError) as error:
             AppLogging.log_failure(
                 logger, "Could not read local report history; existing file preserved."
             )
             if strict:
-                raise
+                raise StorageFailure() from error
             return []
 
     def query(self, filter_fn: Callable[[dict], bool]) -> list[dict]:

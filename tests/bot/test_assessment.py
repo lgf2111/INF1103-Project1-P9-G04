@@ -283,8 +283,10 @@ def test_saved_assessment_lookup_propagates_strict_history_errors(tmp_path):
     path.write_text("invalid JSON", encoding="utf-8")
     manager, _ = build(data_manager=DataManager(JsonReportStorage(path)))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(StorageFailure) as caught:
         manager._load_assessment_result("saved-assessment")
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
 
 
 def test_a_text_message_gets_provisional_questions_without_initial_save():

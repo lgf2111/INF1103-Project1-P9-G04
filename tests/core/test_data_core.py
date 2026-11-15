@@ -6,6 +6,7 @@ from importlib import import_module
 import pytest
 
 from phishreport.data import JsonReportStorage, SqliteReportStorage
+from phishreport.errors import StorageFailure
 
 
 def validator():
@@ -682,10 +683,14 @@ def test_manager_corrupt_v3_history_blocks_append_without_changing_storage(
         storage._path.read_bytes() if isinstance(storage, JsonReportStorage) else None
     )
     subject = manager(storage)
-    with pytest.raises(ValueError):
+    with pytest.raises(StorageFailure) as caught:
         subject.load(strict=True)
-    with pytest.raises(ValueError):
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
+    with pytest.raises(StorageFailure) as caught:
         subject.save(v3_exposure_report())
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
     assert storage.read_records() == before
     if json_bytes is not None:
         assert storage._path.read_bytes() == json_bytes
@@ -905,8 +910,10 @@ def test_manager_invalid_history_prevents_save_and_partial_load(storage, invalid
     storage.write_records(history)
     subject = manager(storage)
     assert subject.load() == []
-    with pytest.raises(ValueError):
+    with pytest.raises(StorageFailure) as caught:
         subject.save(v2_report())
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
     assert storage.read_records() == history
 
 
@@ -972,9 +979,11 @@ def test_manager_read_failure_logs_once_and_preserves_error(
     backend_spy.read_error = error
     subject = manager(backend_spy)
     if strict:
-        with pytest.raises(type(error)) as caught:
+        with pytest.raises(StorageFailure) as caught:
             subject.load(strict=True)
-        assert caught.value is error
+        assert caught.value.__cause__ is error
+        assert str(caught.value) == StorageFailure.user_message
+        assert "private" not in str(caught.value)
     else:
         assert subject.load() == []
     assert backend_spy.calls == ["read"]
@@ -989,12 +998,24 @@ def test_manager_read_failure_logs_once_and_preserves_error(
     assert capsys.readouterr() == ("", "")
 
 
+@pytest.mark.parametrize("strict", [False, True])
+@pytest.mark.parametrize("error", [TypeError("programmer defect"), KeyError("programmer defect")])
+def test_manager_programmer_read_errors_propagate_unchanged(backend_spy, strict, error, caplog):
+    backend_spy.read_error = error
+    with pytest.raises(type(error)) as caught:
+        manager(backend_spy).load(strict=strict)
+    assert caught.value is error
+    assert backend_spy.calls == ["read"]
+    assert caplog.records == []
+
+
 def test_manager_read_failure_prevents_write(backend_spy):
     error = OSError("unreadable")
     backend_spy.read_error = error
-    with pytest.raises(OSError) as caught:
+    with pytest.raises(StorageFailure) as caught:
         manager(backend_spy).save(v2_report())
-    assert caught.value is error
+    assert caught.value.__cause__ is error
+    assert str(caught.value) == StorageFailure.user_message
     assert backend_spy.calls == ["read"]
 
 
@@ -1037,8 +1058,10 @@ def test_manager_injected_validator_and_falsey_backend_are_used(backend_spy):
 
 def test_manager_stored_validation_failure_short_circuits(backend_spy):
     backend_spy.records = [{}, {"score": True}, {"message": "never visited"}]
-    with pytest.raises(ValueError):
+    with pytest.raises(StorageFailure) as caught:
         manager(backend_spy).save(v2_report())
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
     assert backend_spy.calls == ["read"]
 
 
@@ -1110,8 +1133,12 @@ def test_class_error_handling_preserves_history(tmp_path, content):
     subject = manager(json_storage(path))
     assert subject.load() == []
     assert subject.query(lambda record: True) == []
-    with pytest.raises(ValueError):
+    with pytest.raises(StorageFailure) as caught:
         subject.load(strict=True)
-    with pytest.raises(ValueError):
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
+    with pytest.raises(StorageFailure) as caught:
         subject.save(v2_report())
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
     assert path.read_bytes() == content

@@ -11,6 +11,7 @@ import pytest
 
 from phishreport.ai import AIManager
 from phishreport.data import DataManager, JsonReportStorage, json_storage
+from phishreport.errors import StorageFailure
 from phishreport.logging_setup import AppLogging
 
 REAL_EMAILS = Path(__file__).resolve().parents[1] / "fixtures"
@@ -156,10 +157,14 @@ def test_data_manager_invalid_result(data_manager_storage, field, value):
     data_manager_storage.write_text(json.dumps([record]), encoding="utf-8")
     before = data_manager_storage.read_bytes()
     assert data_manager_for(data_manager_storage).load() == []
-    with pytest.raises(ValueError):
+    with pytest.raises(StorageFailure) as caught:
         data_manager_for(data_manager_storage).load(strict=True)
-    with pytest.raises(ValueError):
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
+    with pytest.raises(StorageFailure) as caught:
         data_manager_for(data_manager_storage).save(data_manager_report())
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
     assert data_manager_storage.read_bytes() == before
 
 
@@ -253,10 +258,14 @@ def test_data_manager_corrupt_history_is_preserved(data_manager_storage, caplog,
     messages = [r.getMessage() for r in caplog.records if r.name == "data_manager"]
     assert len(messages) == 1 and "Could not read local report history" in messages[0]
     assert "PRIVATE" not in messages[0]
-    with pytest.raises(ValueError):
+    with pytest.raises(StorageFailure) as caught:
         data_manager_for(data_manager_storage).load(strict=True)
-    with pytest.raises(ValueError):
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
+    with pytest.raises(StorageFailure) as caught:
         data_manager_for(data_manager_storage).save(data_manager_report())
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
     assert data_manager_storage.read_text() == content
     assert capsys.readouterr().out == ""
 
@@ -356,8 +365,12 @@ def test_data_manager_io_failures_preserve_history(data_manager_storage, monkeyp
             storage, "read_records", Mock(side_effect=PermissionError("Read denied"))
         )
         subject = DataManager(storage=storage)
-    with pytest.raises((ValueError, OSError)):
+    expected = StorageFailure if failure == "read" else (ValueError, OSError)
+    with pytest.raises(expected) as caught:
         subject.save(data_manager_report())
+    if failure == "read":
+        assert isinstance(caught.value.__cause__, PermissionError)
+        assert str(caught.value) == StorageFailure.user_message
     assert data_manager_storage.read_bytes() == before
     assert list(data_manager_storage.parent.glob("*.tmp")) == []
 
@@ -437,10 +450,14 @@ def test_data_manager_legacy_field_corruption_recovers_without_replacing_file(
     with caplog.at_level(logging.WARNING, logger="data_manager"):
         assert data_manager_for(data_manager_storage).load() == []
     assert "Could not read local report history" in caplog.text
-    with pytest.raises(ValueError):
+    with pytest.raises(StorageFailure) as caught:
         data_manager_for(data_manager_storage).load(strict=True)
-    with pytest.raises(ValueError):
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
+    with pytest.raises(StorageFailure) as caught:
         data_manager_for(data_manager_storage).save(data_manager_report())
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
 
     # Startup, explicit history viewing and normal exit must all remain usable.
     monkeypatch.setattr(AppLogging, "setup", lambda: True)
