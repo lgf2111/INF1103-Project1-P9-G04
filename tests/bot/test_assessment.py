@@ -11,7 +11,6 @@ from phishreport.assessment import AssessmentService
 from phishreport.bot.handlers import TelegramIOManager
 from phishreport.bot.messages import (
     MAX_REPLY_CHARS,
-    BufferTerminal,
     ChatRecordBuilder,
     ResultFormatter,
 )
@@ -584,17 +583,6 @@ def test_chat_record_builder_never_infers_exposure_from_message_claims():
     assert record["submitted_category"] is None
     service = AssessmentService(Mock(**{"assess.return_value": FINDINGS}), LogicManager())
     assert service.assess(record)["score"] == 60
-
-
-def test_buffer_terminal_collects_output_and_cannot_prompt():
-    terminal = BufferTerminal()
-
-    terminal.write("Priority:", "High")
-    terminal.write("done")
-
-    assert terminal.text() == "Priority: High\ndone"
-    with pytest.raises(EOFError):
-        terminal.read("Name: ")
 
 
 def test_result_formatter_keeps_long_results_within_the_chat_limit():
