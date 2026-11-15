@@ -6,6 +6,7 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
+from phishreport.errors import FeedbackRejected, StorageFailure
 from phishreport.feedback import FeedbackService, FeedbackStore
 
 
@@ -87,13 +88,15 @@ def test_feedback_store_requires_corrected_priority_for_priority_corrections(
 ):
     service = FeedbackService(FeedbackStore(tmp_path / "feedback.json"))
 
-    with pytest.raises(ValueError, match="corrected priority"):
+    with pytest.raises(FeedbackRejected) as caught:
         service.submit(
             assessment_id="assessment-123",
             assessment_result=assessment_result,
             category="incorrect_priority",
         )
 
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == FeedbackRejected.user_message
     assert not (tmp_path / "feedback.json").exists()
 
 
@@ -118,9 +121,11 @@ def test_feedback_service_rejects_invalid_feedback_without_writing(
     }
     arguments.update(changes)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(FeedbackRejected) as caught:
         service.submit(**arguments)
 
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == FeedbackRejected.user_message
     assert not (tmp_path / "feedback.json").exists()
 
 
@@ -152,13 +157,15 @@ def test_feedback_service_rejects_invalid_feedback_without_writing(
 def test_feedback_service_rejects_invalid_assessment_context(tmp_path, assessment_result):
     service = FeedbackService(FeedbackStore(tmp_path / "feedback.json"))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(FeedbackRejected) as caught:
         service.submit(
             assessment_id="assessment-123",
             assessment_result=assessment_result,
             category="other",
         )
 
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == FeedbackRejected.user_message
     assert not (tmp_path / "feedback.json").exists()
 
 
@@ -170,13 +177,16 @@ def test_feedback_store_rejects_malformed_history_without_overwriting(
     path.write_text(contents, encoding="utf-8")
     service = FeedbackService(FeedbackStore(path))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(StorageFailure) as caught:
         service.submit(
             assessment_id="assessment-123",
             assessment_result=assessment_result,
             category="other",
         )
 
+    assert isinstance(caught.value.__cause__, ValueError)
+    assert str(caught.value) == StorageFailure.user_message
+    assert path.read_bytes() == contents.encode("utf-8")
     assert path.read_text(encoding="utf-8") == contents
 
 
@@ -193,3 +203,80 @@ def test_feedback_value_is_immutable(tmp_path, assessment_result):
 
     with pytest.raises(FrozenInstanceError):
         feedback.category = "other"
+
+
+@pytest.mark.parametrize(
+    "failure", [OSError("private write failure"), ValueError("private history failure")]
+)
+def test_feedback_service_translates_storage_failures(
+    tmp_path, assessment_result, monkeypatch, failure
+):
+    store = FeedbackStore(tmp_path / "feedback.json")
+
+    def fail_write(records):
+        raise failure
+
+    monkeypatch.setattr(store, "_write", fail_write)
+    with pytest.raises(StorageFailure) as caught:
+        FeedbackService(store).submit(
+            assessment_id="assessment-123", assessment_result=assessment_result, category="other"
+        )
+    assert caught.value.__cause__ is failure
+    assert str(caught.value) == StorageFailure.user_message
+    assert not (tmp_path / "feedback.json").exists()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [TypeError("bug"), KeyError("bug"), RuntimeError("bug"), FeedbackRejected(), StorageFailure()],
+)
+@pytest.mark.parametrize("boundary", ["validation", "storage"])
+def test_feedback_service_preserves_unexpected_and_domain_errors(
+    tmp_path, assessment_result, monkeypatch, failure, boundary
+):
+    store = FeedbackStore(tmp_path / "feedback.json")
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    if boundary == "validation":
+        monkeypatch.setattr("phishreport.feedback.service.Feedback", fail)
+    else:
+        monkeypatch.setattr(store, "add", fail)
+    with pytest.raises(type(failure)) as caught:
+        FeedbackService(store).submit(
+            assessment_id="assessment-123", assessment_result=assessment_result, category="other"
+        )
+    assert caught.value is failure
+    assert not (tmp_path / "feedback.json").exists()
+
+
+def test_feedback_service_rejects_context_before_accessing_corrupt_history(tmp_path):
+    path = tmp_path / "feedback.json"
+    contents = b"private corrupt history"
+    path.write_bytes(contents)
+    with pytest.raises(FeedbackRejected) as caught:
+        FeedbackService(FeedbackStore(path)).submit(
+            assessment_id="assessment-123", assessment_result=None, category="other"
+        )
+    assert str(caught.value.__cause__) == "Assessment context must be an object."
+    assert path.read_bytes() == contents
+
+
+
+def test_feedback_service_preserves_validation_cause_privately(
+    tmp_path, assessment_result, monkeypatch
+):
+    failure = ValueError("private validation details")
+
+    def fail(**kwargs):
+        raise failure
+
+    monkeypatch.setattr("phishreport.feedback.service.Feedback", fail)
+    with pytest.raises(FeedbackRejected) as caught:
+        FeedbackService(FeedbackStore(tmp_path / "feedback.json")).submit(
+            assessment_id="assessment-123", assessment_result=assessment_result, category="other"
+        )
+    assert caught.value.__cause__ is failure
+    assert str(caught.value) == FeedbackRejected.user_message
+    assert not (tmp_path / "feedback.json").exists()
