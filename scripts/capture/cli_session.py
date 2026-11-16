@@ -139,7 +139,10 @@ def run(scenario: list[tuple[str, str]], out_path: Path) -> None:
             if prompt and not buffer.rstrip().endswith(prompt.rstrip()):
                 time.sleep(0.05)
                 continue
-            chunks.append({"t": round(time.monotonic() - started, 2), "text": buffer.decode("utf-8", "replace")})
+            chunks.append({
+                "t": round(time.monotonic() - started, 2),
+                "text": buffer.decode("utf-8", "replace"),
+            })
             answer, index = scenario[index][1], index + 1
             os.write(master, (answer + "\n").encode())
             buffer = b""
@@ -151,7 +154,10 @@ def run(scenario: list[tuple[str, str]], out_path: Path) -> None:
             if chunk:
                 buffer += chunk
         if buffer:
-            chunks.append({"t": round(time.monotonic() - started, 2), "text": buffer.decode("utf-8", "replace")})
+            chunks.append({
+                "t": round(time.monotonic() - started, 2),
+                "text": buffer.decode("utf-8", "replace"),
+            })
     finally:
         process.terminate()
         try:
