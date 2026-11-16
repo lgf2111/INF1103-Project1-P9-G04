@@ -1,0 +1,8 @@
+flowchart LR
+    Input[Message or .eml] --> IO[IOManager]
+    IO --> AI[AIManager]
+    AI -->|validated findings| Logic[LogicManager]
+    Logic -->|score, priority, reasons| IO
+    Logic --> Data[DataManager]
+    Data --> Store[(JSON or SQLite)]
+    IO --> User[CLI or Telegram]
