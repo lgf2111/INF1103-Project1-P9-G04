@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -67,13 +68,20 @@ def test_io_manager_collect_feedback_can_be_skipped(monkeypatch):
     assert io_manager.collect_feedback() is None
 
 
-@pytest.mark.parametrize("choice", ["1", "2", "3", "4", "5", "6", "7"])
+@pytest.mark.parametrize("choice", ["1", "2", "3", "4", "5"])
 def test_io_manager_main_menu_accepts_valid_choice(monkeypatch, choice):
     monkeypatch.setattr("builtins.input", lambda _: choice)
 
     result = io_manager.main_menu()
 
     assert result == choice
+
+
+@pytest.mark.parametrize("choice", ["upload", "feedback"])
+def test_io_manager_main_menu_accepts_keyword_actions(monkeypatch, choice):
+    monkeypatch.setattr("builtins.input", lambda _: f" {choice.upper()} ")
+
+    assert io_manager.main_menu() == choice
 
 
 def test_io_manager_main_menu_reprompts_invalid_choice(monkeypatch):
@@ -86,30 +94,20 @@ def test_io_manager_main_menu_reprompts_invalid_choice(monkeypatch):
     assert result == "1"
 
 
-def test_io_manager_get_channel_accepts_case_insensitive_input(monkeypatch):
-    monkeypatch.setattr("builtins.input", lambda _: "EMAIL")
+def test_io_manager_derives_channel_and_sender_from_each_kind_of_text():
+    from phishreport.io.record_builder import derive_inputs
 
-    result = io_manager.get_channel()
+    email = derive_inputs("From: Updates <sender@example.com>\n\nVerify your account.")
+    assert email["channel"] == "email"
+    assert email["sender"] == "sender@example.com"
 
-    assert result == "email"
+    sms = derive_inputs("Call +65 9123 4567 now.")
+    assert sms["channel"] == "sms"
+    assert sms["sender"] == "+65 9123 4567"
 
-
-def test_io_manager_get_channel_reprompts_invalid_input(monkeypatch):
-    answers = iter(["discord", "Chat"])
-
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
-
-    result = io_manager.get_channel()
-
-    assert result == "chat"
-
-
-def test_io_manager_get_sender_allows_blank_input(monkeypatch):
-    monkeypatch.setattr("builtins.input", lambda _: "")
-
-    result = io_manager.get_sender()
-
-    assert result is None
+    chat = derive_inputs("Meet me at the usual place.")
+    assert chat["channel"] == "chat"
+    assert chat["sender"] is None
 
 
 
@@ -138,13 +136,9 @@ def test_io_manager_collect_input_preserves_five_line_message(monkeypatch):
     ]
 
     answers = iter([
-        "Email",
-        "sender@example.com",
         *body,
         "END",
-        "no",
-        "no",
-        "no"
+        "4"
     ])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
@@ -153,101 +147,46 @@ def test_io_manager_collect_input_preserves_five_line_message(monkeypatch):
 
     assert record["message"] == "\n".join(body)
     assert record["message"].count("\n") == 4
+    assert record["channel"] == "email"
 
 
-def test_io_manager_get_link_information_reprompts_blank_link(monkeypatch):
-    answers = iter(["yes", "", "   ", "https://example.com"])
+def test_io_manager_derives_the_first_link_and_attachment():
+    terminal = Mock()
+    terminal.read.return_value = "4"
+    manager = IOManager(terminal)
 
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    record = manager.build_record_from_message(
+        "See https://example.test/login, then open invoice.pdf. Attached for review."
+    )
 
-    result = io_manager.get_link_information()
-
-    assert result == (True, "https://example.com")
-
-
-def test_io_manager_get_file_information_reprompts_blank_file(monkeypatch):
-    answers = iter(["yes", "", "   ", "Update.exe"])
-
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
-
-    result = io_manager.get_file_information()
-
-    assert result == (True, "Update.exe")
+    assert record["has_link"] is True
+    assert record["link"] == "https://example.test/login"
+    assert record["has_file"] is True
+    assert record["file_name"] == "invoice.pdf"
 
 
-def test_io_manager_get_submitted_category_accepts_case_insensitive_otp(monkeypatch):
-    monkeypatch.setattr("builtins.input", lambda _: "OTP")
-
-    result = io_manager.get_submitted_category()
-
-    assert result == "otp"
-
-
-def test_io_manager_get_submitted_category_reprompts_invalid_input(monkeypatch):
-    answers = iter(["hello", "credit card", "otp"])
+def test_io_manager_interaction_question_reprompts_invalid_input(monkeypatch):
+    answers = iter(["hello", "credit card", "2"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
-    result = io_manager.get_submitted_category()
-
-    assert result == "otp"
-
-
-def test_io_manager_collect_user_actions_with_link_and_file(monkeypatch):
-    answers = iter(["no", "yes", "no"])
-
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
-
-    result = io_manager.collect_user_actions(True, True)
-
-    assert result == {
-        "clicked": False,
-        "downloaded": True,
-        "submitted_category": None,
-    }
-
-
-def test_io_manager_collect_user_actions_without_link(monkeypatch):
-    answers = iter(["yes", "password"])
-
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
-
-    result = io_manager.collect_user_actions(False, True)
-
-    assert result == {
-        "clicked": False,
-        "downloaded": True,
-        "submitted_category": "password",
-    }
-
-
-def test_io_manager_collect_user_actions_without_link_or_file(monkeypatch):
-    monkeypatch.setattr("builtins.input", lambda _: "no")
-
-    result = io_manager.collect_user_actions(False, False)
+    result = io_manager.collect_interaction()
 
     assert result == {
         "clicked": False,
         "downloaded": False,
-        "submitted_category": None,
+        "submitted_category": "password",
     }
 
 
 def test_io_manager_collect_input_returns_complete_record(monkeypatch):
     answers = iter(
-    [
-        "Email",
-        "update@micr0soft.com",
-        "Download Update.exe immediately.",
-        "END",
-        "no",
-        "yes",
-        "Update.exe",
-        "yes",
-        "no",
-    ]
-)
-
+        [
+            "Download Update.exe immediately. Write to update@micr0soft.com.",
+            "END",
+            "3",
+        ]
+    )
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
@@ -256,7 +195,7 @@ def test_io_manager_collect_input_returns_complete_record(monkeypatch):
     assert result == {
         "channel": "email",
         "sender": "update@micr0soft.com",
-        "message": "Download Update.exe immediately.",
+        "message": "Download Update.exe immediately. Write to update@micr0soft.com.",
         "has_link": False,
         "link": None,
         "has_file": True,
@@ -323,7 +262,7 @@ def test_io_manager_read_eml_details_rejects_empty_message(tmp_path):
         io_manager.eml_reader.read_path(empty_email)
 
 
-def test_io_manager_collect_input_from_folder_with_follow_up_questions(monkeypatch, tmp_path):
+def test_io_manager_collect_input_from_folder_derives_follow_up_answers(monkeypatch, tmp_path):
     email_file = tmp_path / "suspicious.eml"
 
     email_file.write_text(
@@ -331,21 +270,11 @@ def test_io_manager_collect_input_from_folder_with_follow_up_questions(monkeypat
         "Subject: Private Microsoft Beta\n"
         'Content-Type: text/plain; charset="utf-8"\n'
         "\n"
-        "Download Update.exe immediately.\n",
+        "Download Update.exe immediately from https://example.com/verify.\n",
         encoding="utf-8",
     )
 
-    answers = iter(
-        [
-            "yes",  # Link included?
-            "https://example.com/verify",  # Link
-            "yes",  # File included?
-            "Update.exe",  # File name
-            "yes",  # Clicked link?
-            "no",  # Downloaded file?
-            "otp",  # Password/OTP disclosed?
-        ]
-    )
+    answers = iter(["2"])  # Shared a password/OTP.
 
     prompts = []
 
@@ -363,22 +292,24 @@ def test_io_manager_collect_input_from_folder_with_follow_up_questions(monkeypat
     assert record == {
         "channel": "email",
         "sender": "update@micr0soft.com",
-        "message": ("Subject: Private Microsoft Beta\n\nDownload Update.exe immediately."),
+        "message": (
+            "Subject: Private Microsoft Beta\n\n"
+            "Download Update.exe immediately from https://example.com/verify."
+        ),
         "has_link": True,
         "link": "https://example.com/verify",
         "has_file": True,
         "file_name": "Update.exe",
-        "clicked": True,
+        "clicked": False,
         "downloaded": False,
-        "submitted_category": "otp",
+        "submitted_category": "password",
         "disclosure_answered": True,
     }
 
-    assert any("Was a link included?" in p for p in prompts)
-    assert any("Was a file included?" in p for p in prompts)
-    assert any("Did you click the link?" in p for p in prompts)
-    assert any("Did you download the file?" in p for p in prompts)
-    assert any("Did you give a password or code?" in p for p in prompts)
+    assert prompts == [
+        "Did you interact with it? [1] clicked [2] shared a password/OTP "
+        "[3] downloaded [4] no (Enter to skip): "
+    ]
 
 
 def test_io_manager_read_eml_details_rejects_deeply_nested_mime(tmp_path):
@@ -815,13 +746,7 @@ def test_io_manager_collect_input_from_folder_without_link_or_file(monkeypatch, 
         b"This is a test message.\r\n"
     )
 
-    answers = iter(
-        [
-            "no",  # Link included?
-            "no",  # File included?
-            "no",  # Password/OTP disclosed?
-        ]
-    )
+    answers = iter(["4"])  # Nothing happened.
 
     monkeypatch.setattr(
         "builtins.input",
@@ -1154,16 +1079,15 @@ def test_html_email_browser_and_folder_email_imports_produce_identical_records(
         "get_eml_from_folder",
         lambda: io_manager.eml_reader.read_path(path),
     )
-    answers = iter(
-        ["yes", "https://credential.example.test", "yes", "invoice.pdf", "yes", "yes", "otp"] * 2
-    )
+    answers = iter(["otp"] * 2)
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     folder = io_manager.collect_input_from_folder()
     browser = io_manager.collect_input_from_upload({"filename": "fictional.eml", "content": raw})
     assert folder == browser
-    assert browser["clicked"] and browser["downloaded"]
-    assert browser["submitted_category"] == "otp"
-    assert browser["file_name"] == "invoice.pdf"
+    assert browser["has_link"] and not browser["clicked"]
+    assert browser["link"] == "https://credential.example.test"
+    assert browser["submitted_category"] == "password"
+    assert browser["has_file"] is False and browser["file_name"] is None
     assert "fictional.eml" not in browser["message"]
 
 

@@ -66,7 +66,7 @@ def test_drop_in_file_runs_from_real_menu_and_appears_in_help_without_ai(
 ):
     plugin_file("return CommandReply('Echo: ' + request.text, 'text')")
     app, terminal, ai, logic, data, feedback = extension_app
-    terminal.read.side_effect = [" /extension_probe   Mixed CASE ", "/help", "7"]
+    terminal.read.side_effect = [" /extension_probe   Mixed CASE ", "/help", "5"]
 
     app.run()
 
@@ -104,7 +104,7 @@ def test_drop_in_expected_errors_follow_policy_without_concrete_type_checks(
         f"raise {error_type}('PRIVATE_ERROR')", policy=f"CommandPolicy(failure='{failure}')",
     )
     app, terminal, ai, logic, data, feedback = extension_app
-    terminal.read.side_effect = ["/extension_probe", "/help", "7"]
+    terminal.read.side_effect = ["/extension_probe", "/help", "5"]
 
     app.run()
 
@@ -178,7 +178,7 @@ def test_custom_assessment_policy_enters_existing_save_workflow(plugin_file, ext
     )
     app, terminal, ai, logic, data, feedback = extension_app
     app._feedback_service = None
-    terminal.read.side_effect = ["no", "no", "no"]
+    terminal.read.side_effect = ["4"]
 
     app.check_message(command_text="/extension_probe Preserved assessment payload ")
 

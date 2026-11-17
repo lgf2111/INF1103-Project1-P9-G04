@@ -751,7 +751,7 @@ def test_one_file_extends_cli_telegram_help_and_menu_without_changing_free_text(
     cli_save = Mock(wraps=cli_data.save)
     monkeypatch.setattr(cli_data, "save", cli_save)
     terminal = Mock()
-    terminal.read.side_effect = ["  /one_file_probe   " + payload, "/help", "7"]
+    terminal.read.side_effect = ["  /one_file_probe   " + payload, "/help", "5"]
     cli_ai, cli_logic = Mock(), Mock()
     module = import_module("phishreport.bot.main")
     monkeypatch.setattr(module.AppLogging, "setup", lambda: True)

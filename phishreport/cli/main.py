@@ -108,7 +108,7 @@ class PhishReportApp:
         if command_text is not None:
             catalog = discover_commands(CommandCapabilities(
                 prepare_record=lambda request: self._io_manager.build_record_from_message(
-                    request.text, channel="chat"
+                    request.text
                 ),
                 assess_record=self._assessment.assess,
                 session_status=lambda request: "CLI conversation active",
@@ -142,7 +142,9 @@ class PhishReportApp:
                         )
                     return
                 if reply is None:
-                    self._io_manager.show_message("Please choose 1, 2, 3, 4, 5, 6 or 7.")
+                    self._io_manager.show_message(
+                        "Please choose 1, 2, 3, 4, 5, upload or feedback."
+                    )
                     return
                 if resolved.policy.execution != "assessment" or reply.kind != "assessment":
                     self._io_manager.show_message(reply.text)
@@ -156,10 +158,8 @@ class PhishReportApp:
             return
         # Retain the original message and assessment with an identifier for feedback.
         report = self._build_report(record, result)
-        report_saved = False
         try:
             self._data_manager.save(report)
-            report_saved = True
         except AssessmentError as error:
             AppLogging.log_failure(logger, "Local report save failed")
             self._io_manager.show_message(self._error_translator.translate(error))
@@ -171,11 +171,9 @@ class PhishReportApp:
 
         # A storage failure does not discard an assessment already completed successfully.
         self._io_manager.display_result(result)
-        if report_saved and self._feedback_service is not None:
-            self._collect_feedback(result)
 
     def _build_report(self, record: dict, result: dict) -> dict:
-        """Save collected exposure answers; otherwise use the plain v3 record."""
+        """Save answered exposure; otherwise use the plain v3 record."""
         exposure_fields = ("clicked", "downloaded", "submitted_category")
         if record.get("disclosure_answered") is not True or any(
             field not in record for field in exposure_fields
@@ -191,16 +189,32 @@ class PhishReportApp:
             record, saved_result, exposure, assessment_id=result.get("assessment_id"),
         )
 
-    def _collect_feedback(self, result: dict) -> None:
-        """Store optional user feedback without changing the completed assessment."""
+    def correct_latest_report(self):
+        """Apply a menu correction to the most recent saved assessment."""
+        if self._feedback_service is None:
+            self._io_manager.show_message("Feedback is unavailable.")
+            return
+        records = self.load_reports()
+        if records is None:
+            return
+        if not records:
+            self._io_manager.show_message("No saved reports yet.")
+            return
+        report = records[-1]
+        assessment_id = report.get("assessment_id")
+        result = report.get("result")
+        if not isinstance(assessment_id, str) or not isinstance(result, dict):
+            self._io_manager.show_message(
+                "The most recent report cannot take feedback."
+            )
+            return
+        assessment_result = {**result, "assessment_id": assessment_id}
         try:
-            feedback = self._io_manager.collect_feedback()
-            if feedback is None:
-                return
+            correction = self._io_manager.collect_correction()
             self._feedback_service.submit(
-                assessment_id=result["assessment_id"],
-                assessment_result=result,
-                **feedback,
+                assessment_id=assessment_id,
+                assessment_result=assessment_result,
+                **correction,
             )
         except (AssessmentError, OSError, ValueError):
             AppLogging.log_failure(logger, "Saving assessment feedback failed")
@@ -328,32 +342,33 @@ class PhishReportApp:
                 self._io_manager.show_message("No saved reports found.")
             while True:
                 choice = self._io_manager.main_menu()
+                normalized = choice.strip().lower()
                 if choice.lstrip().startswith("/"):
                     self.check_message(command_text=choice)
-                elif choice == "1":
-                    # Manual Email, SMS or Chat input.
+                elif normalized == "1":
+                    # Paste one message; its inputs are derived from the text.
                     self.check_message()
-                elif choice == "2":
-                    # Import a .eml file chosen from the user's saved email folder.
-                    record = self._io_manager.collect_input_from_folder()
-                    if record is not None:
-                        self.check_message(record)
-                elif choice == "3":
-                    # Existing browser-based file upload.
-                    self.upload_file()
-                elif choice == "4":
+                elif normalized == "2":
                     # View previous assessments.
                     self.view_reports()
-                elif choice == "5":
+                elif normalized == "3":
                     # Counts and statistics for saved reports, optionally filtered.
                     self.summarize_reports()
-                elif choice == "6":
+                elif normalized == "4":
                     self.export_reports()
-                elif choice == "7":
+                elif normalized == "5":
                     self._io_manager.show_message("Bye!")
                     break
+                elif normalized == "upload":
+                    # Browser-based file upload stays available by keyword.
+                    self.upload_file()
+                elif normalized == "feedback":
+                    # Correct the most recent saved assessment.
+                    self.correct_latest_report()
                 else:
-                    self._io_manager.show_message("Please choose 1, 2, 3, 4, 5, 6 or 7.")
+                    self._io_manager.show_message(
+                        "Please choose 1, 2, 3, 4, 5, upload or feedback."
+                    )
         except (KeyboardInterrupt, EOFError):
             # Ctrl+C (interrupt) or Ctrl+D (end of input): exit cleanly, no traceback.
             self._io_manager.show_message("\nInterrupted. Goodbye!")

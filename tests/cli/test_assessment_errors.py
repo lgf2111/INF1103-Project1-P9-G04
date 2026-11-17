@@ -167,35 +167,34 @@ def test_history_load_programmer_type_error_propagates(app_parts):
 
 
 @pytest.mark.parametrize("error_type", [StorageFailure, FeedbackRejected, AssessmentError])
-def test_typed_feedback_failure_preserves_assessment_then_recovers(app_parts, error_type, caplog):
-    app, io, ai, data, feedback = app_parts
+def test_typed_feedback_failure_preserves_report_then_recovers(app_parts, error_type, caplog):
+    app, io, _, data, feedback = app_parts
     error = error_type()
     error.__cause__ = OSError("PRIVATE feedback path and credentials")
     feedback.submit.side_effect = [error, None]
-    io.collect_feedback.return_value = {"category": "incorrect"}
+    io.collect_correction.return_value = {"category": "incorrect"}
+    report = {
+        "assessment_id": "completed",
+        "result": {"score": 10, "priority": "LOW", "reasons": [], "checklist": []},
+    }
+    data.load.return_value = [report]
     caplog.set_level("WARNING", logger="phishreport.cli.main")
 
-    invoke(app, False)
+    app.correct_latest_report()
 
     io.show_message.assert_called_once_with(
         "Could not save your feedback. The assessment result is unchanged."
     )
-    displayed = io.display_result.call_args.args[0]
-    assert displayed == {
-        "assessment_id": data.save.call_args.args[0]["assessment_id"],
-        "score": 10, "priority": "LOW", "reasons": [], "checklist": [],
-    }
     feedback.submit.assert_called_once_with(
-        assessment_id=displayed["assessment_id"], assessment_result=displayed,
+        assessment_id="completed",
+        assessment_result={**report["result"], "assessment_id": "completed"},
         category="incorrect",
     )
-    ai.assess.assert_called_once()
-    data.save.assert_called_once()
-    io.display_result.assert_called_once()
+    data.save.assert_not_called()
     assert "Saving assessment feedback failed" in caplog.text
     assert "PRIVATE" not in caplog.text
 
-    invoke(app, False)
+    app.correct_latest_report()
 
     assert feedback.submit.call_count == 2
     assert io.show_message.call_count == 2
@@ -204,24 +203,29 @@ def test_typed_feedback_failure_preserves_assessment_then_recovers(app_parts, er
     )
 
 
-def test_skipped_feedback_never_submits(app_parts):
-    app, io, _, _, feedback = app_parts
-    io.collect_feedback.return_value = None
+def test_feedback_without_saved_reports_submits_nothing(app_parts):
+    app, io, _, data, feedback = app_parts
+    data.load.return_value = []
 
-    app._collect_feedback({"assessment_id": "completed"})
+    app.correct_latest_report()
 
     feedback.submit.assert_not_called()
-    io.show_message.assert_not_called()
+    io.collect_correction.assert_not_called()
+    io.show_message.assert_called_once_with("No saved reports yet.")
 
 
 @pytest.mark.parametrize("error_type", [TypeError, KeyError])
 def test_feedback_programmer_error_propagates(app_parts, error_type):
-    app, io, _, _, feedback = app_parts
-    io.collect_feedback.return_value = {"category": "incorrect"}
+    app, io, _, data, feedback = app_parts
+    io.collect_correction.return_value = {"category": "incorrect"}
+    data.load.return_value = [{
+        "assessment_id": "completed",
+        "result": {"score": 10, "priority": "LOW", "reasons": [], "checklist": []},
+    }]
     feedback.submit.side_effect = error_type("feedback programmer bug")
 
     with pytest.raises(error_type, match="feedback programmer bug"):
-        app._collect_feedback({"assessment_id": "completed"})
+        app.correct_latest_report()
 
     feedback.submit.assert_called_once()
     io.show_message.assert_not_called()
@@ -249,9 +253,13 @@ def test_input_collection_failure_is_safe(app_parts, error_type):
 
 
 def test_feedback_collection_validation_is_safe(app_parts):
-    app, io, _, _, feedback = app_parts
-    io.collect_feedback.side_effect = ValueError("PRIVATE feedback")
-    app._collect_feedback({"assessment_id": "completed"})
+    app, io, _, data, feedback = app_parts
+    data.load.return_value = [{
+        "assessment_id": "completed",
+        "result": {"score": 10, "priority": "LOW", "reasons": [], "checklist": []},
+    }]
+    io.collect_correction.side_effect = ValueError("PRIVATE feedback")
+    app.correct_latest_report()
     io.show_message.assert_called_once_with(
         "Could not save your feedback. The assessment result is unchanged."
     )
@@ -312,9 +320,12 @@ def test_input_boundaries_preserve_programming_errors_and_cancellation(
         )
         action = app.upload_file
     elif operation == "feedback":
-        io.collect_feedback.side_effect = error
-        def action():
-            app._collect_feedback({"assessment_id": "completed"})
+        io.collect_correction.side_effect = error
+        data.load.return_value = [{
+            "assessment_id": "completed",
+            "result": {"score": 10, "priority": "LOW", "reasons": [], "checklist": []},
+        }]
+        action = app.correct_latest_report
     else:
         data.load.return_value = [{"message": "Saved report"}]
         io.collect_summary_filter.side_effect = error

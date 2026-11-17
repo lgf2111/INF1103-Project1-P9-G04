@@ -41,9 +41,9 @@ def test_all_mode_prints_the_bot_guide_before_the_cli_banner(capsys):
 
     def cli_loop():
         write("\n=== PhishReport ===")
-        write("1. Check a new message (Manual Input)")
-        write("7. Quit")
-        sys.stdout.write("Choose 1-7: ")
+        write("1. Check a message")
+        write("5. Quit")
+        sys.stdout.write("Choose 1-5: ")
         sys.stdout.flush()
 
     assert BothApp(bot_worker, cli_loop, ready=ready, ready_timeout=5).run() == 0
@@ -55,8 +55,8 @@ def test_all_mode_prints_the_bot_guide_before_the_cli_banner(capsys):
     for line in GUIDE_LINES:
         assert out.index(line) < banner
     # The prompt is the final line, without a trailing newline.
-    assert out.endswith("Choose 1-7: ")
-    assert out.splitlines()[-1] == "Choose 1-7: "
+    assert out.endswith("Choose 1-5: ")
+    assert out.splitlines()[-1] == "Choose 1-5: "
 
 
 def test_timeout_prints_one_warning_and_still_starts_the_cli(capsys):

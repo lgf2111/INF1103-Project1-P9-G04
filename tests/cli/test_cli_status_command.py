@@ -42,7 +42,7 @@ def status_app(tmp_path, monkeypatch):
 def test_cli_menu_status_uses_shared_command_and_strict_saved_count(
     status_app, monkeypatch, backend, count,
 ):
-    app, terminal, io, ai, logic, data, feedback = status_app(backend, count, ["/status", "7"])
+    app, terminal, io, ai, logic, data, feedback = status_app(backend, count, ["/status", "5"])
     executions = []
     original_execute = StatusCommand.execute
     load = Mock(wraps=data.load)
@@ -75,7 +75,7 @@ def test_cli_status_history_failure_is_sanitized_and_menu_continues(
     status_app, monkeypatch, error_type,
 ):
     app, terminal, io, ai, logic, data, feedback = status_app(
-        "json", 1, ["/status", "/help", "7"],
+        "json", 1, ["/status", "/help", "5"],
     )
     original_load = data.load
     history = original_load(strict=True)

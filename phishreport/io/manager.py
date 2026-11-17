@@ -3,11 +3,30 @@
 from .eml import EmlReader
 from .folder import EmlFolderPicker
 from .presenter import ReportPresenter
+from .record_builder import derive_inputs
 from .terminal import Terminal
 
 UPLOAD_TYPE_MESSAGE = (
     "Only .eml email files are supported. Images and attachments are not analysed."
 )
+INTERACTION_PROMPT = (
+    "Did you interact with it? [1] clicked [2] shared a password/OTP "
+    "[3] downloaded [4] no (Enter to skip): "
+)
+INTERACTION_CHOICES = {
+    "1": (True, False, None),
+    "clicked": (True, False, None),
+    "2": (False, False, "password"),
+    "password": (False, False, "password"),
+    "otp": (False, False, "password"),
+    "shared a password/otp": (False, False, "password"),
+    "3": (False, True, None),
+    "downloaded": (False, True, None),
+    "4": (False, False, None),
+    "no": (False, False, None),
+    "none": (False, False, None),
+    "": None,
+}
 
 
 class IOManager:
@@ -20,24 +39,23 @@ class IOManager:
         self._presenter = ReportPresenter(terminal)
 
     def main_menu(self) -> str:
-        """Return a normalized menu number or untouched slash-command input."""
+        """Return a normalized menu number, keyword or untouched slash input."""
         self._terminal.write("\n=== PhishReport ===")
-        self._terminal.write("1. Check a new message (Manual Input)")
-        self._terminal.write("2. Import the newest emails from your saved folder")
-        self._terminal.write("3. Upload an .eml in a browser")
-        self._terminal.write("4. View saved reports")
-        self._terminal.write("5. Summarize saved reports")
-        self._terminal.write("6. Filter and export saved reports")
-        self._terminal.write("7. Quit")
+        self._terminal.write("1. Check a message")
+        self._terminal.write("2. View saved reports")
+        self._terminal.write("3. Summarize saved reports")
+        self._terminal.write("4. Filter and export saved reports")
+        self._terminal.write("5. Quit")
 
-        prompt = "Choose 1-7: "
+        prompt = "Choose 1-5: "
         while True:
             choice = self._terminal.read(prompt)
             if choice.lstrip().startswith("/"):
                 return choice
-            if choice.strip() in ("1", "2", "3", "4", "5", "6", "7"):
-                return choice.strip()
-            prompt = "Invalid choice. Please choose 1-7: "
+            normalized = choice.strip().lower()
+            if normalized in ("1", "2", "3", "4", "5", "upload", "feedback"):
+                return normalized
+            prompt = "Invalid choice. Please choose 1-5, upload or feedback: "
 
     def get_valid_choice(self, prompt, valid_choices, error_message):
         """Prompt until stripped, lowercase input matches one of valid_choices.
@@ -53,44 +71,53 @@ class IOManager:
         return choice
 
     def collect_input(self) -> dict:
-        """Collect validated manual fields, then use the shared exposure questions."""
-        channel = self.get_channel()
-        sender = self.get_sender()
-        message = self.get_message()
-        return self.build_record_from_message(message, channel=channel, sender=sender)
+        """Collect the message, derive its inputs and ask only about interaction."""
+        return self.build_record_from_message(self.get_message())
 
     def build_record_from_message(
-        self, message: str, channel: str = "email", sender: str | None = None
+        self, message: str, channel: str | None = None, sender: str | None = None
     ) -> dict:
-        """Build a record from already-obtained message text (e.g. an uploaded file).
+        """Build a record from message text, deriving channel, sender, link and file.
 
-        Manual, folder and upload collection all use this single action/record contract.
-        The caller supplies message text validated by its collection or decoding path.
-        The disclosure question is always asked, so the record marks it answered.
+        Manual, folder and upload collection all use this single action/record
+        contract. A channel or sender supplied by the caller (an uploaded email)
+        takes precedence; otherwise they come from the text. The only user
+        question is the single interaction line, so a blank answer is saved as
+        an unconfirmed assessment without an exposure block.
         """
-        has_link, link = self.get_link_information()
-        has_file, file_name = self.get_file_information()
-        user_actions = self.collect_user_actions(has_link, has_file)
+        derived = derive_inputs(message)
+        inferred = channel is None
+        channel = derived["channel"] if inferred else channel
+        sender = derived["sender"] if sender is None else sender
+        if inferred:
+            self._terminal.write(f"Detected: {channel}")
+        interaction = self.collect_interaction()
+        if interaction is None:
+            clicked, downloaded, submitted_category = False, False, None
+        else:
+            clicked = interaction["clicked"]
+            downloaded = interaction["downloaded"]
+            submitted_category = interaction["submitted_category"]
         return {
             "channel": channel,
             "sender": sender,
             "message": message,
-            "has_link": has_link,
-            "link": link,
-            "has_file": has_file,
-            "file_name": file_name,
-            "clicked": user_actions["clicked"],
-            "downloaded": user_actions["downloaded"],
-            "submitted_category": user_actions["submitted_category"],
-            "disclosure_answered": True,
+            "has_link": derived["has_link"],
+            "link": derived["link"],
+            "has_file": derived["has_file"],
+            "file_name": derived["file_name"],
+            "clicked": clicked,
+            "downloaded": downloaded,
+            "submitted_category": submitted_category,
+            "disclosure_answered": interaction is not None,
         }
 
     def collect_input_from_upload(self, upload) -> dict:
-        """Use the folder import's MIME parser and exposure contract for browser EML."""
+        """Use the folder import's MIME parser and derived record contract for uploads."""
         if not upload["filename"].lower().endswith(".eml"):
             raise ValueError(UPLOAD_TYPE_MESSAGE)
         sender, message = self.eml_reader.read_bytes(upload["content"])
-        return self.build_record_from_message(message, sender=sender)
+        return self.build_record_from_message(message, channel="email", sender=sender)
 
     def show_upload_instructions(self, host, port) -> None:
         """Print the browser upload address and waiting instructions; do not start a server."""
@@ -105,7 +132,7 @@ class IOManager:
         if loaded is None:
             return None
         sender, message = loaded
-        return self.build_record_from_message(message, sender=sender)
+        return self.build_record_from_message(message, channel="email", sender=sender)
 
     def ask_yes_no(self, question):
         """Prompt until yes/y or no/n is entered, ignoring case and surrounding spaces.
@@ -120,12 +147,15 @@ class IOManager:
         return answer in ("y", "yes")
 
     def collect_feedback(self) -> dict | None:
-        """Collect one optional correction about the assessment just displayed."""
+        """Ask whether to leave a correction, then collect it."""
         if not self.ask_yes_no(
             "Would you like to leave feedback about this assessment? (yes/no): "
         ):
             return None
+        return self.collect_correction()
 
+    def collect_correction(self) -> dict:
+        """Collect one correction for the newest saved assessment."""
         categories = {
             "1": "false_positive",
             "2": "false_negative",
@@ -167,23 +197,22 @@ class IOManager:
             "corrected_priority": corrected_priority,
         }
 
-    def get_channel(self):
-        """Return the user-selected channel: email, sms or chat."""
-        return self.get_valid_choice(
-            "Enter channel (Email/SMS/Chat): ",
-            ("email", "sms", "chat"),
-            "Invalid channel. Please enter Email, SMS, or Chat: ",
-        )
-
-    def get_sender(self):
-        """Return stripped sender text, or None for a blank answer; do not verify identity."""
-        sender = self._terminal.read("Enter sender information (press Enter if unknown): ").strip()
-
-        if sender == "":
+    def collect_interaction(self) -> dict | None:
+        """Ask the one interaction question; blank means unconfirmed."""
+        answer = self._terminal.read(INTERACTION_PROMPT).strip().lower()
+        while answer not in INTERACTION_CHOICES:
+            answer = self._terminal.read(
+                "Invalid answer. Please enter 1, 2, 3, 4, or press Enter to skip: "
+            ).strip().lower()
+        interaction = INTERACTION_CHOICES[answer]
+        if interaction is None:
             return None
-
-        return sender
-
+        clicked, downloaded, submitted_category = interaction
+        return {
+            "clicked": clicked,
+            "downloaded": downloaded,
+            "submitted_category": submitted_category,
+        }
 
     def get_message(self):
         """Collect a multi-line message until END is entered on its own line."""
@@ -212,81 +241,6 @@ class IOManager:
             self._terminal.write(
                 "Message cannot be blank. Please enter the suspicious message."
             )
-
-    def get_link_information(self):
-        """Return (has_link, link), requiring nonblank text when a link is reported.
-
-        Return (False, None) when absent. Collect the supplied text without
-        visiting the link or validating its destination.
-        """
-        has_link = self.ask_yes_no("Was a link included? (yes/no): ")
-
-        if not has_link:
-            return False, None
-
-        link = self._terminal.read("Enter the link: ").strip()
-
-        while link == "":
-            link = self._terminal.read("Link cannot be blank. Please enter the link: ").strip()
-
-        return True, link
-
-    def get_file_information(self):
-        """Return (has_file, file_name), requiring a name when a file is reported.
-
-        Return (False, None) when absent. This question collects metadata only;
-        it does not open or inspect the named file.
-        """
-        has_file = self.ask_yes_no("Was a file included? (yes/no): ")
-
-        if not has_file:
-            return False, None
-
-        file_name = self._terminal.read("Enter the file name: ").strip()
-
-        while file_name == "":
-            file_name = self._terminal.read(
-                "File name cannot be blank. Please enter the file name: "
-            ).strip()
-
-        return True, file_name
-
-    def get_submitted_category(self):
-        """Return password, otp or None from the validated disclosure answer."""
-        submitted = self.get_valid_choice(
-            "Did you give a password or code? (password/otp/no): ",
-            ("password", "otp", "no"),
-            "Please type password, otp or no: ",
-        )
-
-        if submitted == "no":
-            return None
-
-        return submitted
-
-    def collect_user_actions(self, has_link, has_file):
-        """Return clicked, downloaded and submitted_category from exposure questions.
-
-        Ask about clicks/downloads only when the corresponding item was reported;
-        otherwise record False. Always ask whether credentials were submitted.
-        """
-        if has_link:
-            clicked = self.ask_yes_no("Did you click the link? (yes/no): ")
-        else:
-            clicked = False
-
-        if has_file:
-            downloaded = self.ask_yes_no("Did you download the file? (yes/no): ")
-        else:
-            downloaded = False
-
-        submitted_category = self.get_submitted_category()
-
-        return {
-            "clicked": clicked,
-            "downloaded": downloaded,
-            "submitted_category": submitted_category,
-        }
 
     def display_result(self, result: dict | None) -> None:
         """Display a validated outcome or an explicit unavailable assessment."""
