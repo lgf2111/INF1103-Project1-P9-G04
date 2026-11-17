@@ -12,12 +12,15 @@
 #     exactly why something failed while actively debugging.
 #
 # Logs are written to the local logs/ folder, excluded from normal Git tracking.
-# Debug tracebacks can contain sensitive context; logging mode controls that detail.
+# Each local calendar day gets its own file, so old days can be removed without
+# rewriting one long file. Debug tracebacks can contain sensitive context;
+# logging mode controls that detail.
 
 import logging
 import os
 import re
-from logging.handlers import RotatingFileHandler
+import time
+from logging.handlers import TimedRotatingFileHandler
 
 # A NullHandler on the root logger means that if AppLogging.setup() was never
 # called (e.g. a module used on its own, or in some tests), log records are
@@ -61,6 +64,58 @@ class SecretRedactingFilter(logging.Filter):
         return True
 
 
+class DailyLogFileHandler(TimedRotatingFileHandler):
+    """Write one file per local day, named logs/<prefix>-YYYY-MM-DD.log.
+
+    TimedRotatingFileHandler normally renames the live file to an archive name.
+    Here the live file already carries its date, so a rollover switches to the
+    next day's file and leaves the finished day in place. The namer still maps
+    a dated suffix to the dated file name so the inherited retention can find
+    old days and remove them.
+    """
+
+    def __init__(
+        self,
+        log_dir: str,
+        *,
+        prefix: str = "phishreport",
+        backup_count: int = 14,
+    ) -> None:
+        self._log_dir = os.path.abspath(log_dir)
+        self._prefix = prefix
+        super().__init__(
+            self._path_for(time.time()),
+            when="midnight",
+            backupCount=backup_count,
+            encoding="utf-8",
+            utc=False,
+        )
+        self.namer = self._dated_name
+
+    def _path_for(self, moment: float) -> str:
+        """Return the dated file path for a timestamp in local time."""
+        day = time.strftime("%Y-%m-%d", time.localtime(moment))
+        return os.path.join(self._log_dir, f"{self._prefix}-{day}.log")
+
+    def _dated_name(self, default_name: str) -> str:
+        """Map a rotation name such as <file>.<date> to the dated file name."""
+        suffix = default_name.rsplit(".", 1)[-1]
+        return os.path.join(self._log_dir, f"{self._prefix}-{suffix}.log")
+
+    def doRollover(self) -> None:
+        """Open the new day's file, then remove days beyond the backup count."""
+        if self.stream:
+            self.stream.close()
+            self.stream = None
+        self.baseFilename = self._path_for(time.time())
+        if not self.delay:
+            self.stream = self._open()
+        if self.backupCount > 0:
+            for path in self.getFilesToDelete():
+                os.remove(path)
+        self.rolloverAt = self.computeRollover(int(time.time()))
+
+
 class AppLogging:
     """Set up and use the application's diagnostic logging.
 
@@ -70,11 +125,12 @@ class AppLogging:
     """
 
     LOG_DIR = "logs"
-    LOG_FILE = os.path.join(LOG_DIR, "phishreport.log")
+    LOG_PREFIX = "phishreport"
+    # Local naming pattern for the live file: logs/phishreport-YYYY-MM-DD.log.
+    LOG_FILE = os.path.join(LOG_DIR, f"{LOG_PREFIX}-%Y-%m-%d.log")
 
-    # Keep up to ~1 MB per file and a few old copies, so logs can't fill the disk.
-    MAX_BYTES = 1_000_000
-    BACKUP_COUNT = 3
+    # Keep two weeks of daily files, so logs can't fill the disk.
+    BACKUP_COUNT = 14
 
     FORMAT = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
 
@@ -100,7 +156,7 @@ class AppLogging:
 
     @classmethod
     def setup(cls):
-        """Set up app-wide logging to a rotating file in the logs/ folder.
+        """Set up app-wide logging to one dated file per local day in logs/.
 
         Call once, early in main(). Returns True if the file log is active, or False
         if the logs/ folder or file could not be opened (the app still runs without a
@@ -123,11 +179,10 @@ class AppLogging:
 
         try:
             os.makedirs(cls.LOG_DIR, exist_ok=True)
-            handler = RotatingFileHandler(
-                cls.LOG_FILE,
-                maxBytes=cls.MAX_BYTES,
-                backupCount=cls.BACKUP_COUNT,
-                encoding="utf-8",
+            handler = DailyLogFileHandler(
+                cls.LOG_DIR,
+                prefix=cls.LOG_PREFIX,
+                backup_count=cls.BACKUP_COUNT,
             )
         except OSError:
             return False

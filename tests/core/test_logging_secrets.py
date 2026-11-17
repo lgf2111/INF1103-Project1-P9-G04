@@ -15,7 +15,6 @@ def log_file(tmp_path, monkeypatch):
     """Configure the real file handler against a temporary logs folder."""
     monkeypatch.delenv("LOG_LEVEL", raising=False)
     monkeypatch.setattr(AppLogging, "LOG_DIR", str(tmp_path / "logs"))
-    monkeypatch.setattr(AppLogging, "LOG_FILE", str(tmp_path / "logs" / "phishreport.log"))
     monkeypatch.setattr(AppLogging, "_configured", False)
     for name in ("httpx", "httpcore", "urllib3"):
         logger = logging.getLogger(name)
@@ -26,7 +25,9 @@ def log_file(tmp_path, monkeypatch):
 
     assert AppLogging.setup() is True
 
-    yield Path(AppLogging.LOG_FILE)
+    added = [handler for handler in root.handlers if handler not in original_handlers]
+    assert len(added) == 1
+    yield Path(added[0].baseFilename)
 
     for handler in root.handlers[:]:
         if handler not in original_handlers:

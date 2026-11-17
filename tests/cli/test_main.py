@@ -521,7 +521,7 @@ def test_main_menu_continues_after_bad_record_then_saves_next_assessment(
     assert len(DataManager().load()) == 1
     cli.io_manager.display_result.assert_called_once()
     assert main_app_boundary.call_count == 1
-    log = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
+    log = next((tmp_path / "logs").glob("phishreport-*.log")).read_text(encoding="utf-8")
     assert log.count("stage=build_prompt") == 1
     assert "PRIVATE_" not in log and "fictional-integration-key" not in log
 
@@ -534,7 +534,7 @@ def test_main_configured_logging_writes_sanitised_diagnostics(main_app_boundary,
         GroqClient().complete("PRIVATE_PROMPT")
     for handler in logging.getLogger().handlers:
         handler.flush()
-    log = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
+    log = next((tmp_path / "logs").glob("phishreport-*.log")).read_text(encoding="utf-8")
     assert "WARNING" in log and "stage=call_api" in log and "timed out" in log
     assert "PRIVATE_" not in log and "fictional-integration-key" not in log
     assert "Traceback" not in log
@@ -674,7 +674,7 @@ def test_main_configured_storage_logging_uses_application_file(
     (tmp_path / "reports.json").write_text("{PRIVATE_BROKEN")
     monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="7"))
     cli.app.run()
-    text = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
+    text = next((tmp_path / "logs").glob("phishreport-*.log")).read_text(encoding="utf-8")
     assert "data_manager" in text and "Could not read local report history" in text
     # Default (non-debug) logging must not leak the broken file contents.
     assert "PRIVATE" not in text
