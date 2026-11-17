@@ -339,6 +339,21 @@ def test_build_exposure_report_generates_a_fresh_uuid_for_each_report():
     assert "assessment_id" not in result
 
 
+def test_build_exposure_report_reuses_a_supplied_identifier():
+    result = {"score": 60, "priority": "MEDIUM", "reasons": [], "checklist": []}
+    exposure = {
+        "clicked": True, "downloaded": False, "submitted_category": "password",
+        "disclosure_answered": True,
+    }
+
+    report = AssessmentService.build_exposure_report(
+        RECORD, result, exposure, assessment_id="displayed-id",
+    )
+
+    assert report["assessment_id"] == "displayed-id"
+    assert "assessment_id" not in report["result"]
+
+
 def test_build_exposure_report_propagates_canonical_validation_error(monkeypatch):
     from phishreport import model
 

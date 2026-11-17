@@ -264,6 +264,7 @@ def test_io_manager_collect_input_returns_complete_record(monkeypatch):
         "clicked": False,
         "downloaded": True,
         "submitted_category": None,
+        "disclosure_answered": True,
     }
 
 
@@ -370,6 +371,7 @@ def test_io_manager_collect_input_from_folder_with_follow_up_questions(monkeypat
         "clicked": True,
         "downloaded": False,
         "submitted_category": "otp",
+        "disclosure_answered": True,
     }
 
     assert any("Was a link included?" in p for p in prompts)
@@ -842,6 +844,7 @@ def test_io_manager_collect_input_from_folder_without_link_or_file(monkeypatch, 
         "clicked": False,
         "downloaded": False,
         "submitted_category": None,
+        "disclosure_answered": True,
     }
 
 

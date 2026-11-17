@@ -549,6 +549,7 @@ def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, mo
         "clicked": True,
         "downloaded": False,
         "submitted_category": "otp",
+        "disclosure_answered": True,
     }
     assert manager.collect_input() == expected
     assert manager.collect_input_from_folder() == expected

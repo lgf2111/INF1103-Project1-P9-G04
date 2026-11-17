@@ -83,12 +83,15 @@ class AssessmentService:
         return Report.from_assessment(record, result).to_dict()
 
     @staticmethod
-    def build_exposure_report(record: dict, result: dict, exposure: dict) -> dict:
-        """Validate and serialize an independent v3 report with a fresh identifier.
+    def build_exposure_report(
+        record: dict, result: dict, exposure: dict, assessment_id: str | None = None,
+    ) -> dict:
+        """Validate and serialize an independent v3 report with a stable identifier.
 
-        Select only report fields without scoring or reassessment. Unknown answers
-        remain None; disclosure_answered distinguishes unknown from confirmed no.
+        Use the supplied identifier, or generate a fresh one. Select only report
+        fields without scoring or reassessment. Unknown answers remain None;
+        disclosure_answered distinguishes unknown from confirmed no.
         """
         return Report.from_exposure(
-            record, result, exposure, assessment_id=str(uuid4()),
+            record, result, exposure, assessment_id=assessment_id or str(uuid4()),
         ).to_dict()

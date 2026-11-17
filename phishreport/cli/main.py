@@ -154,7 +154,7 @@ class PhishReportApp:
             self._io_manager.show_message(self._error_translator.translate(error))
             return
         # Retain the original message and assessment with an identifier for feedback.
-        report = self._assessment.build_report(record, result)
+        report = self._build_report(record, result)
         report_saved = False
         try:
             self._data_manager.save(report)
@@ -172,6 +172,23 @@ class PhishReportApp:
         self._io_manager.display_result(result)
         if report_saved and self._feedback_service is not None:
             self._collect_feedback(result)
+
+    def _build_report(self, record: dict, result: dict) -> dict:
+        """Save collected exposure answers; otherwise use the plain v3 record."""
+        exposure_fields = ("clicked", "downloaded", "submitted_category")
+        if record.get("disclosure_answered") is not True or any(
+            field not in record for field in exposure_fields
+        ):
+            return self._assessment.build_report(record, result)
+
+        exposure = {field: record[field] for field in exposure_fields}
+        exposure["disclosure_answered"] = True
+        saved_result = {
+            key: value for key, value in result.items() if key != "assessment_id"
+        }
+        return self._assessment.build_exposure_report(
+            record, saved_result, exposure, assessment_id=result.get("assessment_id"),
+        )
 
     def _collect_feedback(self, result: dict) -> None:
         """Store optional user feedback without changing the completed assessment."""

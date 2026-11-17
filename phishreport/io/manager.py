@@ -66,6 +66,7 @@ class IOManager:
 
         Manual, folder and upload collection all use this single action/record contract.
         The caller supplies message text validated by its collection or decoding path.
+        The disclosure question is always asked, so the record marks it answered.
         """
         has_link, link = self.get_link_information()
         has_file, file_name = self.get_file_information()
@@ -81,6 +82,7 @@ class IOManager:
             "clicked": user_actions["clicked"],
             "downloaded": user_actions["downloaded"],
             "submitted_category": user_actions["submitted_category"],
+            "disclosure_answered": True,
         }
 
     def collect_input_from_upload(self, upload) -> dict:
