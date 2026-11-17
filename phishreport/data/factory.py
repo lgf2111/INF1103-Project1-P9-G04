@@ -33,3 +33,20 @@ def create_report_storage() -> ReportStorage:
     if same_file:
         raise ValueError("JSON and SQLite storage paths alias the same file.")
     return SqliteReportStorage(sqlite_path)
+
+
+def resolve_feedback_path() -> str:
+    """Return the feedback file for the configured data folder.
+
+    PHISHREPORT_FEEDBACK_PATH always wins. Otherwise feedback is stored beside
+    PHISHREPORT_REPORTS_PATH, so one mounted data folder holds both files and
+    feedback survives a container restart. With no report path configured the
+    historical relative default remains.
+    """
+    explicit = os.environ.get("PHISHREPORT_FEEDBACK_PATH")
+    if explicit:
+        return explicit
+    reports_path = os.environ.get("PHISHREPORT_REPORTS_PATH")
+    if not reports_path:
+        return "feedback.json"
+    return str(Path(reports_path).parent / "feedback.json")

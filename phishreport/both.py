@@ -26,7 +26,7 @@ from phishreport.bot.messages import EXPOSURE_CALLBACK_PREFIX, ChatRecordBuilder
 from phishreport.bot.monitor import EmailMonitor
 from phishreport.cli.main import EnvLoader, PhishReportApp
 from phishreport.data import DataManager, ReportStorage
-from phishreport.data.factory import create_report_storage
+from phishreport.data.factory import create_report_storage, resolve_feedback_path
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
 from phishreport.io.command_catalog import CommandCapabilities, discover_commands
@@ -179,9 +179,7 @@ def build_cli_app(data_manager: DataManager) -> PhishReportApp:
         ai_manager=AIManager(),
         logic_manager=LogicManager(),
         data_manager=data_manager,
-        feedback_service=FeedbackService(
-            FeedbackStore(os.environ.get("PHISHREPORT_FEEDBACK_PATH", "feedback.json"))
-        ),
+        feedback_service=FeedbackService(FeedbackStore(resolve_feedback_path())),
     )
 
 
@@ -199,9 +197,7 @@ def build_bot_application(
     the guide has been written and flushed and before polling begins.
     """
     assessment = AssessmentService(AIManager(), LogicManager())
-    feedback_service = FeedbackService(
-        FeedbackStore(os.environ.get("PHISHREPORT_FEEDBACK_PATH", "feedback.json"))
-    )
+    feedback_service = FeedbackService(FeedbackStore(resolve_feedback_path()))
     manager = TelegramIOManager(
         data_manager,
         allowed_chat_id,

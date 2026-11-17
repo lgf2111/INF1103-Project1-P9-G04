@@ -8,7 +8,7 @@ from phishreport.ai import AIManager
 from phishreport.ai.errors import AIErrorTranslator
 from phishreport.assessment import AssessmentService
 from phishreport.data import DataManager
-from phishreport.data.factory import create_report_storage
+from phishreport.data.factory import create_report_storage, resolve_feedback_path
 from phishreport.errors import AssessmentError
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
@@ -366,9 +366,7 @@ def main():
         ai_manager=AIManager(),
         logic_manager=LogicManager(),
         data_manager=DataManager(create_report_storage()),
-        feedback_service=FeedbackService(
-            FeedbackStore(os.environ.get("PHISHREPORT_FEEDBACK_PATH", "feedback.json"))
-        ),
+        feedback_service=FeedbackService(FeedbackStore(resolve_feedback_path())),
     )
     app.run()
 

@@ -23,7 +23,7 @@ from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.messages import EXPOSURE_CALLBACK_PREFIX, ChatRecordBuilder
 from phishreport.bot.monitor import EmailMonitor
 from phishreport.data import DataManager
-from phishreport.data.factory import create_report_storage
+from phishreport.data.factory import create_report_storage, resolve_feedback_path
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io.command_catalog import CommandCapabilities, discover_commands
 from phishreport.logging_setup import AppLogging
@@ -80,9 +80,7 @@ def main() -> int:
 
     data_manager = DataManager(create_report_storage())
     assessment = AssessmentService(AIManager(), LogicManager())
-    feedback_service = FeedbackService(
-        FeedbackStore(os.environ.get("PHISHREPORT_FEEDBACK_PATH", "feedback.json"))
-    )
+    feedback_service = FeedbackService(FeedbackStore(resolve_feedback_path()))
     manager = TelegramIOManager(
         data_manager,
         chat_id,
