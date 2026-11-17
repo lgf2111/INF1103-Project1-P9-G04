@@ -17,7 +17,11 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Mess
 
 from phishreport.assessment import AssessmentService, AssessmentSnapshot
 from phishreport.bot import handlers as handlers_module
-from phishreport.bot.exposure import ExposureSession, PendingConfirmation
+from phishreport.bot.exposure import (
+    CONFIRMATION_TIMEOUT_SECONDS,
+    ExposureSession,
+    PendingConfirmation,
+)
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.main import main
 from phishreport.bot.messages import EXPOSURE_CALLBACK_PREFIX, ChatRecordBuilder, ResultFormatter
@@ -374,9 +378,14 @@ def test_duplicate_confirmation_taps_run_one_assessment_and_one_save(confirmatio
         assert "Priority: Medium" in text and "Rule-based score: 60" in text
 
 
-def test_expired_confirmation_card_never_assesses_or_saves(confirmation_setup):
+def test_expired_confirmation_card_never_assesses_or_saves(
+    confirmation_setup, monkeypatch,
+):
     manager, pending, ai = confirmation_setup
-    pending.expires_at = 0
+    monkeypatch.setattr(
+        "phishreport.bot.exposure.time.monotonic",
+        lambda: pending.created_at + CONFIRMATION_TIMEOUT_SECONDS,
+    )
     incoming = confirmation_update(pending, "confirm")
 
     asyncio.run(manager.exposure_callback(incoming, None))

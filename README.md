@@ -278,7 +278,7 @@ confirmation wrapper.
 
 **Cancel** replaces the card with **Cancelled. Nothing was sent or saved.** and
 removes the keyboard without an AI call or a stored report. An unanswered
-confirmation expires after 30 minutes; tapping it then replies **This confirmation
+confirmation expires after 60 seconds; tapping it then replies **This confirmation
 expired. Paste the message again.** and runs no assessment. `/check <text>` is
 unchanged and still assesses and saves immediately without a confirmation card.
 

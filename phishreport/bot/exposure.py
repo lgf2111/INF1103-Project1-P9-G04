@@ -8,6 +8,9 @@ from uuid import uuid4
 
 from phishreport.assessment import AssessmentService, AssessmentSnapshot
 
+# A paste confirmation is short-lived: stale text must not be assessed later.
+CONFIRMATION_TIMEOUT_SECONDS = 60
+# Exposure follow-ups stay available for the normal half-hour review window.
 SESSION_TIMEOUT_SECONDS = 30 * 60
 ANSWER_ACTIONS = {"clicked", "password"}
 CONFIRM_ACTION = "confirm"
@@ -19,8 +22,8 @@ class PendingConfirmation:
     """Keep one unassessed message until its owner confirms or cancels it.
 
     Nothing here calls AI or storage. The raw record waits behind a token for
-    the matching yes/no tap, and expires like an exposure session so a stale
-    pasted message cannot be assessed hours later.
+    the matching yes/no tap, and expires after its own short window so a stale
+    pasted message cannot be assessed later.
     """
 
     def __init__(
@@ -38,7 +41,7 @@ class PendingConfirmation:
         self.card_message_id = None
         self.token = secrets.token_urlsafe(12)
         self.created_at = time.monotonic()
-        self.expires_at = self.created_at + SESSION_TIMEOUT_SECONDS
+        self.expires_at = self.created_at + CONFIRMATION_TIMEOUT_SECONDS
         self.resolution = None
         self.lock = asyncio.Lock()
 

@@ -407,7 +407,10 @@ def test_pending_confirmation_waits_with_owned_source_and_raw_record(
     assert pending.card_message_id is None
     assert pending.resolution is None
     assert isinstance(pending.lock, asyncio.Lock) and not pending.lock.locked()
-    assert pending.created_at == pending.expires_at - 30 * 60
+    assert (
+        pending.created_at
+        == pending.expires_at - exposure_module.CONFIRMATION_TIMEOUT_SECONDS
+    )
     assert not pending.expired
 
 
@@ -427,10 +430,11 @@ def test_pending_confirmation_deep_copies_the_record(
         assert pending_record["metadata"]["labels"] == ["original"]
 
 
-def test_pending_confirmation_expires_thirty_minutes_after_creation(
+def test_pending_confirmation_expires_after_its_own_window(
     exposure_module, pending_record, monkeypatch,
 ):
-    ticks = iter([100.0, 1899.999, 1900.0])
+    window = exposure_module.CONFIRMATION_TIMEOUT_SECONDS
+    ticks = iter([100.0, 100.0 + window - 0.001, 100.0 + window])
     monkeypatch.setattr(exposure_module.time, "monotonic", lambda: next(ticks))
 
     pending = exposure_module.PendingConfirmation(
@@ -438,9 +442,33 @@ def test_pending_confirmation_expires_thirty_minutes_after_creation(
     )
 
     assert pending.created_at == 100.0
-    assert pending.expires_at == 1900.0
+    assert pending.expires_at == 100.0 + window
     assert not pending.expired
     assert pending.expired
+
+
+def test_confirmation_and_exposure_sessions_have_separate_windows(
+    exposure_module, pending_record, inputs, monkeypatch,
+):
+    now = 1000.0
+    monkeypatch.setattr(exposure_module.time, "monotonic", lambda: now)
+
+    confirmation = exposure_module.PendingConfirmation(
+        pending_record, chat_id=101, user_id=202, message_id=303,
+    )
+    session = exposure_module.ExposureSession(
+        *inputs, chat_id=101, user_id=202, message_id=303,
+    )
+
+    assert (
+        confirmation.expires_at - now
+        == exposure_module.CONFIRMATION_TIMEOUT_SECONDS
+    )
+    assert session.expires_at - now == exposure_module.SESSION_TIMEOUT_SECONDS
+    assert (
+        exposure_module.CONFIRMATION_TIMEOUT_SECONDS
+        < exposure_module.SESSION_TIMEOUT_SECONDS
+    )
 
 
 def test_pending_confirmation_token_is_urlsafe_and_fits_callback_payload(
