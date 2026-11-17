@@ -16,6 +16,7 @@
 
 import logging
 import os
+import re
 from logging.handlers import RotatingFileHandler
 
 # A NullHandler on the root logger means that if AppLogging.setup() was never
@@ -23,6 +24,41 @@ from logging.handlers import RotatingFileHandler
 # swallowed instead of falling back to Python's stderr printer. This keeps the
 # CLI clean and secrets off the terminal.
 logging.getLogger().addHandler(logging.NullHandler())
+
+# HTTP client libraries log full request URLs at INFO. Telegram puts its bot
+# token in the URL path, so these loggers stay quiet for every entry point.
+HTTP_CLIENT_LOGGERS = ("httpx", "httpcore", "urllib3")
+
+_SECRET_PATTERNS = (
+    (re.compile(r"bot\d+:[A-Za-z0-9_-]+"), "bot<redacted>"),
+    (re.compile(r"(?<!\w)\d{8,10}:[A-Za-z0-9_-]{20,}"), "<redacted>"),
+    (
+        re.compile(r"(?i)\b(token|api_key|apikey|secret|password|key)=([^&\s\"'<>;]+)"),
+        r"\1=<redacted>",
+    ),
+    (re.compile(r"(?i)\bBearer\s+[^\s\"',;]+"), "Bearer <redacted>"),
+    (re.compile(r"gsk_[A-Za-z0-9_-]+"), "<redacted>"),
+)
+
+
+def redact_secrets(message: str) -> str:
+    """Mask credentials while preserving the rest of a rendered log message."""
+    for pattern, replacement in _SECRET_PATTERNS:
+        message = pattern.sub(replacement, message)
+    return message
+
+
+class SecretRedactingFilter(logging.Filter):
+    """Redact a record's fully rendered message, including %-style arguments."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Rewrite the message in place and always keep the record."""
+        rendered = record.getMessage()
+        redacted = redact_secrets(rendered)
+        if redacted != rendered:
+            record.msg = redacted
+            record.args = ()
+        return True
 
 
 class AppLogging:
@@ -70,6 +106,14 @@ class AppLogging:
         if the logs/ folder or file could not be opened (the app still runs without a
         file log). Safe to call more than once.
         """
+        # Every entry point (CLI, bot, future adapters) shares this setup. HTTP
+        # client libraries log full request URLs at INFO, and Telegram embeds the
+        # bot token in the URL path, so keep those loggers at WARNING or above.
+        for name in HTTP_CLIENT_LOGGERS:
+            client_logger = logging.getLogger(name)
+            if client_logger.level < logging.WARNING:
+                client_logger.setLevel(logging.WARNING)
+
         if cls._configured:
             return True
 
@@ -90,6 +134,9 @@ class AppLogging:
 
         handler.setLevel(level)
         handler.setFormatter(logging.Formatter(cls.FORMAT))
+        # Defence in depth: redact secrets from every record this app writes,
+        # in case a library or future adapter logs a credential at INFO+.
+        handler.addFilter(SecretRedactingFilter())
         root.addHandler(handler)
 
         logging.getLogger(__name__).info(

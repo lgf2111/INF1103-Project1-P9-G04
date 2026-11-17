@@ -132,7 +132,10 @@ def main() -> int:
         if task is not None:
             task.cancel()
 
-    # Telegram library diagnostics can contain the token in request URLs.
+    # Telegram library diagnostics can contain the token in request URLs. The
+    # real guard is the process-wide HTTP client suppression in
+    # phishreport/logging_setup.py; this only silences the telegram logger for
+    # this entry point, so do not remove either one on its own.
     logging.getLogger("telegram").setLevel(logging.CRITICAL + 1)
     try:
         application = (
