@@ -24,23 +24,31 @@ class DataManager:
         self._validator = ReportValidator() if validator is None else validator
 
     def save(self, record: dict) -> None:
-        """Append a new v2 or v3 report after validating the complete history.
+        """Save one report revision, replacing the copy with the same assessment_id.
 
         Validation and storage failures become domain errors without retrying. The
-        append itself is one protected storage operation, so concurrent processes
-        do not discard each other's reports.
+        write itself is one protected storage operation, so concurrent processes
+        do not discard each other's reports and a repeated exposure tap cannot
+        append a second copy of the same assessment.
         """
         try:
             self._validator.validate_new(record)
         except ValueError as error:
             raise InvalidInput() from error
-        records = self.load(strict=True)  # Reject unreadable or invalid history first.
+        self.load(strict=True)  # Reject unreadable or invalid history first.
         try:
-            if type(self._storage).append is ReportStorage.append:
-                # Storage without its own atomic append: read-then-write, single process only.
-                self._storage.write_records([*records, record])
-            else:
-                self._storage.append(record)
+            self._storage.save(record)
+        except (OSError, ValueError) as error:
+            raise StorageFailure() from error
+
+    def repair_duplicates(self) -> int:
+        """Remove repeated assessment revisions, keeping each last copy.
+
+        Records without an assessment_id are left alone, and the storage layer
+        applies the removal as one protected read-modify-write.
+        """
+        try:
+            return self._storage.deduplicate_assessments()
         except (OSError, ValueError) as error:
             raise StorageFailure() from error
 

@@ -125,11 +125,10 @@ def test_telegram_saved_exposure_report_round_trips_after_follow_up(
         for action in actions:
             await manager.exposure_callback(_callback(session, action), None)
         assert session.saved
-        saved = data_manager.load(strict=True)[-1]
+        saved, = data_manager.load(strict=True)
         # A replayed answer keeps the same revision and saves nothing new.
         await manager.exposure_callback(_callback(session, actions[-1]), None)
-        assert data_manager.load(strict=True)[-1] == saved
-        assert len(data_manager.load(strict=True)) == 1 + len(actions)
+        assert data_manager.load(strict=True) == [saved]
         return initial, saved
 
     initial, saved = asyncio.run(scenario())

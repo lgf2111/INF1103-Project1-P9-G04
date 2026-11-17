@@ -57,16 +57,7 @@ class SqliteReportStorage(ReportStorage):
             for payload, payload_type in connection.execute(
                 "SELECT payload, typeof(payload) FROM records ORDER BY position"
             ):
-                if payload_type != b"text":
-                    raise ValueError("Stored report payloads must be JSON text.")
-                record = json.loads(
-                    payload.decode("utf-8"),
-                    object_pairs_hook=JsonReportStorage._unique_fields,
-                    parse_constant=JsonReportStorage._invalid_constant,
-                )
-                if not isinstance(record, dict):
-                    raise ValueError("Stored reports must be objects.")
-                records.append(record)
+                records.append(self._decode_payload(payload, payload_type))
             return records
         except BaseException as error:
             primary_error = error
@@ -169,10 +160,36 @@ class SqliteReportStorage(ReportStorage):
             raise ValueError("Stored reports must be objects.")
         payload = json.dumps(record, ensure_ascii=False, allow_nan=False)
         payload.encode("utf-8")
+        self._retry_busy(lambda: self._append_once(payload))
+
+    def save(self, record: dict) -> None:
+        """Insert or replace one assessment revision in a single transaction.
+
+        A stored record with the same assessment_id is updated in place, keeping
+        its history position, and earlier duplicate copies are dropped on the
+        same write. Repeated exposure answers therefore never append a second
+        copy. Transient SQLite locks are retried like append.
+        """
+        if not isinstance(record, dict):
+            raise ValueError("Stored reports must be objects.")
+        payload = json.dumps(record, ensure_ascii=False, allow_nan=False)
+        payload.encode("utf-8")
+        assessment_id = record.get("assessment_id")
+        if not isinstance(assessment_id, str):
+            assessment_id = None
+        self._retry_busy(lambda: self._save_once(payload, assessment_id))
+
+    def deduplicate_assessments(self) -> int:
+        """Delete earlier revisions of each assessment in one transaction."""
+        if not self._path.exists():
+            return 0
+        return self._retry_busy(self._deduplicate_once)
+
+    def _retry_busy(self, operation):
+        """Run one write operation, retrying transient SQLite locks."""
         for attempt in range(_BUSY_RETRIES + 1):
             try:
-                self._append_once(payload)
-                return
+                return operation()
             except OSError as error:
                 cause = error.__cause__
                 busy = isinstance(cause, sqlite3.OperationalError) and (
@@ -230,6 +247,150 @@ class SqliteReportStorage(ReportStorage):
                             f"Cannot close SQLite database: {self._path}"
                         ) from cleanup_error
                     primary_error.add_note(f"SQLite connection cleanup failed: {cleanup_error}")
+
+    def _save_once(self, payload: str, assessment_id: str | None) -> None:
+        """Run one BEGIN IMMEDIATE upsert attempt for an assessment revision."""
+        existed = self._path.exists()
+        connection = None
+        primary_error = None
+        try:
+            connection = self._connect()
+            if not existed:
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS records("
+                    "position INTEGER PRIMARY KEY, payload TEXT)"
+                )
+            connection.execute("BEGIN IMMEDIATE")
+            self._check_schema(connection)
+            connection.text_factory = bytes
+            rows = connection.execute(
+                "SELECT position, payload, typeof(payload) FROM records ORDER BY position"
+            ).fetchall()
+            matches = []
+            last_position = -1
+            for position, stored_payload, payload_type in rows:
+                stored = self._decode_payload(stored_payload, payload_type)
+                last_position = position
+                if (
+                    assessment_id is not None
+                    and stored.get("assessment_id") == assessment_id
+                ):
+                    matches.append(position)
+            if matches:
+                connection.execute(
+                    "UPDATE records SET payload = ? WHERE position = ?",
+                    (payload, matches[-1]),
+                )
+                for position in matches[:-1]:
+                    connection.execute(
+                        "DELETE FROM records WHERE position = ?", (position,)
+                    )
+            else:
+                connection.execute(
+                    "INSERT INTO records(position, payload) VALUES (?, ?)",
+                    (last_position + 1, payload),
+                )
+            connection.execute("COMMIT")
+        except BaseException as error:
+            primary_error = error
+            if isinstance(error, sqlite3.Error):
+                primary_code = getattr(error, "sqlite_errorcode", 0) & 0xFF
+                if primary_code in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):
+                    primary_error = ValueError(f"Malformed SQLite database: {self._path}")
+                else:
+                    primary_error = OSError(f"Cannot write SQLite database: {self._path}")
+            if connection is not None:
+                try:
+                    if connection.in_transaction:
+                        connection.execute("ROLLBACK")
+                except sqlite3.Error as cleanup_error:
+                    primary_error.add_note(f"SQLite rollback cleanup failed: {cleanup_error}")
+            if primary_error is not error:
+                raise primary_error from error
+            raise
+        finally:
+            if connection is not None:
+                try:
+                    connection.close()
+                except sqlite3.Error as cleanup_error:
+                    if primary_error is None:
+                        raise OSError(
+                            f"Cannot close SQLite database: {self._path}"
+                        ) from cleanup_error
+                    primary_error.add_note(f"SQLite connection cleanup failed: {cleanup_error}")
+
+    def _deduplicate_once(self) -> int:
+        """Run one BEGIN IMMEDIATE pass that deletes earlier revisions."""
+        connection = None
+        primary_error = None
+        try:
+            connection = self._connect()
+            connection.execute("BEGIN IMMEDIATE")
+            self._check_schema(connection)
+            connection.text_factory = bytes
+            rows = connection.execute(
+                "SELECT position, payload, typeof(payload) FROM records ORDER BY position"
+            ).fetchall()
+            last = {}
+            entries = []
+            for position, payload, payload_type in rows:
+                record = self._decode_payload(payload, payload_type)
+                assessment_id = record.get("assessment_id")
+                if isinstance(assessment_id, str):
+                    last[assessment_id] = position
+                else:
+                    assessment_id = None
+                entries.append((position, assessment_id))
+            stale = [
+                position
+                for position, assessment_id in entries
+                if assessment_id is not None and last[assessment_id] != position
+            ]
+            for position in stale:
+                connection.execute("DELETE FROM records WHERE position = ?", (position,))
+            connection.execute("COMMIT")
+            return len(stale)
+        except BaseException as error:
+            primary_error = error
+            if isinstance(error, sqlite3.Error):
+                primary_code = getattr(error, "sqlite_errorcode", 0) & 0xFF
+                if primary_code in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):
+                    primary_error = ValueError(f"Malformed SQLite database: {self._path}")
+                else:
+                    primary_error = OSError(f"Cannot write SQLite database: {self._path}")
+            if connection is not None:
+                try:
+                    if connection.in_transaction:
+                        connection.execute("ROLLBACK")
+                except sqlite3.Error as cleanup_error:
+                    primary_error.add_note(f"SQLite rollback cleanup failed: {cleanup_error}")
+            if primary_error is not error:
+                raise primary_error from error
+            raise
+        finally:
+            if connection is not None:
+                try:
+                    connection.close()
+                except sqlite3.Error as cleanup_error:
+                    if primary_error is None:
+                        raise OSError(
+                            f"Cannot close SQLite database: {self._path}"
+                        ) from cleanup_error
+                    primary_error.add_note(f"SQLite connection cleanup failed: {cleanup_error}")
+
+    @staticmethod
+    def _decode_payload(payload, payload_type) -> dict:
+        """Decode one stored TEXT payload into a report object."""
+        if payload_type != b"text":
+            raise ValueError("Stored report payloads must be JSON text.")
+        record = json.loads(
+            payload.decode("utf-8"),
+            object_pairs_hook=JsonReportStorage._unique_fields,
+            parse_constant=JsonReportStorage._invalid_constant,
+        )
+        if not isinstance(record, dict):
+            raise ValueError("Stored reports must be objects.")
+        return record
 
     def _check_schema(self, connection: sqlite3.Connection) -> None:
         """Require the exact records table the read contract expects."""

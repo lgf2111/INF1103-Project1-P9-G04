@@ -353,7 +353,9 @@ def test_main_dispatch_exposure_acceptance(
         assert len(manager._sessions) == 1
         assert sum(endpoint == "sendMessage" for endpoint, _ in request.calls) == 1
         reopened = DataManager(create_report_storage())
-        assert reopened.load(strict=True) == frozen_writes
+        stored = reopened.load(strict=True)
+        assert len(stored) == 1
+        assert stored == [frozen_writes[-1]]
 
     asyncio.run(asyncio.wait_for(scenario(), 20))
 
@@ -442,16 +444,13 @@ def test_main_dispatch_stays_responsive_during_exposure_storage(monkeypatch, tmp
         assert not errors
         assert "monitor_task" not in app.bot_data
         assert ai.assess.call_count == 2
-        initial, clicked_revision, second_initial, revised = manager._data_manager.load(strict=True)
-        assert [report["result"]["score"] for report in
-                (initial, clicked_revision, second_initial, revised)] == [60, 80, 60, 90]
-        assert initial["schema_version"] == 3
-        assert initial["assessment_id"] == clicked_revision["assessment_id"]
-        assert initial["assessment_id"] == revised["assessment_id"]
-        assert second_initial["assessment_id"] != initial["assessment_id"]
+        revised, second_initial = manager._data_manager.load(strict=True)
+        assert [report["result"]["score"] for report in (revised, second_initial)] == [
+            90,
+            60,
+        ]
+        assert revised["assessment_id"] != second_initial["assessment_id"]
         assert second_initial["result"]["score"] == 60
-        assert initial["channel"] == "chat" and initial["message"] == TEXT
-        assert initial["result"]["score"] == 60
         assert revised["schema_version"] == 3
         assert revised["assessment_id"]
         assert revised["channel"] == "chat" and revised["message"] == TEXT
@@ -602,9 +601,7 @@ def test_main_shared_command_dispatch_preserves_content_and_exposure_save(
             await app.process_update(callback(app.bot, session, "clicked", query_id))
             await request.until(lambda: any(e == "editMessageText" for e, _ in request.calls))
             await request.until(lambda: session.result["score"] == 80)
-            await request.until(lambda: len(manager._data_manager.load(strict=True)) == 2)
-            initial, saved = manager._data_manager.load(strict=True)
-            assert initial["assessment_id"] == saved["assessment_id"]
+            saved, = manager._data_manager.load(strict=True)
             assert saved["message"] == expected
             assert saved["exposure"]["clicked"] is True
             assert saved["result"]["priority"] == "HIGH"

@@ -9,6 +9,7 @@ from phishreport.ai.errors import AIErrorTranslator
 from phishreport.assessment import AssessmentService
 from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
+from phishreport.data.repair import repair_history
 from phishreport.errors import AssessmentError
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
@@ -361,11 +362,13 @@ class PhishReportApp:
 
 def main():
     """Compose and run the CLI with its production managers."""
+    data_manager = DataManager(create_report_storage())
+    repair_history(data_manager)
     app = PhishReportApp(
         io_manager=IOManager(ConsoleTerminal()),
         ai_manager=AIManager(),
         logic_manager=LogicManager(),
-        data_manager=DataManager(create_report_storage()),
+        data_manager=data_manager,
         feedback_service=FeedbackService(
             FeedbackStore(os.environ.get("PHISHREPORT_FEEDBACK_PATH", "feedback.json"))
         ),

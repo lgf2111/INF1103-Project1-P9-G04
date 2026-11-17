@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from .storage import ReportStorage
+from .storage import ReportStorage, keep_last_revision, replace_revision
 
 try:
     import fcntl
@@ -85,6 +85,23 @@ class JsonReportStorage(ReportStorage):
             raise ValueError("Stored reports must be objects.")
         with self._exclusive_lock():
             self.write_records([*self.read_records(), record])
+
+    def save(self, record: dict) -> None:
+        """Replace the same assessment's revision under the exclusive lock."""
+        if not isinstance(record, dict):
+            raise ValueError("Stored reports must be objects.")
+        with self._exclusive_lock():
+            self.write_records(replace_revision(self.read_records(), record))
+
+    def deduplicate_assessments(self) -> int:
+        """Drop repeated assessment revisions under the exclusive lock."""
+        if not self._path.exists():
+            return 0
+        with self._exclusive_lock():
+            records, removed = keep_last_revision(self.read_records())
+            if removed:
+                self.write_records(records)
+            return removed
 
     def write_records(self, records: list[dict]) -> None:
         """Serialize, flush and sync a sibling file before atomic replacement."""
