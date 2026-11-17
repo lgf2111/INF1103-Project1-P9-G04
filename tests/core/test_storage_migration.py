@@ -6,7 +6,7 @@ from contextlib import closing
 
 import pytest
 
-from phishreport.data.migration import migrate_json_to_sqlite
+from phishreport.data.migration import StorageMigration
 from phishreport.data.sqlite_storage import SqliteReportStorage
 
 
@@ -18,8 +18,8 @@ def test_migration_preserves_duplicates_unicode_legacy_and_source_bytes(tmp_path
         b' {"same": 1}, {"same": 1} ]\n'
     )
     source.write_bytes(original)
-    assert migrate_json_to_sqlite(source, target) == 3
-    assert migrate_json_to_sqlite(source, target) == 0
+    assert StorageMigration.migrate(source, target) == 3
+    assert StorageMigration.migrate(source, target) == 0
     assert SqliteReportStorage(target).read_records() == [
         {"unknown": "café", "nested": [True, None]}, {"same": 1}, {"same": 1}
     ]
@@ -30,7 +30,7 @@ def test_empty_source_creates_readable_empty_target(tmp_path):
     source = tmp_path / "reports.json"
     target = tmp_path / "reports.sqlite3"
     source.write_text("[]", encoding="utf-8")
-    assert migrate_json_to_sqlite(str(source), str(target)) == 0
+    assert StorageMigration.migrate(str(source), str(target)) == 0
     assert target.is_file()
     assert SqliteReportStorage(target).read_records() == []
 
@@ -47,7 +47,7 @@ def test_invalid_source_does_not_touch_target(tmp_path, content, existing):
         SqliteReportStorage(target).write_records([{"old": True}])
     before = {item.name: item.read_bytes() for item in tmp_path.iterdir()}
     with pytest.raises(FileNotFoundError if content is None else ValueError):
-        migrate_json_to_sqlite(source, target)
+        StorageMigration.migrate(source, target)
     assert {item.name: item.read_bytes() for item in tmp_path.iterdir()} == before
 
 
@@ -69,7 +69,7 @@ def test_aliases_rejected_without_changing_source(tmp_path, alias):
         except OSError:
             pytest.skip("Creating symlinks requires platform privileges")
     with pytest.raises(ValueError):
-        migrate_json_to_sqlite(source, target)
+        StorageMigration.migrate(source, target)
     assert source.read_bytes() == b"[{}]"
 
 
@@ -80,7 +80,7 @@ def test_different_nonempty_target_is_preserved_including_json_types(tmp_path, r
     source.write_text('[{"x":true}]', encoding="utf-8")
     SqliteReportStorage(target).write_records([record])
     with pytest.raises(ValueError):
-        migrate_json_to_sqlite(source, target)
+        StorageMigration.migrate(source, target)
     assert SqliteReportStorage(target).read_records() == [record]
 
 
@@ -89,7 +89,7 @@ def test_identical_target_ignores_object_key_order_and_whitespace(tmp_path):
     target = tmp_path / "reports.sqlite3"
     source.write_text('[{"b": [1], "a":true}]', encoding="utf-8")
     SqliteReportStorage(target).write_records([{"a": True, "b": [1]}])
-    assert migrate_json_to_sqlite(source, target) == 0
+    assert StorageMigration.migrate(source, target) == 0
 
 
 @pytest.mark.parametrize("payload", ["[]", '{"x":NaN}', '{"x":1,"x":2}', b"{}", None])
@@ -102,7 +102,7 @@ def test_malformed_target_payload_is_rejected_and_preserved(tmp_path, payload):
         connection.execute("INSERT INTO records VALUES (4, ?)", (payload,))
         connection.commit()
     with pytest.raises(ValueError):
-        migrate_json_to_sqlite(source, target)
+        StorageMigration.migrate(source, target)
     with closing(sqlite3.connect(target)) as connection:
         assert connection.execute("SELECT payload FROM records").fetchall() == [(payload,)]
 
@@ -118,7 +118,7 @@ def test_incompatible_target_schema_is_rejected(tmp_path, schema):
         connection.execute(schema)
         connection.commit()
     with pytest.raises(ValueError):
-        migrate_json_to_sqlite(source, target)
+        StorageMigration.migrate(source, target)
 
 
 def test_later_insert_trigger_failure_rolls_back_all_records(tmp_path):
@@ -131,7 +131,7 @@ def test_later_insert_trigger_failure_rolls_back_all_records(tmp_path):
                            "WHEN NEW.position = 1 BEGIN SELECT RAISE(ABORT, 'later'); END")
         connection.commit()
     with pytest.raises(OSError) as error:
-        migrate_json_to_sqlite(source, target)
+        StorageMigration.migrate(source, target)
     assert isinstance(error.value.__cause__, sqlite3.IntegrityError)
     assert SqliteReportStorage(target).read_records() == []
 
@@ -172,7 +172,7 @@ def test_first_failure_rolls_back_closes_and_allows_retry(
     with monkeypatch.context() as patch:
         patch.setattr(sqlite3, "connect", connect)
         with pytest.raises(OSError) as error:
-            migrate_json_to_sqlite(source, target)
+            StorageMigration.migrate(source, target)
         assert error.value.__cause__ is failure
         if cleanup_fails:
             assert len(error.value.__notes__) == 2
@@ -180,7 +180,7 @@ def test_first_failure_rolls_back_closes_and_allows_retry(
     with pytest.raises(sqlite3.ProgrammingError):
         opened[0].cursor()
     assert SqliteReportStorage(target).read_records() == []
-    assert migrate_json_to_sqlite(source, target) == 2
+    assert StorageMigration.migrate(source, target) == 2
 
 
 def test_corrupt_database_and_missing_parent_preserve_source(tmp_path):
@@ -189,11 +189,11 @@ def test_corrupt_database_and_missing_parent_preserve_source(tmp_path):
     corrupt = tmp_path / "corrupt.sqlite3"
     corrupt.write_bytes(b"not a database" * 100)
     with pytest.raises(ValueError) as error:
-        migrate_json_to_sqlite(source, corrupt)
+        StorageMigration.migrate(source, corrupt)
     assert isinstance(error.value.__cause__, sqlite3.Error)
     assert corrupt.read_bytes() == b"not a database" * 100
     with pytest.raises(OSError) as error:
-        migrate_json_to_sqlite(source, tmp_path / "missing" / "reports.sqlite3")
+        StorageMigration.migrate(source, tmp_path / "missing" / "reports.sqlite3")
     assert isinstance(error.value.__cause__, sqlite3.Error)
     assert source.read_bytes() == b"[{}]"
 
@@ -207,7 +207,7 @@ def test_invalid_utf8_target_text_is_valueerror(tmp_path):
         connection.execute("INSERT INTO records VALUES (0, CAST(x'ff' AS TEXT))")
         connection.commit()
     with pytest.raises(ValueError) as error:
-        migrate_json_to_sqlite(source, target)
+        StorageMigration.migrate(source, target)
     assert isinstance(error.value.__cause__, UnicodeError)
 
 
@@ -226,7 +226,7 @@ def test_close_failure_reports_oserror_after_successful_commit(tmp_path, monkeyp
     connection = sqlite3.connect(target, isolation_level=None, factory=CloseFailingConnection)
     monkeypatch.setattr(SqliteReportStorage, "_connect", lambda self: connection)
     with pytest.raises(OSError) as error:
-        migrate_json_to_sqlite(source, target)
+        StorageMigration.migrate(source, target)
     assert error.value.__cause__ is failure
     monkeypatch.undo()
     assert SqliteReportStorage(target).read_records() == [{"saved": True}]
@@ -238,7 +238,7 @@ def test_success_uses_one_connection_and_closes_it(tmp_path, monkeypatch, repeat
     target = tmp_path / "reports.sqlite3"
     source.write_text('[{"x":1}]', encoding="utf-8")
     if repeat:
-        migrate_json_to_sqlite(source, target)
+        StorageMigration.migrate(source, target)
     original = SqliteReportStorage._connect
     opened = []
 
@@ -248,7 +248,7 @@ def test_success_uses_one_connection_and_closes_it(tmp_path, monkeypatch, repeat
         return connection
 
     monkeypatch.setattr(SqliteReportStorage, "_connect", capture)
-    assert migrate_json_to_sqlite(source, target) == (0 if repeat else 1)
+    assert StorageMigration.migrate(source, target) == (0 if repeat else 1)
     assert len(opened) == 1
     with pytest.raises(sqlite3.ProgrammingError):
         opened[0].cursor()

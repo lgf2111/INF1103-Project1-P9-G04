@@ -4,7 +4,7 @@ from unittest.mock import Mock, call
 
 import pytest
 
-from phishreport.io.command_catalog import CommandCapabilities, discover_commands
+from phishreport.io.command_catalog import CommandCapabilities, CommandCatalog
 from phishreport.io.command_plugins.status import create_command
 from phishreport.io.commands import CommandReply, CommandRequest, CommandRouter
 from phishreport.io.status_command import StatusCommand
@@ -42,7 +42,7 @@ def test_discovered_status_reads_count_then_session_once_with_original_context(c
     services.count.return_value = count
     services.status.return_value = status
     capabilities = CommandCapabilities(Mock(), Mock(), services.status, services.count)
-    commands = discover_commands(capabilities)
+    commands = CommandCatalog.discover_commands(capabilities)
     assert sum(command.name == "status" for command in commands) == 1
     assert services.mock_calls == []
     session = {"pending": "retained"}
@@ -88,7 +88,7 @@ def test_factory_status_reader_failures_propagate_without_fallback_or_state_chan
 
 
 def test_discovered_help_sees_status_loaded_after_it_without_executing_services(capabilities):
-    commands = discover_commands(capabilities)
+    commands = CommandCatalog.discover_commands(capabilities)
     help_command = next(command for command in commands if command.name == "help")
     status_command = next(command for command in commands if command.name == "status")
 

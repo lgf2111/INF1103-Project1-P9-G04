@@ -31,7 +31,7 @@ ENV PHISHREPORT_STORAGE=sqlite \
     PYTHONUNBUFFERED=1
 # The CLI file-upload option serves a one-shot page on port 8000.
 EXPOSE 8000
-CMD ["python", "-m", "phishreport.both"]
+CMD ["python", "-m", "phishreport.combined"]
 
 FROM base AS cli
 

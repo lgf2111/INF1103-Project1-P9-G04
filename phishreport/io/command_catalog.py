@@ -26,25 +26,31 @@ class CommandCapabilities:
     commands: Collection[Command] = ()
 
 
-def discover_commands(capabilities: CommandCapabilities) -> list[Command]:
-    """Build sorted public-module commands from the fixed internal package.
+class CommandCatalog:
+    """Discover the trusted commands shared by the CLI and the bot."""
 
-    Each immediate non-package module must expose create_command(capabilities).
-    Import, factory and registration failures propagate; malformed extensions
-    are never silently ignored. Trusted factory code owns its side effects.
-    """
-    catalog: list[Command] = []
-    bound_capabilities = replace(capabilities, commands=catalog)
-    router = CommandRouter()
-    modules = sorted(pkgutil.iter_modules(command_plugins.__path__), key=lambda item: item.name)
-    for module_info in modules:
-        if module_info.ispkg or module_info.name.startswith("_"):
-            continue
-        module = importlib.import_module(f"{command_plugins.__name__}.{module_info.name}")
-        factory = getattr(module, "create_command", None)
-        if not callable(factory):
-            raise TypeError(f"Command module {module.__name__} requires callable create_command.")
-        command = factory(bound_capabilities)
-        router.register(command)
-        catalog.append(command)
-    return catalog
+    @staticmethod
+    def discover_commands(capabilities: CommandCapabilities) -> list[Command]:
+        """Build sorted public-module commands from the fixed internal package.
+
+        Each immediate non-package module must expose create_command(capabilities).
+        Import, factory and registration failures propagate; malformed extensions
+        are never silently ignored. Trusted factory code owns its side effects.
+        """
+        catalog: list[Command] = []
+        bound_capabilities = replace(capabilities, commands=catalog)
+        router = CommandRouter()
+        modules = sorted(pkgutil.iter_modules(command_plugins.__path__), key=lambda item: item.name)
+        for module_info in modules:
+            if module_info.ispkg or module_info.name.startswith("_"):
+                continue
+            module = importlib.import_module(f"{command_plugins.__name__}.{module_info.name}")
+            factory = getattr(module, "create_command", None)
+            if not callable(factory):
+                raise TypeError(
+                    f"Command module {module.__name__} requires callable create_command."
+                )
+            command = factory(bound_capabilities)
+            router.register(command)
+            catalog.append(command)
+        return catalog

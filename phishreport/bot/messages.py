@@ -33,89 +33,93 @@ STATUS_NOTHING_SAVED = "Nothing saved yet."
 STATUS_DOWNLOAD_FAILED = "Could not prepare the download. Please try again."
 
 
-def confirmation_preview(text: str) -> str:
-    """Quote at most 400 characters, marking any cut with a trailing ellipsis."""
-    if len(text) <= CONFIRMATION_PREVIEW_CHARS:
-        return text
-    return text[:CONFIRMATION_PREVIEW_CHARS] + "..."
+class MessageFactory:
+    """Build the Telegram cards, keyboards and documents shown to the user."""
 
+    @staticmethod
+    def confirmation_preview(text: str) -> str:
+        """Quote at most 400 characters, marking any cut with a trailing ellipsis."""
+        if len(text) <= CONFIRMATION_PREVIEW_CHARS:
+            return text
+        return text[:CONFIRMATION_PREVIEW_CHARS] + "..."
 
-def build_confirmation_card(text: str) -> str:
-    """Render the exact text before it is sent to the AI provider."""
-    return (
-        f"{CONFIRMATION_PROMPT}\n\n"
-        f'"{confirmation_preview(text)}"\n\n'
-        f"{CONFIRMATION_WARNING}"
-    )
-
-
-def build_confirmation_keyboard(token: str) -> InlineKeyboardMarkup:
-    """Ask for one explicit yes or no before any assessment work starts."""
-    def button(label: str, action: str) -> InlineKeyboardButton:
-        return InlineKeyboardButton(
-            label, callback_data=f"{EXPOSURE_CALLBACK_PREFIX}:{token}:{action}"
+    @staticmethod
+    def build_confirmation_card(text: str) -> str:
+        """Render the exact text before it is sent to the AI provider."""
+        return (
+            f"{CONFIRMATION_PROMPT}\n\n"
+            f'"{MessageFactory.confirmation_preview(text)}"\n\n'
+            f"{CONFIRMATION_WARNING}"
         )
 
-    return InlineKeyboardMarkup(
-        [[button(CONFIRMATION_YES, CONFIRM_ACTION),
-          button(CONFIRMATION_CANCEL, CANCEL_ACTION)]]
-    )
+    @staticmethod
+    def build_confirmation_keyboard(token: str) -> InlineKeyboardMarkup:
+        """Ask for one explicit yes or no before any assessment work starts."""
+        def button(label: str, action: str) -> InlineKeyboardButton:
+            return InlineKeyboardButton(
+                label, callback_data=f"{EXPOSURE_CALLBACK_PREFIX}:{token}:{action}"
+            )
 
-
-def build_exposure_keyboard(session: ExposureSession) -> InlineKeyboardMarkup | None:
-    """Render only the answers that can still change the result.
-
-    A reported password reaches the top band, so that answer ends the card.
-    After a reported click, only the password can raise the score further;
-    "Nothing else" closes the card without another write.
-    """
-    if not session.saved or session.finished:
-        return None
-
-    def button(label: str, action: str) -> InlineKeyboardButton:
-        return InlineKeyboardButton(
-            label, callback_data=f"{EXPOSURE_CALLBACK_PREFIX}:{session.token}:{action}"
+        return InlineKeyboardMarkup(
+            [[button(CONFIRMATION_YES, CONFIRM_ACTION),
+              button(CONFIRMATION_CANCEL, CANCEL_ACTION)]]
         )
 
-    if session.exposure["clicked"] is True:
-        rows = [[button("Shared a password/OTP", "password"),
-                 button("Nothing else", "nothing")]]
-    else:
-        rows = [[button("Clicked link", "clicked"),
-                 button("Shared a password/OTP", "password")],
-                [button("Nothing happened", "nothing")]]
-    return InlineKeyboardMarkup(rows)
+    @staticmethod
+    def build_exposure_keyboard(session: ExposureSession) -> InlineKeyboardMarkup | None:
+        """Render only the answers that can still change the result.
 
+        A reported password reaches the top band, so that answer ends the card.
+        After a reported click, only the password can raise the score further;
+        "Nothing else" closes the card without another write.
+        """
+        if not session.saved or session.finished:
+            return None
 
-def build_status_keyboard(has_reports: bool) -> InlineKeyboardMarkup | None:
-    """Offer the two downloads in one row, only when history has a report."""
-    if not has_reports:
-        return None
-    return InlineKeyboardMarkup(
-        [[
-            InlineKeyboardButton(STATUS_CSV_LABEL, callback_data=STATUS_CSV_CALLBACK),
-            InlineKeyboardButton(
-                STATUS_SUMMARY_LABEL, callback_data=STATUS_SUMMARY_CALLBACK,
-            ),
-        ]]
-    )
+        def button(label: str, action: str) -> InlineKeyboardButton:
+            return InlineKeyboardButton(
+                label, callback_data=f"{EXPOSURE_CALLBACK_PREFIX}:{session.token}:{action}"
+            )
 
+        if session.exposure["clicked"] is True:
+            rows = [[button("Shared a password/OTP", "password"),
+                     button("Nothing else", "nothing")]]
+        else:
+            rows = [[button("Clicked link", "clicked"),
+                     button("Shared a password/OTP", "password")],
+                    [button("Nothing happened", "nothing")]]
+        return InlineKeyboardMarkup(rows)
 
-def build_summary_document(summary, description: str = "all reports") -> str:
-    """Render the CLI summary as a text document with the same sections."""
-    lines = [
-        "=== Report summary ===",
-        f"Showing: {description}",
-        f"Reports: {summary.total}",
-    ]
-    if summary.total == 0:
-        lines.append("No saved reports match.")
+    @staticmethod
+    def build_status_keyboard(has_reports: bool) -> InlineKeyboardMarkup | None:
+        """Offer the two downloads in one row, only when history has a report."""
+        if not has_reports:
+            return None
+        return InlineKeyboardMarkup(
+            [[
+                InlineKeyboardButton(STATUS_CSV_LABEL, callback_data=STATUS_CSV_CALLBACK),
+                InlineKeyboardButton(
+                    STATUS_SUMMARY_LABEL, callback_data=STATUS_SUMMARY_CALLBACK,
+                ),
+            ]]
+        )
+
+    @staticmethod
+    def build_summary_document(summary, description: str = "all reports") -> str:
+        """Render the CLI summary as a text document with the same sections."""
+        lines = [
+            "=== Report summary ===",
+            f"Showing: {description}",
+            f"Reports: {summary.total}",
+        ]
+        if summary.total == 0:
+            lines.append("No saved reports match.")
+            return "\n".join(lines) + "\n"
+        for section in summary.sections:
+            lines.append("")
+            lines.append(f"{section.title}:")
+            lines.extend(f" - {label}: {value}" for label, value in section.rows)
         return "\n".join(lines) + "\n"
-    for section in summary.sections:
-        lines.append("")
-        lines.append(f"{section.title}:")
-        lines.extend(f" - {label}: {value}" for label, value in section.rows)
-    return "\n".join(lines) + "\n"
 
 
 __all__ = [
@@ -140,11 +144,6 @@ __all__ = [
     "STATUS_DOWNLOAD_FAILED",
     "ChatRecordBuilder",
     "PhishingAlertFormatter",
+    "MessageFactory",
     "ResultFormatter",
-    "build_confirmation_card",
-    "build_confirmation_keyboard",
-    "build_exposure_keyboard",
-    "build_status_keyboard",
-    "build_summary_document",
-    "confirmation_preview",
 ]

@@ -23,9 +23,7 @@ from phishreport.bot.exposure import (
 from phishreport.bot.feedback_ui import (
     CATEGORY_CODES,
     CATEGORY_LABELS,
-    corrected_priority_keyboard,
-    feedback_category_keyboard,
-    feedback_comment_keyboard,
+    FeedbackKeyboardFactory,
 )
 from phishreport.bot.messages import (
     CONFIRMATION_CANCELLED,
@@ -38,19 +36,15 @@ from phishreport.bot.messages import (
     STATUS_NOTHING_SAVED,
     STATUS_SUMMARY_CALLBACK,
     ChatRecordBuilder,
+    MessageFactory,
     ResultFormatter,
-    build_confirmation_card,
-    build_confirmation_keyboard,
-    build_exposure_keyboard,
-    build_status_keyboard,
-    build_summary_document,
 )
 from phishreport.data import DataManager
 from phishreport.errors import AssessmentError
 from phishreport.io.check_command import CheckOutcome
-from phishreport.io.command_catalog import CommandCapabilities, discover_commands
+from phishreport.io.command_catalog import CommandCapabilities, CommandCatalog
 from phishreport.io.commands import CommandRequest, CommandRouter
-from phishreport.io.report_csv import reports_csv_bytes
+from phishreport.io.report_csv import ReportCsv
 from phishreport.logic import LogicManager
 from phishreport.model import SCHEMA_VERSION, Report
 from phishreport.reporting import ReportQueryService
@@ -310,8 +304,8 @@ class TelegramIOManager:
         while pending.token in self._sessions or pending.token in self._confirmations:
             pending.token = secrets.token_urlsafe(12)
         reply = await message.reply_text(
-            build_confirmation_card(text),
-            reply_markup=build_confirmation_keyboard(pending.token),
+            MessageFactory.build_confirmation_card(text),
+            reply_markup=MessageFactory.build_confirmation_keyboard(pending.token),
         )
         card_id = getattr(reply, "message_id", None)
         if type(card_id) is not int:
@@ -360,7 +354,7 @@ class TelegramIOManager:
                         return
                     text = self._formatter.format(session.result, session=session)
                     await query.edit_message_text(
-                        text, reply_markup=build_exposure_keyboard(session),
+                        text, reply_markup=MessageFactory.build_exposure_keyboard(session),
                     )
                 return
         if pending is not None and pending.resolution == "cancelled":
@@ -426,7 +420,7 @@ class TelegramIOManager:
         self._forget_confirmation(pending)
         await query.edit_message_text(
             self._formatter.format(session.result, session=session),
-            reply_markup=build_exposure_keyboard(session),
+            reply_markup=MessageFactory.build_exposure_keyboard(session),
         )
 
     async def _write_report(self, report: dict, commit=None) -> None:
@@ -530,7 +524,7 @@ class TelegramIOManager:
                 if failed:
                     text = "Could not update the assessment. Please try again.\n\n" + text
                 await query.edit_message_text(
-                    text, reply_markup=build_exposure_keyboard(session),
+                    text, reply_markup=MessageFactory.build_exposure_keyboard(session),
                 )
         except BadRequest as error:
             if "message is not modified" not in str(error).lower():
@@ -589,11 +583,11 @@ class TelegramIOManager:
             selection = self._report_query.query(records=records)
             today = date.today().isoformat()
             if action == STATUS_ACTION_CSV:
-                document = reports_csv_bytes(selection.records)
+                document = ReportCsv.to_bytes(selection.records)
                 filename = f"phishreport-{today}.csv"
             else:
                 summary = self._report_query.summarize(selection)
-                document = build_summary_document(summary).encode("utf-8")
+                document = MessageFactory.build_summary_document(summary).encode("utf-8")
                 filename = f"phishreport-summary-{today}.txt"
             await context.bot.send_document(
                 chat_id=update.effective_chat.id,
@@ -608,7 +602,7 @@ class TelegramIOManager:
 
     async def _reply_status(self, message, text: str, records: list[dict]) -> None:
         """Show the existing status text and, when history exists, the downloads."""
-        keyboard = build_status_keyboard(bool(records))
+        keyboard = MessageFactory.build_status_keyboard(bool(records))
         if keyboard is None:
             await message.reply_text(f"{text}\n\n{STATUS_NOTHING_SAVED}")
             return
@@ -650,7 +644,7 @@ class TelegramIOManager:
                 status_records.append(records)
                 return len(records)
 
-            catalog = discover_commands(CommandCapabilities(
+            catalog = CommandCatalog.discover_commands(CommandCapabilities(
                 prepare_record=lambda request: self._record_builder.build(request.text),
                 assess_record=lambda record: self._assessment.assess_with_findings(record),
                 session_status=lambda request: status_label,
@@ -773,7 +767,7 @@ class TelegramIOManager:
                         return
                 reply = await message.reply_text(
                     self._formatter.format(session.result, session=session),
-                    reply_markup=build_exposure_keyboard(session),
+                    reply_markup=MessageFactory.build_exposure_keyboard(session),
                 )
                 reply_id = getattr(reply, "message_id", None)
                 if type(reply_id) is int:
@@ -812,7 +806,7 @@ class TelegramIOManager:
                 return
             await message.reply_text(
                 "What would you like to correct?",
-                reply_markup=feedback_category_keyboard(assessment_id),
+                reply_markup=FeedbackKeyboardFactory.feedback_category_keyboard(assessment_id),
             )
             return
 
@@ -850,13 +844,13 @@ class TelegramIOManager:
             if category == "incorrect_priority":
                 await message.reply_text(
                     "What should the priority be?",
-                    reply_markup=corrected_priority_keyboard(assessment_id),
+                    reply_markup=FeedbackKeyboardFactory.corrected_priority_keyboard(assessment_id),
                 )
             else:
                 await message.reply_text(
                     f"You selected {CATEGORY_LABELS[code]}. Reply with details (up to 2000 "
                     "characters), or submit without a comment.",
-                    reply_markup=feedback_comment_keyboard(assessment_id),
+                    reply_markup=FeedbackKeyboardFactory.feedback_comment_keyboard(assessment_id),
                 )
             return
 
@@ -876,7 +870,7 @@ class TelegramIOManager:
             await message.reply_text(
                 f"You selected {corrected_priority}. Reply with details (up to 2000 "
                 "characters), or submit without a comment.",
-                reply_markup=feedback_comment_keyboard(assessment_id),
+                reply_markup=FeedbackKeyboardFactory.feedback_comment_keyboard(assessment_id),
             )
             return
 

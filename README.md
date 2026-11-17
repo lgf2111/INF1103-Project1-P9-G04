@@ -16,6 +16,7 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 | `phishreport/data/` | Report validation, JSON/SQLite storage, environment selection and explicit migration. |
 | `phishreport/cli/` | Terminal interface: `main.py` composes the four managers through `PhishReportApp`; `web_upload.py` handles browser-based `.eml` uploads. |
 | `phishreport/assessment.py` | Shared assessment workflow (AI findings, then business rules) used by the CLI and the bot. |
+| `phishreport/combined.py` | Committed entry point (`python -m phishreport.combined`) that runs the interactive CLI and the Telegram bot together in one process, sharing one storage backend. |
 | `phishreport/bot/` | Telegram interface: launcher, handlers, chat record and reply formatting, and the Gmail link and background email monitor (`gmail.py`, `gmail_handlers.py`, `monitor.py`). |
 | `phishreport/email_html.py` | Convert HTML email content to safe text. |
 | `phishreport/local_settings.py` | Manage local preferences. |
@@ -96,7 +97,7 @@ Switching backends does not import existing history automatically. Stop the CLI,
 bot and other writers, then migrate an existing JSON file explicitly:
 
 ```text
-uv run --python 3.14 --no-project --with-requirements requirements.txt python -c "from phishreport.data.migration import migrate_json_to_sqlite; print(migrate_json_to_sqlite('reports.json', 'reports.sqlite3'))"
+uv run --python 3.14 --no-project --with-requirements requirements.txt python -c "from phishreport.data.migration import StorageMigration; print(StorageMigration.migrate('reports.json', 'reports.sqlite3'))"
 ```
 
 The printed number is the number of imported records. An identical rerun prints
@@ -110,7 +111,7 @@ with the entire data directory mounted writable. This command works in
 PowerShell and Bash from the repository root:
 
 ```text
-docker run --rm --network none --mount "type=bind,source=${PWD}/.phishreport-data,target=/data" phishreport-telegram python -c "from phishreport.data.migration import migrate_json_to_sqlite; print(migrate_json_to_sqlite('/data/reports.json', '/data/reports.sqlite3'))"
+docker run --rm --network none --mount "type=bind,source=${PWD}/.phishreport-data,target=/data" phishreport-telegram python -c "from phishreport.data.migration import StorageMigration; print(StorageMigration.migrate('/data/reports.json', '/data/reports.sqlite3'))"
 ```
 
 After migration, set `PHISHREPORT_STORAGE=sqlite` in the `.env` passed to Docker
@@ -444,6 +445,8 @@ in `.env` only if you deliberately want the older JSON backend.
 ```bash
 bash run.sh all
 ```
+
+The committed entry point behind the `all` target is `python -m phishreport.combined`; it runs the interactive CLI and the Telegram bot together in one process.
 
 The helper builds the `all` target if needed, mounts `.phishreport-data/` at
 `/data`, mounts the local `emails/` folder, and publishes the CLI uploader on

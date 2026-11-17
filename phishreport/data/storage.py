@@ -3,53 +3,57 @@
 from abc import ABC, abstractmethod
 
 
-def replace_revision(records: list[dict], record: dict) -> list[dict]:
-    """Return records with the matching assessment revision replaced in place.
+class RevisionPolicy:
+    """Decide how one assessment's revisions replace or drop each other."""
 
-    A record without a string assessment_id cannot match stored history, so it
-    is appended. When history already contains several copies of the identifier,
-    the last one is replaced and the earlier copies are dropped, matching the
-    startup repair.
-    """
-    assessment_id = record.get("assessment_id")
-    if not isinstance(assessment_id, str):
-        return [*records, record]
-    matches = {
-        index
-        for index, stored in enumerate(records)
-        if stored.get("assessment_id") == assessment_id
-    }
-    if not matches:
-        return [*records, record]
-    keep = max(matches)
-    return [
-        record if index == keep else stored
-        for index, stored in enumerate(records)
-        if index == keep or index not in matches
-    ]
+    @staticmethod
+    def replace_revision(records: list[dict], record: dict) -> list[dict]:
+        """Return records with the matching assessment revision replaced in place.
 
-
-def keep_last_revision(records: list[dict]) -> tuple[list[dict], int]:
-    """Return records without repeated assessment_ids and the number dropped.
-
-    The last copy of each assessment stays, records without a string
-    assessment_id are never treated as duplicates, and surviving records keep
-    their relative order.
-    """
-    last = {}
-    for index, record in enumerate(records):
+        A record without a string assessment_id cannot match stored history, so it
+        is appended. When history already contains several copies of the identifier,
+        the last one is replaced and the earlier copies are dropped, matching the
+        startup repair.
+        """
         assessment_id = record.get("assessment_id")
-        if isinstance(assessment_id, str):
-            last[assessment_id] = index
-    kept = []
-    removed = 0
-    for index, record in enumerate(records):
-        assessment_id = record.get("assessment_id")
-        if isinstance(assessment_id, str) and last[assessment_id] != index:
-            removed += 1
-            continue
-        kept.append(record)
-    return kept, removed
+        if not isinstance(assessment_id, str):
+            return [*records, record]
+        matches = {
+            index
+            for index, stored in enumerate(records)
+            if stored.get("assessment_id") == assessment_id
+        }
+        if not matches:
+            return [*records, record]
+        keep = max(matches)
+        return [
+            record if index == keep else stored
+            for index, stored in enumerate(records)
+            if index == keep or index not in matches
+        ]
+
+    @staticmethod
+    def keep_last_revision(records: list[dict]) -> tuple[list[dict], int]:
+        """Return records without repeated assessment_ids and the number dropped.
+
+        The last copy of each assessment stays, records without a string
+        assessment_id are never treated as duplicates, and surviving records keep
+        their relative order.
+        """
+        last = {}
+        for index, record in enumerate(records):
+            assessment_id = record.get("assessment_id")
+            if isinstance(assessment_id, str):
+                last[assessment_id] = index
+        kept = []
+        removed = 0
+        for index, record in enumerate(records):
+            assessment_id = record.get("assessment_id")
+            if isinstance(assessment_id, str) and last[assessment_id] != index:
+                removed += 1
+                continue
+            kept.append(record)
+        return kept, removed
 
 
 class ReportStorage(ABC):
@@ -87,7 +91,7 @@ class ReportStorage(ABC):
         This default is read, then write, and is NOT safe against concurrent
         writers. Backends shared between processes override it.
         """
-        self.write_records(replace_revision(self.read_records(), record))
+        self.write_records(RevisionPolicy.replace_revision(self.read_records(), record))
 
     def deduplicate_assessments(self) -> int:
         """Drop repeated assessment revisions, keeping the last, and count them.
@@ -95,7 +99,7 @@ class ReportStorage(ABC):
         This default is read, then write, and is NOT safe against concurrent
         writers. Backends shared between processes override it.
         """
-        records, removed = keep_last_revision(self.read_records())
+        records, removed = RevisionPolicy.keep_last_revision(self.read_records())
         if removed:
             self.write_records(records)
         return removed

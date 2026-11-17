@@ -13,7 +13,7 @@ from .exposure_screen import (
 )
 from .folder import EmlFolderPicker
 from .presenter import ReportPresenter
-from .record_builder import derive_inputs
+from .record_builder import InputDeriver
 from .terminal import Terminal
 
 UPLOAD_TYPE_MESSAGE = (
@@ -81,7 +81,7 @@ class IOManager:
         unconfirmed so the first saved report is a plain assessment; the
         post-verdict checklist can replace it later.
         """
-        derived = derive_inputs(message)
+        derived = InputDeriver.derive_inputs(message)
         inferred = channel is None
         channel = derived["channel"] if inferred else channel
         sender = derived["sender"] if sender is None else sender

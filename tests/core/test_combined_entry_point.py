@@ -7,8 +7,8 @@ from contextlib import nullcontext
 
 import pytest
 
-from phishreport import both as both_module
-from phishreport.both import (
+from phishreport import combined as combined_module
+from phishreport.combined import (
     BothApp,
     LockedDataManager,
     build_cli_app,
@@ -190,7 +190,7 @@ def test_bot_worker_uses_its_own_event_loop_and_shuts_down():
         assert application.running
 
     def worker(stop_event):
-        both_module._bot_worker(application, stop_event)
+        combined_module._bot_worker(application, stop_event)
 
     assert BothApp(worker, cli_loop).run() == 0
     assert application.thread_name == "phishreport-bot"

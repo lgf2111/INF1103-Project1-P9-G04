@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from .storage import ReportStorage, keep_last_revision, replace_revision
+from .storage import ReportStorage, RevisionPolicy
 
 try:
     import fcntl
@@ -91,14 +91,14 @@ class JsonReportStorage(ReportStorage):
         if not isinstance(record, dict):
             raise ValueError("Stored reports must be objects.")
         with self._exclusive_lock():
-            self.write_records(replace_revision(self.read_records(), record))
+            self.write_records(RevisionPolicy.replace_revision(self.read_records(), record))
 
     def deduplicate_assessments(self) -> int:
         """Drop repeated assessment revisions under the exclusive lock."""
         if not self._path.exists():
             return 0
         with self._exclusive_lock():
-            records, removed = keep_last_revision(self.read_records())
+            records, removed = RevisionPolicy.keep_last_revision(self.read_records())
             if removed:
                 self.write_records(records)
             return removed

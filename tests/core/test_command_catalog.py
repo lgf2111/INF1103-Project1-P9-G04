@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from phishreport.io.command_catalog import CommandCapabilities, discover_commands
+from phishreport.io.command_catalog import CommandCapabilities, CommandCatalog
 from phishreport.io.commands import CommandRequest
 
 
@@ -49,7 +49,7 @@ def write_command(path, module, name):
 
 
 def test_empty_package_discovers_nothing_and_does_not_call_capabilities(plugin_files, capabilities):
-    assert discover_commands(capabilities) == []
+    assert CommandCatalog.discover_commands(capabilities) == []
     for service in (
         capabilities.prepare_record, capabilities.assess_record,
         capabilities.session_status, capabilities.report_count,
@@ -65,11 +65,11 @@ def test_discovery_accepts_new_files_in_sorted_order_and_ignores_private_package
     package = plugin_files / "nested"
     package.mkdir()
     (package / "__init__.py").write_text("raise AssertionError('Package imported')")
-    assert [command.name for command in discover_commands(capabilities)] == ["last"]
+    assert [command.name for command in CommandCatalog.discover_commands(capabilities)] == ["last"]
     write_command(plugin_files, "alpha", "first")
     importlib.invalidate_caches()
 
-    commands = discover_commands(capabilities)
+    commands = CommandCatalog.discover_commands(capabilities)
 
     assert [command.name for command in commands] == ["first", "last"]
     assert capabilities.commands == ()
@@ -94,7 +94,7 @@ def test_factory_gets_bound_capabilities_and_live_catalog_without_mutating_calle
         capabilities.session_status, capabilities.report_count, original_catalog,
     )
 
-    commands = discover_commands(caller)
+    commands = CommandCatalog.discover_commands(caller)
 
     received = importlib.import_module("phishreport.io.command_plugins.alpha").received
     assert received is not caller
@@ -115,7 +115,7 @@ def test_missing_or_noncallable_factory_fails_explicitly(plugin_files, capabilit
     (plugin_files / "broken.py").write_text(source, encoding="utf-8")
 
     with pytest.raises(TypeError, match="create_command"):
-        discover_commands(capabilities)
+        CommandCatalog.discover_commands(capabilities)
 
 
 def test_factory_return_must_implement_command(plugin_files, capabilities):
@@ -124,14 +124,14 @@ def test_factory_return_must_implement_command(plugin_files, capabilities):
     )
 
     with pytest.raises(TypeError, match="Command"):
-        discover_commands(capabilities)
+        CommandCatalog.discover_commands(capabilities)
 
 
 def test_invalid_command_name_fails_registration(plugin_files, capabilities):
     write_command(plugin_files, "broken", "/invalid")
 
     with pytest.raises(ValueError, match="name"):
-        discover_commands(capabilities)
+        CommandCatalog.discover_commands(capabilities)
 
 
 def test_duplicate_names_fail_instead_of_replacing_commands(plugin_files, capabilities):
@@ -139,7 +139,7 @@ def test_duplicate_names_fail_instead_of_replacing_commands(plugin_files, capabi
     write_command(plugin_files, "beta", "same")
 
     with pytest.raises(ValueError, match="already registered"):
-        discover_commands(capabilities)
+        CommandCatalog.discover_commands(capabilities)
 
 
 def test_factory_exception_propagates_unchanged_without_calling_services(
@@ -153,7 +153,7 @@ def test_factory_exception_propagates_unchanged_without_calling_services(
     )
 
     with pytest.raises(RuntimeError) as caught:
-        discover_commands(capabilities)
+        CommandCatalog.discover_commands(capabilities)
 
     assert caught.value is failure
     capabilities.report_count.assert_not_called()
@@ -164,4 +164,4 @@ def test_import_exception_is_not_hidden(plugin_files, capabilities):
     (plugin_files / "broken.py").write_text("raise ImportError('Plugin dependency missing')")
 
     with pytest.raises(ImportError, match="Plugin dependency missing"):
-        discover_commands(capabilities)
+        CommandCatalog.discover_commands(capabilities)

@@ -28,7 +28,7 @@ def session():
 def test_saved_card_keyboard_has_exact_buttons_and_private_callback_payloads(session):
     session.saved = True
 
-    keyboard = messages.build_exposure_keyboard(session)
+    keyboard = messages.MessageFactory.build_exposure_keyboard(session)
 
     assert isinstance(keyboard, InlineKeyboardMarkup)
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
@@ -63,7 +63,7 @@ def test_keyboard_offers_only_answers_that_can_still_change_the_result(
         clicked=clicked, submitted_category=category, disclosure_answered=answered,
     )
 
-    keyboard = messages.build_exposure_keyboard(session)
+    keyboard = messages.MessageFactory.build_exposure_keyboard(session)
 
     if labels is None:
         assert keyboard is None
@@ -81,7 +81,7 @@ def test_unsaved_or_dismissed_session_has_no_keyboard(session, saved, dismissed)
     session.saved = saved
     session.dismissed = dismissed
 
-    assert messages.build_exposure_keyboard(session) is None
+    assert messages.MessageFactory.build_exposure_keyboard(session) is None
 
 
 def test_keyboard_is_read_only_without_mutation_scoring_or_time_checks(session, monkeypatch):
@@ -94,8 +94,8 @@ def test_keyboard_is_read_only_without_mutation_scoring_or_time_checks(session, 
     monkeypatch.setattr("phishreport.bot.exposure.time.monotonic",
                         Mock(side_effect=AssertionError("clock access")))
 
-    first = messages.build_exposure_keyboard(session)
-    second = messages.build_exposure_keyboard(session)
+    first = messages.MessageFactory.build_exposure_keyboard(session)
+    second = messages.MessageFactory.build_exposure_keyboard(session)
 
     assert first == second
     assert first is not second
@@ -104,7 +104,7 @@ def test_keyboard_is_read_only_without_mutation_scoring_or_time_checks(session, 
 
 
 def test_confirmation_card_quotes_the_exact_text_and_warning():
-    assert messages.build_confirmation_card("Verify your password now") == (
+    assert messages.MessageFactory.build_confirmation_card("Verify your password now") == (
         'Check this message?\n\n"Verify your password now"\n\n'
         "This text is sent to the AI provider for analysis."
     )
@@ -129,18 +129,18 @@ def test_confirmation_copy_is_exact():
 def test_confirmation_preview_keeps_text_at_or_below_the_limit(length):
     text = "Z" * length
 
-    assert messages.confirmation_preview(text) == text
-    assert messages.build_confirmation_card(text).count("Z") == length
+    assert messages.MessageFactory.confirmation_preview(text) == text
+    assert messages.MessageFactory.build_confirmation_card(text).count("Z") == length
 
 
 def test_confirmation_preview_truncates_to_400_characters_with_an_ellipsis():
     text = "Z" * 401
 
-    preview = messages.confirmation_preview(text)
+    preview = messages.MessageFactory.confirmation_preview(text)
 
     assert preview == "Z" * 400 + "..."
     assert len(preview) == 403
-    card = messages.build_confirmation_card(text)
+    card = messages.MessageFactory.build_confirmation_card(text)
     assert f'"{preview}"' in card
     assert "Z" * 401 not in card
 
@@ -148,7 +148,7 @@ def test_confirmation_preview_truncates_to_400_characters_with_an_ellipsis():
 def test_confirmation_keyboard_has_exact_yes_and_cancel_payloads():
     token = "A" * 16
 
-    keyboard = messages.build_confirmation_keyboard(token)
+    keyboard = messages.MessageFactory.build_confirmation_keyboard(token)
 
     assert isinstance(keyboard, InlineKeyboardMarkup)
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
@@ -237,7 +237,9 @@ def test_formatter_is_read_only_and_never_touches_scoring_or_time(assessed_sessi
     state, _ = assessed_session
     before = dict(state.__dict__)
     values = {key: deepcopy(value) for key, value in before.items() if key != "lock"}
-    monkeypatch.setattr(messages, "build_exposure_keyboard", Mock(side_effect=AssertionError))
+    monkeypatch.setattr(
+        messages.MessageFactory, "build_exposure_keyboard", Mock(side_effect=AssertionError)
+    )
     monkeypatch.setattr("phishreport.bot.exposure.time.monotonic",
                         Mock(side_effect=AssertionError))
     for name in ("assess", "assess_with_findings", "rescore", "build_exposure_report"):

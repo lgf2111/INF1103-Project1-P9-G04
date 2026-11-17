@@ -130,7 +130,11 @@ def test_command_failure_policy_precedes_typed_message(
         def execute(self, request):
             raise StorageFailure() from OSError("PRIVATE path")
 
-    monkeypatch.setattr(handlers, "discover_commands", lambda capabilities: [FailingCommand()])
+    monkeypatch.setattr(
+        handlers.CommandCatalog,
+        "discover_commands",
+        staticmethod(lambda capabilities: [FailingCommand()]),
+    )
 
     invoke(parts, "/failure")
 

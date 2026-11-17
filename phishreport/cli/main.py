@@ -10,13 +10,13 @@ from phishreport.ai.errors import AIErrorTranslator
 from phishreport.assessment import AssessmentService
 from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
-from phishreport.data.repair import repair_history
+from phishreport.data.repair import HistoryRepair
 from phishreport.errors import AssessmentError
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
-from phishreport.io.command_catalog import CommandCapabilities, discover_commands
+from phishreport.io.command_catalog import CommandCapabilities, CommandCatalog
 from phishreport.io.commands import CommandRequest, CommandRouter
-from phishreport.io.report_csv import ReportExportError, export_reports_csv
+from phishreport.io.report_csv import ReportCsv, ReportExportError
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
@@ -109,7 +109,7 @@ class PhishReportApp:
                 return
 
         if command_text is not None:
-            catalog = discover_commands(CommandCapabilities(
+            catalog = CommandCatalog.discover_commands(CommandCapabilities(
                 prepare_record=lambda request: self._io_manager.build_record_from_message(
                     request.text
                 ),
@@ -362,7 +362,7 @@ class PhishReportApp:
             return
 
         try:
-            export_reports_csv(destination, selection.records)
+            ReportCsv.export(destination, selection.records)
         except ReportExportError:
             AppLogging.log_failure(logger, "Writing report CSV failed")
             self._io_manager.show_message(
@@ -430,7 +430,7 @@ class PhishReportApp:
 def main():
     """Compose and run the CLI with its production managers."""
     data_manager = DataManager(create_report_storage())
-    repair_history(data_manager)
+    HistoryRepair.repair_history(data_manager)
     app = PhishReportApp(
         io_manager=IOManager(ConsoleTerminal()),
         ai_manager=AIManager(),

@@ -31,10 +31,10 @@ from phishreport.bot.monitor import EmailMonitor
 from phishreport.cli.main import EnvLoader, PhishReportApp
 from phishreport.data import DataManager, ReportStorage
 from phishreport.data.factory import create_report_storage
-from phishreport.data.repair import repair_history
+from phishreport.data.repair import HistoryRepair
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
-from phishreport.io.command_catalog import CommandCapabilities, discover_commands
+from phishreport.io.command_catalog import CommandCapabilities, CommandCatalog
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
@@ -218,7 +218,7 @@ def build_bot_application(
 
     async def start_monitor(application: Application) -> None:
         builder = ChatRecordBuilder()
-        catalog = discover_commands(CommandCapabilities(
+        catalog = CommandCatalog.discover_commands(CommandCapabilities(
             prepare_record=lambda request: builder.build(request.text),
             assess_record=assessment.assess_with_findings,
             session_status=lambda request: "Telegram startup",
@@ -368,7 +368,7 @@ def main() -> int:
         return 1
 
     data_manager = build_shared_manager()
-    repair_history(data_manager)
+    HistoryRepair.repair_history(data_manager)
     ready = threading.Event()
     application = build_bot_application(
         data_manager,

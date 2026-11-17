@@ -6,7 +6,7 @@ import pytest
 
 from phishreport.assessment import AssessmentSnapshot
 from phishreport.io.check_command import CheckCommand
-from phishreport.io.command_catalog import CommandCapabilities, discover_commands
+from phishreport.io.command_catalog import CommandCapabilities, CommandCatalog
 from phishreport.io.command_plugins.check import create_command
 from phishreport.io.commands import CommandRequest, CommandRouter
 
@@ -39,7 +39,7 @@ def test_check_factory_binds_exact_services_without_calls_or_catalog_mutation(ca
 def test_real_discovery_routes_check_once_and_retains_result_and_findings(
     capabilities, retain_findings,
 ):
-    commands = discover_commands(capabilities)
+    commands = CommandCatalog.discover_commands(capabilities)
     checks = [command for command in commands if command.name == "check"]
     assert len(checks) == 1 and isinstance(checks[0], CheckCommand)
     capabilities.prepare_record.assert_not_called()

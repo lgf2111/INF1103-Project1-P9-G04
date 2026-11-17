@@ -3,7 +3,7 @@
 import pytest
 
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
-from phishreport.data.repair import repair_history
+from phishreport.data.repair import HistoryRepair
 
 BACKENDS = {"json": JsonReportStorage, "sqlite": SqliteReportStorage}
 
@@ -93,5 +93,5 @@ def test_best_effort_startup_repair_preserves_unreadable_history(tmp_path):
     path = tmp_path / "reports.json"
     path.write_text("{broken", encoding="utf-8")
 
-    assert repair_history(DataManager(JsonReportStorage(path))) == 0
+    assert HistoryRepair.repair_history(DataManager(JsonReportStorage(path))) == 0
     assert path.read_text(encoding="utf-8") == "{broken"

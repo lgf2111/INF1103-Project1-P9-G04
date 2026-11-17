@@ -28,9 +28,9 @@ from phishreport.bot.messages import (
 from phishreport.bot.monitor import EmailMonitor
 from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
-from phishreport.data.repair import repair_history
+from phishreport.data.repair import HistoryRepair
 from phishreport.feedback import FeedbackService, FeedbackStore
-from phishreport.io.command_catalog import CommandCapabilities, discover_commands
+from phishreport.io.command_catalog import CommandCapabilities, CommandCatalog
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
 
@@ -97,11 +97,11 @@ def main() -> int:
     store = AccountStore(os.environ.get("PHISHREPORT_GMAIL_PATH", "gmail_accounts.json"))
     gmail = GmailLinkHandlers(store, manager.is_allowed)
     AppLogging.setup()
-    repair_history(data_manager)
+    HistoryRepair.repair_history(data_manager)
 
     async def start_monitor(application: Application) -> None:
         builder = ChatRecordBuilder()
-        catalog = discover_commands(CommandCapabilities(
+        catalog = CommandCatalog.discover_commands(CommandCapabilities(
             prepare_record=lambda request: builder.build(request.text),
             assess_record=assessment.assess_with_findings,
             session_status=lambda request: "Telegram startup",

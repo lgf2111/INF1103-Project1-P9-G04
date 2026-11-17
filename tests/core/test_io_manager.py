@@ -95,17 +95,17 @@ def test_io_manager_main_menu_reprompts_invalid_choice(monkeypatch):
 
 
 def test_io_manager_derives_channel_and_sender_from_each_kind_of_text():
-    from phishreport.io.record_builder import derive_inputs
+    from phishreport.io.record_builder import InputDeriver
 
-    email = derive_inputs("From: Updates <sender@example.com>\n\nVerify your account.")
+    email = InputDeriver.derive_inputs("From: Updates <sender@example.com>\n\nVerify your account.")
     assert email["channel"] == "email"
     assert email["sender"] == "sender@example.com"
 
-    sms = derive_inputs("Call +65 9123 4567 now.")
+    sms = InputDeriver.derive_inputs("Call +65 9123 4567 now.")
     assert sms["channel"] == "sms"
     assert sms["sender"] == "+65 9123 4567"
 
-    chat = derive_inputs("Meet me at the usual place.")
+    chat = InputDeriver.derive_inputs("Meet me at the usual place.")
     assert chat["channel"] == "chat"
     assert chat["sender"] is None
 

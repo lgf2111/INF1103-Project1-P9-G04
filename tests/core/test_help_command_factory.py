@@ -8,7 +8,7 @@ import pytest
 
 from phishreport.io import command_plugins
 from phishreport.io.check_command import CheckCommand
-from phishreport.io.command_catalog import CommandCapabilities, discover_commands
+from phishreport.io.command_catalog import CommandCapabilities, CommandCatalog
 from phishreport.io.command_plugins.help import create_command
 from phishreport.io.commands import CommandRequest, CommandRouter
 from phishreport.io.help_command import HelpCommand
@@ -59,7 +59,7 @@ def test_actual_discovery_help_lists_itself_and_check_without_executing(capabili
     check_execute = Mock(side_effect=AssertionError("Help executed Check"))
     monkeypatch.setattr(CheckCommand, "execute", check_execute)
 
-    commands = discover_commands(capabilities)
+    commands = CommandCatalog.discover_commands(capabilities)
     reply = CommandRouter(commands).route(CommandRequest("/help", "cli"))
 
     assert sum(command.name == "check" for command in commands) == 1
@@ -93,7 +93,7 @@ def test_discovery_help_sees_later_drop_in_module(capabilities, tmp_path, monkey
     monkeypatch.setattr(command_plugins, "__path__", [*command_plugins.__path__, str(tmp_path)])
     importlib.invalidate_caches()
     try:
-        commands = discover_commands(capabilities)
+        commands = CommandCatalog.discover_commands(capabilities)
         help_command = next(command for command in commands if command.name == "help")
         probe_index = next(i for i, command in enumerate(commands) if command.name == "later_probe")
         assert commands.index(help_command) < probe_index

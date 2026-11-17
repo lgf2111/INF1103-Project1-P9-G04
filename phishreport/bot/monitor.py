@@ -11,7 +11,7 @@ from telegram import Bot
 from telegram.constants import ParseMode
 
 from phishreport.ai.errors import AIErrorTranslator
-from phishreport.bot.feedback_ui import assessment_feedback_keyboard
+from phishreport.bot.feedback_ui import FeedbackKeyboardFactory
 from phishreport.bot.gmail import (
     AccountStore,
     EmailSource,
@@ -247,7 +247,7 @@ class EmailMonitor:
                 result, pending.sender, source.subject, source.gmail_url(account.address)
             )
             reply_markup = (
-                assessment_feedback_keyboard(result["assessment_id"])
+                FeedbackKeyboardFactory.assessment_feedback_keyboard(result["assessment_id"])
                 if self._feedback_service is not None
                 else None
             )

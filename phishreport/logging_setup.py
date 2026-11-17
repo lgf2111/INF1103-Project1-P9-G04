@@ -32,32 +32,39 @@ logging.getLogger().addHandler(logging.NullHandler())
 # token in the URL path, so these loggers stay quiet for every entry point.
 HTTP_CLIENT_LOGGERS = ("httpx", "httpcore", "urllib3")
 
-_SECRET_PATTERNS = (
-    (re.compile(r"bot\d+:[A-Za-z0-9_-]+"), "bot<redacted>"),
-    (re.compile(r"(?<!\w)\d{8,10}:[A-Za-z0-9_-]{20,}"), "<redacted>"),
-    (
-        re.compile(r"(?i)\b(token|api_key|apikey|secret|password|key)=([^&\s\"'<>;]+)"),
-        r"\1=<redacted>",
-    ),
-    (re.compile(r"(?i)\bBearer\s+[^\s\"',;]+"), "Bearer <redacted>"),
-    (re.compile(r"gsk_[A-Za-z0-9_-]+"), "<redacted>"),
-)
 
+class SecretRedactor:
+    """Mask credentials in a rendered log message."""
 
-def redact_secrets(message: str) -> str:
-    """Mask credentials while preserving the rest of a rendered log message."""
-    for pattern, replacement in _SECRET_PATTERNS:
-        message = pattern.sub(replacement, message)
-    return message
+    _PATTERNS = (
+        (re.compile(r"bot\d+:[A-Za-z0-9_-]+"), "bot<redacted>"),
+        (re.compile(r"(?<!\w)\d{8,10}:[A-Za-z0-9_-]{20,}"), "<redacted>"),
+        (
+            re.compile(r"(?i)\b(token|api_key|apikey|secret|password|key)=([^&\s\"'<>;]+)"),
+            r"\1=<redacted>",
+        ),
+        (re.compile(r"(?i)\bBearer\s+[^\s\"',;]+"), "Bearer <redacted>"),
+        (re.compile(r"gsk_[A-Za-z0-9_-]+"), "<redacted>"),
+    )
+
+    def redact_secrets(self, message: str) -> str:
+        """Mask credentials while preserving the rest of a rendered log message."""
+        for pattern, replacement in self._PATTERNS:
+            message = pattern.sub(replacement, message)
+        return message
 
 
 class SecretRedactingFilter(logging.Filter):
     """Redact a record's fully rendered message, including %-style arguments."""
 
+    def __init__(self, redactor: SecretRedactor | None = None) -> None:
+        super().__init__()
+        self._redactor = redactor or SecretRedactor()
+
     def filter(self, record: logging.LogRecord) -> bool:
         """Rewrite the message in place and always keep the record."""
         rendered = record.getMessage()
-        redacted = redact_secrets(rendered)
+        redacted = self._redactor.redact_secrets(rendered)
         if redacted != rendered:
             record.msg = redacted
             record.args = ()
@@ -191,7 +198,7 @@ class AppLogging:
         handler.setFormatter(logging.Formatter(cls.FORMAT))
         # Defence in depth: redact secrets from every record this app writes,
         # in case a library or future adapter logs a credential at INFO+.
-        handler.addFilter(SecretRedactingFilter())
+        handler.addFilter(SecretRedactingFilter(SecretRedactor()))
         root.addHandler(handler)
 
         logging.getLogger(__name__).info(

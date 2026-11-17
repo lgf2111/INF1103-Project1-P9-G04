@@ -6,7 +6,7 @@ import threading
 import time
 
 from phishreport.bot.main import startup_guide
-from phishreport.both import (
+from phishreport.combined import (
     ALL_STOP_LINE,
     BOT_STOP_LINE,
     BothApp,
@@ -114,7 +114,7 @@ def test_post_init_reports_readiness_after_writing_the_guide(monkeypatch, tmp_pa
 
     monkeypatch.setattr(type(application.bot), "username", property(lambda self: "probe_bot"))
     monkeypatch.setattr(type(application.bot), "set_my_commands", no_commands)
-    monkeypatch.setattr("phishreport.both.EmailMonitor", fake_monitor)
+    monkeypatch.setattr("phishreport.combined.EmailMonitor", fake_monitor)
 
     asyncio.run(application.post_init(application))
 
