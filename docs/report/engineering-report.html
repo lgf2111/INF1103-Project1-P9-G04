@@ -4,35 +4,39 @@
 <meta charset="utf-8">
 <title>PhishReport Engineering Report</title>
 <style>
-  @page { size: A4; margin: 16mm 16mm 14mm 16mm; }
+  @page { size: A4; margin: 25mm; }
   * { box-sizing: border-box; }
-  body { margin: 0; font-family: "Helvetica Neue", Arial, sans-serif; font-size: 10.5pt;
-         line-height: 1.42; color: #14181c; }
-  h1 { font-size: 22pt; margin: 0 0 6mm 0; letter-spacing: -0.4pt; }
-  h2 { font-size: 13pt; margin: 0 0 2.5mm 0; padding-bottom: 1.5mm;
+  body { margin: 0; font-family: "Helvetica Neue", Arial, sans-serif; font-size: 11pt;
+         line-height: 1.28; color: #14181c; }
+  h1 { font-size: 26pt; margin: 0 0 6mm 0; letter-spacing: -0.4pt; }
+  h2 { font-size: 14pt; margin: 0 0 1.8mm 0; padding-bottom: 1.5mm;
        border-bottom: 1.2pt solid #0f766e; color: #0b3b38; }
-  h3 { font-size: 10.8pt; margin: 3.5mm 0 1.5mm 0; color: #0b3b38; }
-  p { margin: 0 0 2.2mm 0; }
-  ul { margin: 0 0 2.2mm 0; padding-left: 5mm; }
-  li { margin: 0 0 1.1mm 0; }
+  h3 { font-size: 11.5pt; margin: 2.6mm 0 1.2mm 0; color: #0b3b38; }
+  p { margin: 0 0 1.3mm 0; }
+  ul { margin: 0 0 1.3mm 0; padding-left: 5mm; }
+  li { margin: 0 0 0.5mm 0; }
   .page { page-break-after: always; }
+  .page.flow { page-break-after: auto; }
   .page:last-child { page-break-after: auto; }
   .title-block { margin-top: 42mm; }
-  .kicker { font-size: 9.5pt; letter-spacing: 1.4pt; text-transform: uppercase;
+  .kicker { font-size: 11pt; letter-spacing: 1.4pt; text-transform: uppercase;
             color: #0f766e; font-weight: 700; margin-bottom: 3mm; }
   .subtitle { font-size: 12.5pt; color: #414a53; margin-bottom: 14mm; }
-  table { width: 100%; border-collapse: collapse; margin: 0 0 3mm 0; }
-  th, td { text-align: left; vertical-align: top; padding: 1.6mm 2mm; font-size: 9.2pt;
+  table { width: 100%; border-collapse: collapse; margin: 0 0 2mm 0; }
+  thead { display: table-header-group; }
+  tr { page-break-inside: avoid; break-inside: avoid; }
+  th, td { text-align: left; vertical-align: top; padding: 1.4mm 1.8mm; font-size: 11pt;
            border-bottom: 0.5pt solid #d7dde3; }
-  th { background: #eef4f3; font-size: 8.8pt; text-transform: uppercase; letter-spacing: 0.4pt;
+  th { background: #eef4f3; font-size: 11pt; text-transform: uppercase; letter-spacing: 0.3pt;
        color: #0b3b38; }
-  .tight td, .tight th { font-size: 8.4pt; padding: 1.2mm 1.6mm; line-height: 1.3; }
+  .tight td, .tight th { font-size: 11pt; padding: 0.45mm 1.3mm; line-height: 1.18; }
   img.diagram { width: 100%; border: 0.5pt solid #d7dde3; }
-  .caption { font-size: 8.6pt; color: #5b646e; margin: 1.2mm 0 4mm 0; }
-  .meta { font-size: 9.6pt; color: #414a53; }
+  .caption { font-size: 11pt; color: #5b646e; margin: 1mm 0 2.8mm 0; }
+  .meta { font-size: 11pt; color: #414a53; }
   .meta strong { color: #14181c; }
-  .note { font-size: 8.8pt; color: #5b646e; }
-  code { font-family: Menlo, monospace; font-size: 9pt; background: #f2f4f6; padding: 0 0.6mm; }
+  .note { font-size: 11pt; color: #5b646e; }
+  code { font-family: Menlo, monospace; font-size: 11pt; background: #f2f4f6; padding: 0 0.5mm; }
+  td code, th code { overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -72,27 +76,26 @@
     structure around it. Four manager responsibilities became objects with contracts. Reports can be
     stored in JSON or SQLite behind one interface. Every result now names the rule that decided it.
     A user can report what they did after receiving a message (clicked, downloaded, entered a
-    password), and the score responds to that answer without a second AI call. The same core now
-    serves a command line and a Telegram bot.</p>
+    password), and the score responds to that answer without a second AI call.</p>
 
   <h2>2. Data structure and storage design</h2>
   <p>All persisted data is local to the machine that runs the application. No account is required and
     no assessment leaves the device except the message text sent to the AI provider.</p>
-  <table class="tight">
-    <tr><th>File or table</th><th>Format</th><th>Contents</th></tr>
+  <table class="tight" style="table-layout:fixed">
+    <tr><th style="width:26%">File or table</th><th style="width:22%">Format</th><th style="width:52%">Contents</th></tr>
     <tr><td><code>reports.json</code></td>
       <td>JSON array, UTF-8</td>
       <td>Default history. One object per assessed message, schema version 3.</td></tr>
-    <tr><td><code>reports.sqlite3</code></td>
-      <td>SQLite, table <code>records(position INTEGER PRIMARY KEY, payload TEXT)</code></td>
-      <td>Same records, selected by <code>PHISHREPORT_STORAGE=sqlite</code>. Payload holds the JSON object.</td></tr>
+    <tr><td><code>reports.<wbr>sqlite3</code></td>
+      <td>SQLite, one table</td>
+      <td>Same records, selected by <code>PHISHREPORT_STORAGE=sqlite</code>. Table <code>records(position INTEGER PRIMARY KEY, payload TEXT)</code> holds the JSON object.</td></tr>
     <tr><td><code>feedback.json</code></td>
       <td>JSON array</td>
-      <td>Corrections keyed to an assessment id: category, comment, timestamp.</td></tr>
-    <tr><td><code>gmail_accounts.json</code></td>
+      <td>One correction per assessment. Category is one of seven: false positive, false negative, incorrect priority, incorrect explanation, application bug, usability issue or other. Also holds an optional comment, corrected priority and timestamp.</td></tr>
+    <tr><td><code>gmail_accounts<wbr>.json</code></td>
       <td>JSON, file mode 0600</td>
       <td>Linked mailbox address and app password used by the Gmail monitor. Deleted on unlink.</td></tr>
-    <tr><td><code>logs/phishreport.log</code></td>
+    <tr><td><code>logs/<wbr>phishreport.log</code></td>
       <td>Rotating text log, 1 MB &times; 3</td>
       <td>Diagnostic lines only. Secrets are redacted before a record is written.</td></tr>
     <tr><td>CSV export</td>
@@ -101,14 +104,16 @@
   </table>
 
   <h3>Stored record shape (schema version 3)</h3>
-  <p>A record holds the input as the user gave it, the exposure answers, and the result:
-    <code>schema_version</code>, <code>channel</code>, <code>sender</code>, <code>message</code>,
-    <code>has_link</code>, <code>link</code>, <code>has_file</code>, <code>file_name</code>,
-    <code>clicked</code>, <code>downloaded</code>, <code>submitted_category</code>, and
-    <code>result</code>. The result contains <code>assessment_id</code>, <code>priority</code>,
-    <code>score</code>, <code>matched_rule</code>, <code>reasons</code>, <code>actions</code>,
-    <code>trace</code> and, when the user answered, a nested <code>exposure</code> object. Both
-    backends validate on read and on write, so a corrupt file raises a typed error instead of
+  <p>A version-3 record holds the input, the exposure answers and the result. Top level:
+    <code>schema_version</code>, <code>assessment_id</code>, <code>channel</code>, <code>message</code>,
+    <code>sender</code>, <code>has_link</code>, <code>link</code>, <code>has_file</code>,
+    <code>file_name</code>, <code>result</code> and <code>exposure</code>. <code>exposure</code> holds
+    <code>clicked</code>, <code>downloaded</code>, <code>submitted_category</code> and
+    <code>disclosure_answered</code>; <code>result</code> holds <code>priority</code>, <code>score</code>,
+    <code>reasons</code>, <code>checklist</code>, <code>matched_rule</code> and <code>trace</code>.
+    Without exposure answers the shorter feedback-linked shape is <code>schema_version</code>,
+    <code>assessment_id</code>, <code>channel</code>, <code>message</code> and <code>result</code>.
+    Both backends validate on read and on write, so a corrupt file raises a typed error instead of
     loading half a report.</p>
 </section>
 
@@ -117,8 +122,7 @@
   <h2>3. Diagrams</h2>
   <p>The class diagram is generated from the source tree by <code>scripts/report_assets.py</code>,
     which parses the package with <code>ast</code> and writes the diagram source, so the picture
-    cannot drift from the code. The complete diagram covers 29 classes and 13 inheritance edges. The views below
-    separate the collaborations from the contracts.</p>
+    cannot drift from the code. The two views below separate the collaborations from the contracts.</p>
   <img class="diagram" src="assets/class-core.png" alt="Core collaborators" style="width:88mm">
   <p class="caption">Figure 1. Core collaborators. <code>AssessmentService</code> holds the AI and
     Logic managers it is given, so the managers stay replaceable and the AI step cannot be skipped.
@@ -135,7 +139,7 @@
 </section>
 
 <!-- 4. EXCEPTIONS -->
-<section class="page">
+<section class="page flow">
   <h2>5. Exception handling</h2>
   <p>Every boundary raises a typed failure from <code>phishreport/errors.py</code> with a fixed user
     message. The original exception is kept as <code>__cause__</code> for developers and never shown.
@@ -143,8 +147,11 @@
     invents data. A programmer error such as <code>TypeError</code> is not converted into a friendly
     message; it propagates so a defect fails loudly in tests.</p>
   <table class="tight">
+    <thead>
     <tr><th style="width:20%">What can go wrong</th><th style="width:20%">How it is detected</th>
       <th style="width:28%">Handling</th><th style="width:20%">Impact on the user</th><th>Cause</th></tr>
+    </thead>
+    <tbody>
     <tr><td>Provider unreachable</td><td>Transport error from the AI client</td>
       <td>Typed <code>AIUnavailable</code>, request abandoned, nothing saved, no retry that duplicates work</td>
       <td>One sentence, then the prompt returns</td><td>Network or DNS failure</td></tr>
@@ -177,6 +184,7 @@
       <td>Sees one message</td><td>Any failure above</td></tr>
     <tr><td>Gmail monitor failure</td><td>Typed failure while polling</td><td>UID not advanced, message retried next cycle</td>
       <td>Chat is not spammed</td><td>Transient provider or mailbox error</td></tr>
+    </tbody>
   </table>
   <p class="note">The full matrix in <code>docs/exception-matrix.md</code> adds the raised class and the
     test that proves each row. A test fails if a cited test stops resolving, so the table cannot rot.</p>
