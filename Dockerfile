@@ -17,6 +17,7 @@ FROM base AS telegram
 RUN mkdir -p /data
 ENV PHISHREPORT_REPORTS_PATH=/data/reports.json \
     PHISHREPORT_GMAIL_PATH=/data/gmail_accounts.json \
+    PHISHREPORT_FEEDBACK_PATH=/data/feedback.json \
     PYTHONUNBUFFERED=1
 CMD ["python", "-m", "phishreport.bot"]
 

@@ -4,12 +4,15 @@ import imaplib
 import json
 import os
 import re
+import ssl
 import tempfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 from email import policy
 from email.parser import BytesParser
 from pathlib import Path
+from threading import Lock
 from urllib.parse import quote
+from uuid import uuid4
 
 IMAP_HOST = "imap.gmail.com"
 ADDRESS_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -31,6 +34,7 @@ class LinkedAccount:
     address: str
     password: str
     last_uid: int  # Only mail with a higher IMAP UID is checked.
+    link_id: str | None = field(default=None, compare=False, repr=False)
 
 
 class AccountStore:
@@ -42,6 +46,7 @@ class AccountStore:
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self._path = Path(path)
+        self._lock = Lock()
 
     def _read(self) -> dict[str, dict]:
         try:
@@ -66,8 +71,10 @@ class AccountStore:
             raise
 
     def all(self) -> list[LinkedAccount]:
+        with self._lock:
+            data = self._read()
         accounts = []
-        for value in self._read().values():
+        for value in data.values():
             try:
                 accounts.append(LinkedAccount(**value))
             except TypeError:
@@ -77,17 +84,52 @@ class AccountStore:
     def get(self, chat_id: int) -> LinkedAccount | None:
         return next((account for account in self.all() if account.chat_id == chat_id), None)
 
-    def save(self, account: LinkedAccount) -> None:
-        data = self._read()
-        data[str(account.chat_id)] = asdict(account)
-        self._write(data)
+    @staticmethod
+    def _matches_link(stored: object, account: LinkedAccount) -> bool:
+        # Legacy accounts have no link_id. Relinking always assigns a fresh one.
+        return (
+            isinstance(stored, dict)
+            and stored.get("chat_id") == account.chat_id
+            and stored.get("link_id") == account.link_id
+        )
 
-    def remove(self, chat_id: int) -> bool:
-        data = self._read()
-        if data.pop(str(chat_id), None) is None:
-            return False
-        self._write(data)
-        return True
+    def is_current(self, account: LinkedAccount) -> bool:
+        """Return whether this snapshot still belongs to the active link."""
+        with self._lock:
+            return self._matches_link(self._read().get(str(account.chat_id)), account)
+
+    def save(self, account: LinkedAccount) -> None:
+        """Create or replace a link, even when the mailbox credentials match."""
+        with self._lock:
+            data = self._read()
+            data[str(account.chat_id)] = asdict(replace(account, link_id=uuid4().hex))
+            self._write(data)
+
+    def advance_cursor(self, account: LinkedAccount, uid: int) -> bool:
+        """Advance the active link's cursor. Return False for a stale snapshot."""
+        with self._lock:
+            data = self._read()
+            current = data.get(str(account.chat_id))
+            if not self._matches_link(current, account):
+                return False
+            if uid > current["last_uid"]:
+                current["last_uid"] = uid
+                self._write(data)
+            return True
+
+    def remove(self, chat_id: int, *, expected: LinkedAccount | None = None) -> bool:
+        """Remove a link, optionally requiring the caller's link to still be active."""
+        with self._lock:
+            data = self._read()
+            key = str(chat_id)
+            current = data.get(key)
+            if current is None or (
+                expected is not None and not self._matches_link(current, expected)
+            ):
+                return False
+            del data[key]
+            self._write(data)
+            return True
 
 
 class GmailMailbox:
@@ -100,7 +142,9 @@ class GmailMailbox:
 
     def _connect(self) -> imaplib.IMAP4_SSL:
         try:
-            connection = imaplib.IMAP4_SSL(self._host, timeout=30)
+            connection = imaplib.IMAP4_SSL(
+                self._host, ssl_context=ssl.create_default_context(), timeout=30,
+            )
         except (OSError, imaplib.IMAP4.error) as error:
             raise MailboxError("Could not reach Gmail.") from error
         try:

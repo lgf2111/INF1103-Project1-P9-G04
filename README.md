@@ -370,8 +370,12 @@ bash run.sh telegram
 ```
 
 The helper builds the `telegram` target if needed and mounts
-`.phishreport-data/` at `/data`, where the bot reads and writes `reports.json`
-or, with `PHISHREPORT_STORAGE=sqlite`, `reports.sqlite3`.
+`.phishreport-data/` at `/data`, where the bot keeps assessment history and
+`feedback.json`. Feedback survives container replacement when the mount is reused.
+The default history file is `reports.json`. SQLite uses `reports.sqlite3`.
+If you override `PHISHREPORT_FEEDBACK_PATH` in Docker, use a path inside the mount.
+Keep custom local Gmail or feedback files outside the Docker build context or under
+`.phishreport-data/`.
 It needs `GROQ_API_KEY` in `.env` to assess messages.
 It uses outbound polling with one running instance per token. When the bot is ready, the
 terminal prints your bot's username and the next steps (`/start`, `/linkgmail`,
