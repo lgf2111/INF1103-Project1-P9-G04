@@ -1026,7 +1026,7 @@ def test_manager_write_error_translates_without_retry(backend_spy, error, caplog
     with pytest.raises(StorageFailure) as caught:
         manager(backend_spy).save(v2_report())
     assert caught.value.__cause__ is error
-    assert backend_spy.calls == ["read", "write"]
+    assert backend_spy.calls == ["read", "read", "write"]
     assert caplog.records == []
 
 
@@ -1045,7 +1045,9 @@ def test_manager_save_programmer_errors_propagate_unchanged(backend_spy, error, 
     with pytest.raises(type(error)) as caught:
         subject.save(v2_report())
     assert caught.value is error
-    assert backend_spy.calls == ([] if stage == "validation" else ["read", "write"])
+    assert backend_spy.calls == (
+        [] if stage == "validation" else ["read", "read", "write"]
+    )
 
 
 def test_manager_new_validation_failure_preserves_original_cause(backend_spy):
@@ -1101,7 +1103,7 @@ def test_manager_injected_validator_and_falsey_backend_are_used(backend_spy):
     manager(backend_spy, injected).save(record)
     assert injected.calls == [("new", record), ("stored", {"custom": "history"})]
     assert injected.calls[0][1] is record
-    assert backend_spy.calls == ["read", "write"]
+    assert backend_spy.calls == ["read", "read", "write"]
     assert backend_spy.records == [{"custom": "history"}, {"custom": "new"}]
 
 

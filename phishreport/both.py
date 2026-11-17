@@ -27,6 +27,7 @@ from phishreport.bot.monitor import EmailMonitor
 from phishreport.cli.main import EnvLoader, PhishReportApp
 from phishreport.data import DataManager, ReportStorage
 from phishreport.data.factory import create_report_storage
+from phishreport.data.repair import repair_history
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
 from phishreport.io.command_catalog import CommandCapabilities, discover_commands
@@ -358,6 +359,7 @@ def main() -> int:
         return 1
 
     data_manager = build_shared_manager()
+    repair_history(data_manager)
     ready = threading.Event()
     application = build_bot_application(
         data_manager,

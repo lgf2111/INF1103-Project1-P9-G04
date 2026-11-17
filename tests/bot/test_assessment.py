@@ -691,17 +691,17 @@ def test_paste_saves_a_medium_revision_before_any_follow_up_answer(
                 "reply_markup"
             ] is None
         else:
-            revision, = data.load(strict=True)[1:]
-            assert revision["assessment_id"] == initial["assessment_id"]
-            assert revision["result"]["score"] == score
-            assert revision["result"]["priority"] == "HIGH"
+            saved, = data.load(strict=True)
+            assert saved["assessment_id"] == initial["assessment_id"]
+            assert saved["result"]["score"] == score
+            assert saved["result"]["priority"] == "HIGH"
             expected = {
                 "clicked": True if action == "clicked" else None,
                 "downloaded": None,
                 "submitted_category": "password" if action == "password" else None,
                 "disclosure_answered": action == "password",
             }
-            assert revision["exposure"] == expected
+            assert saved["exposure"] == expected
 
     asyncio.run(scenario())
     ai.assess.assert_called_once()

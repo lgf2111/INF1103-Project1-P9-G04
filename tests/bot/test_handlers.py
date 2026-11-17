@@ -1248,6 +1248,39 @@ def test_launcher_selects_storage_without_changing_other_history(tmp_path, monke
         assert not (tmp_path / "history.sqlite3").exists()
 
 
+def test_launcher_repairs_duplicate_assessment_history(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:offline-token")
+    monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_ID", "")
+    monkeypatch.delenv("PHISHREPORT_STORAGE", raising=False)
+    path = tmp_path / "history.json"
+    monkeypatch.setenv("PHISHREPORT_REPORTS_PATH", str(path))
+    monkeypatch.setattr("phishreport.bot.main.AppLogging.setup", lambda: True)
+
+    def report(score):
+        return {
+            "schema_version": 3,
+            "assessment_id": "b63a6c54-b415-4999-98b5-445508ce0361",
+            "channel": "chat",
+            "message": f"Fictional message scored {score}",
+            "result": {
+                "score": score,
+                "priority": "HIGH",
+                "reasons": [],
+                "checklist": [],
+            },
+        }
+
+    JsonReportStorage(path).write_records([report(60), report(80), report(90)])
+
+    with patch.object(Application, "run_polling", autospec=True):
+        assert main() == 0
+
+    records = JsonReportStorage(path).read_records()
+    assert len(records) == 1
+    assert records[0]["result"]["score"] == 90
+
+
 def test_launcher_accepts_blank_allowed_chat_and_rejects_bad_values(monkeypatch):
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "123:offline-token")
     monkeypatch.setenv("TELEGRAM_ALLOWED_CHAT_ID", "")

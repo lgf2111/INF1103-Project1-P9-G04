@@ -24,6 +24,7 @@ from phishreport.bot.messages import EXPOSURE_CALLBACK_PREFIX, ChatRecordBuilder
 from phishreport.bot.monitor import EmailMonitor
 from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
+from phishreport.data.repair import repair_history
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io.command_catalog import CommandCapabilities, discover_commands
 from phishreport.logging_setup import AppLogging
@@ -92,6 +93,7 @@ def main() -> int:
     store = AccountStore(os.environ.get("PHISHREPORT_GMAIL_PATH", "gmail_accounts.json"))
     gmail = GmailLinkHandlers(store, manager.is_allowed)
     AppLogging.setup()
+    repair_history(data_manager)
 
     async def start_monitor(application: Application) -> None:
         builder = ChatRecordBuilder()
