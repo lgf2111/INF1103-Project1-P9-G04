@@ -228,7 +228,7 @@ Enter these commands at the CLI menu or in the bot's private chat. CLI choices
 | --- | --- | --- |
 | `/check <text>` | Assess pasted chat text using the existing link, file and exposure prompts; save and display the result. | Assess the text once and save a v3 report immediately, then offer three follow-up answers that append a revision using the retained AI findings. Plain pasted text asks for confirmation first. |
 | `/help` | List the shared commands. | List the shared commands; the Gmail commands below remain available. |
-| `/status` | Show that the CLI conversation is active and count saved reports. | Count the requesting user's active exposure sessions awaiting answers and count saved reports. |
+| `/status` | Show that the CLI conversation is active and count saved reports. | Count the requesting user's active exposure sessions awaiting answers and count saved reports; when reports exist, offer the dated CSV and summary downloads. |
 
 Status counts reports from the configured history backend using strict loading;
 a read failure shows an error rather than a zero count. It does not request AI
