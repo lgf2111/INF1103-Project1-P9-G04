@@ -126,5 +126,5 @@ feedback prompt.
 
 Two Phase 2 tasks still read "In progress" although their code is on `main`
 (`phishreport/model.py` with `phishreport/errors.py`, and the renderer consolidation in
-`phishreport/io/render.py`). The report query and export workflow is available under CLI option 7.
+`phishreport/io/render.py`). The report query and export workflow is available under CLI option 6.
 It previews the filtered rows and can export them to a new CSV file.

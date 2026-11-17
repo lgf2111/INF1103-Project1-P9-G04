@@ -347,10 +347,10 @@ class PhishReportApp:
                     # Counts and statistics for saved reports, optionally filtered.
                     self.summarize_reports()
                 elif choice == "6":
+                    self.export_reports()
+                elif choice == "7":
                     self._io_manager.show_message("Bye!")
                     break
-                elif choice == "7":
-                    self.export_reports()
                 else:
                     self._io_manager.show_message("Please choose 1, 2, 3, 4, 5, 6 or 7.")
         except (KeyboardInterrupt, EOFError):

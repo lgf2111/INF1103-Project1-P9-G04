@@ -194,7 +194,7 @@ JSON and SQLite. Queries use saved assessments and work offline.
 
 ### Export saved reports as CSV
 
-Choose **7. Filter and export saved reports**, then select a priority and channel
+Choose **6. Filter and export saved reports**, then select a priority and channel
 or press Enter for all. The CLI previews the selection in storage order. Enter
 a path for a new CSV file to export those same rows, or press Enter to skip.
 Relative paths are resolved from the CLI's working directory. Use an existing,
@@ -222,7 +222,7 @@ directly with zero rows writes the header only.
 ### Shared conversation commands
 
 Enter these commands at the CLI menu or in the bot's private chat. CLI choices
-**1–6** remain unchanged.
+**1–5** remain unchanged.
 
 | Command | CLI | Telegram |
 | --- | --- | --- |

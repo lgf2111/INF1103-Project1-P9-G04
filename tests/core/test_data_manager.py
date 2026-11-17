@@ -97,7 +97,7 @@ def test_data_manager_startup(cli, data_manager_storage, monkeypatch, state):
     def menu():
         """Record the first menu and quit without requesting an assessment."""
         events.append("menu")
-        return "6"
+        return "7"
 
     monkeypatch.setattr(cli.data_manager, "load", loader)
     monkeypatch.setattr(cli.io_manager, "main_menu", menu)
@@ -331,7 +331,7 @@ def test_data_manager_history_recovery(
     """Keep malformed JSON and invalid v2 records safe across coordinator paths."""
     data_manager_storage.write_text(content)
     monkeypatch.setattr(AppLogging, "setup", lambda: True)
-    monkeypatch.setattr(cli.io_manager, "main_menu", lambda: "6")
+    monkeypatch.setattr(cli.io_manager, "main_menu", lambda: "7")
     if operation == "save":
         record = data_manager_complete_report()
         monkeypatch.setattr(
@@ -467,7 +467,7 @@ def test_data_manager_legacy_field_corruption_recovers_without_replacing_file(
 
     # Startup, explicit history viewing and normal exit must all remain usable.
     monkeypatch.setattr(AppLogging, "setup", lambda: True)
-    choices = iter(["4", "6"])
+    choices = iter(["4", "7"])
     monkeypatch.setattr(cli.io_manager, "main_menu", lambda: next(choices))
     cli.app.run()
     output = capsys.readouterr().out

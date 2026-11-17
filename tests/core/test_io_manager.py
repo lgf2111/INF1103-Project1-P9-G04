@@ -67,7 +67,7 @@ def test_io_manager_collect_feedback_can_be_skipped(monkeypatch):
     assert io_manager.collect_feedback() is None
 
 
-@pytest.mark.parametrize("choice", ["1", "2", "3", "4", "5", "6"])
+@pytest.mark.parametrize("choice", ["1", "2", "3", "4", "5", "6", "7"])
 def test_io_manager_main_menu_accepts_valid_choice(monkeypatch, choice):
     monkeypatch.setattr("builtins.input", lambda _: choice)
 

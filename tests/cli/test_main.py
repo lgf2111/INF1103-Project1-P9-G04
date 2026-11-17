@@ -376,7 +376,7 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
     # Option 2 now picks a .eml from a saved folder. First run asks for the
     # folder; then the newest files are listed (encoded.eml is newer than
     # malformed.eml). Pick the malformed one first (retry), then the good one.
-    answers = iter(["2", str(tmp_path), "2", "1", "no", "no", "no", "6"])
+    answers = iter(["2", str(tmp_path), "2", "1", "no", "no", "no", "7"])
     prompts = []
 
     def answer(prompt):
@@ -503,7 +503,7 @@ def test_main_menu_continues_after_bad_record_then_saves_next_assessment(
     tmp_path,
 ):
     main_successful_reply(main_app_boundary)
-    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=["1", "1", "6"]))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=["1", "1", "7"]))
     monkeypatch.setattr(
         cli.io_manager,
         "collect_input",
@@ -547,7 +547,7 @@ def test_main_unwritable_log_destination_keeps_menu_available(
     # A file named "logs" makes os.makedirs("logs") fail, so the file log can't
     # open - the app must still run and warn about logging being unavailable.
     (tmp_path / "logs").write_text("not a directory")
-    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="6"))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="7"))
 
     cli.app.run()
 
@@ -672,7 +672,7 @@ def test_main_configured_storage_logging_uses_application_file(
     cli, main_app_boundary, tmp_path, monkeypatch
 ):
     (tmp_path / "reports.json").write_text("{PRIVATE_BROKEN")
-    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="6"))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="7"))
     cli.app.run()
     text = (tmp_path / "logs" / "phishreport.log").read_text(encoding="utf-8")
     assert "data_manager" in text and "Could not read local report history" in text
@@ -746,7 +746,7 @@ def test_main_menu_routes_upload_and_saved_reports(
 ):
     handler = Mock()
     monkeypatch.setattr(cli.app, handler_name, handler)
-    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=[choice, "6"]))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=[choice, "7"]))
 
     cli.app.run()
 

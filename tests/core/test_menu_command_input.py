@@ -20,6 +20,24 @@ def test_menu_returns_slash_input_untouched(text):
     terminal.read.assert_called_once_with("Choose 1-7: ")
 
 
+def test_menu_lists_the_export_action_before_quit():
+    terminal = Mock()
+    terminal.read.return_value = "7"
+
+    assert IOManager(terminal).main_menu() == "7"
+
+    assert terminal.write.call_args_list == [
+        call("\n=== PhishReport ==="),
+        call("1. Check a new message (Manual Input)"),
+        call("2. Import the newest emails from your saved folder"),
+        call("3. Upload an .eml in a browser"),
+        call("4. View saved reports"),
+        call("5. Summarize saved reports"),
+        call("6. Filter and export saved reports"),
+        call("7. Quit"),
+    ]
+
+
 @pytest.mark.parametrize("choice", ["1", "2", "3", "4", "5", "6", "7"])
 def test_menu_still_normalizes_numeric_choices(choice):
     terminal = Mock()

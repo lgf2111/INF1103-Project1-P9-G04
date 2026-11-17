@@ -441,8 +441,8 @@ def test_summarize_reports_stops_cleanly_when_history_is_unreadable():
     assert terminal.prompts == []
 
 
-def test_menu_option_five_runs_the_summary_and_six_quits():
-    terminal = ScriptedTerminal(["5", "", "", "6"])
+def test_menu_option_five_runs_the_summary_and_seven_quits():
+    terminal = ScriptedTerminal(["5", "", "", "7"])
 
     _app(terminal, MemoryStorage(RECORDS)).run()
 

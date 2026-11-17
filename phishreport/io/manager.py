@@ -27,8 +27,8 @@ class IOManager:
         self._terminal.write("3. Upload an .eml in a browser")
         self._terminal.write("4. View saved reports")
         self._terminal.write("5. Summarize saved reports")
-        self._terminal.write("6. Quit")
-        self._terminal.write("7. Filter and export saved reports")
+        self._terminal.write("6. Filter and export saved reports")
+        self._terminal.write("7. Quit")
 
         prompt = "Choose 1-7: "
         while True:

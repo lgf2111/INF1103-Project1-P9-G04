@@ -14,7 +14,7 @@ from phishreport.logic import LogicManager
 
 def _run_menu(monkeypatch, history, answers):
     ai_manager = Mock()
-    inputs = iter(["7", *answers, "6"])
+    inputs = iter(["6", *answers, "7"])
     monkeypatch.setattr("builtins.input", lambda _: next(inputs))
     monkeypatch.setattr("phishreport.cli.main.AppLogging.setup", lambda: True)
     PhishReportApp(
