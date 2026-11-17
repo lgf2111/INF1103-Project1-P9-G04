@@ -686,7 +686,7 @@ The first matching rule determines the score and priority. Every new assessment 
 
 PhishReport supports these ways to submit a message:
 
-1. **Manual input:** Choose **1. Check a message** and paste an email, SMS or chat message. The channel, sender, first link and any attachment name are derived from the text, so they are not asked for; one line then asks whether you interacted with it.
+1. **Manual input:** Choose **1. Check a message** and paste an email, SMS or chat message. The channel, sender, first link and any attachment name are derived from the text, so they are not asked for. After the verdict is saved, an optional checklist asks what you did with the message.
 2. **Browser upload:** Type `upload` at the menu prompt to open the local browser page at `http://localhost:8000` and upload one `.eml` email there. Upload is not a numbered menu option.
 3. **Folder import:** The saved-folder picker remains available to code that calls `IOManager.collect_input_from_folder()` directly, but it is not reachable from the menu.
 
@@ -696,7 +696,7 @@ The menu has five numbered items: **1. Check a message**, **2. View saved report
 
 Type `upload` at the menu prompt to start the browser upload workflow, or `feedback` to correct the most recent saved report with a category, an optional comment and an optional corrected priority. Neither keyword occupies a numbered slot. For manual entry, enter multiple lines and type `END` on its own line to finish; blank lines inside the message are preserved.
 
-The two `.eml` methods use the same email parser. The application reads supported text/HTML email content but **does not analyse attachments or embedded images**. Non-`.eml` browser uploads are rejected. Each imported file is limited to **2 MiB**. After a message is collected, one question asks whether you clicked, shared a password/OTP, downloaded, or did nothing; press Enter to skip, and the assessment is saved without an exposure block.
+The two `.eml` methods use the same email parser. The application reads supported text/HTML email content but **does not analyse attachments or embedded images**. Non-`.eml` browser uploads are rejected. Each imported file is limited to **2 MiB**. After the verdict is printed and saved, an optional checklist asks what you did with the message: click the link, download the file, enter a password, or enter a one-time code. On a terminal, use Up/Down to move, Space to toggle, Enter to confirm and Esc to skip. Piped or non-interactive input uses the equivalent numbered prompt (`1,3,4 + Enter, or Enter to skip`). Skipping leaves the original saved verdict unchanged; confirming re-scores from the retained findings and replaces that same report.
 
 ## Run Docker with persistent reports
 

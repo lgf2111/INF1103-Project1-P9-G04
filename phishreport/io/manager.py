@@ -1,6 +1,16 @@
 """Coordinate the CLI menu, input routes, and report presentation."""
 
+import sys
+
 from .eml import EmlReader
+from .exposure_screen import (
+    NUMBERED_HEADING,
+    NUMBERED_PROMPT,
+    ExposureScreen,
+    build_exposure,
+    parse_numbered_selection,
+    tty_supported,
+)
 from .folder import EmlFolderPicker
 from .presenter import ReportPresenter
 from .record_builder import derive_inputs
@@ -9,31 +19,17 @@ from .terminal import Terminal
 UPLOAD_TYPE_MESSAGE = (
     "Only .eml email files are supported. Images and attachments are not analysed."
 )
-INTERACTION_PROMPT = (
-    "Did you interact with it? [1] clicked [2] shared a password/OTP "
-    "[3] downloaded [4] no (Enter to skip): "
-)
-INTERACTION_CHOICES = {
-    "1": (True, False, None),
-    "clicked": (True, False, None),
-    "2": (False, False, "password"),
-    "password": (False, False, "password"),
-    "otp": (False, False, "password"),
-    "shared a password/otp": (False, False, "password"),
-    "3": (False, True, None),
-    "downloaded": (False, True, None),
-    "4": (False, False, None),
-    "no": (False, False, None),
-    "none": (False, False, None),
-    "": None,
-}
 
 
 class IOManager:
     """Collect incident records and display reports through a shared terminal."""
 
-    def __init__(self, terminal: Terminal) -> None:
+    supports_post_verdict_exposure = True
+
+    def __init__(self, terminal: Terminal, *, stdin=None, stdout=None) -> None:
         self._terminal = terminal
+        self._stdin = stdin
+        self._stdout = stdout
         self.eml_reader = EmlReader()
         self.folder_picker = EmlFolderPicker(terminal, self.eml_reader)
         self._presenter = ReportPresenter(terminal)
@@ -71,7 +67,7 @@ class IOManager:
         return choice
 
     def collect_input(self) -> dict:
-        """Collect the message, derive its inputs and ask only about interaction."""
+        """Collect the message and derive its inputs without follow-up questions."""
         return self.build_record_from_message(self.get_message())
 
     def build_record_from_message(
@@ -81,9 +77,9 @@ class IOManager:
 
         Manual, folder and upload collection all use this single action/record
         contract. A channel or sender supplied by the caller (an uploaded email)
-        takes precedence; otherwise they come from the text. The only user
-        question is the single interaction line, so a blank answer is saved as
-        an unconfirmed assessment without an exposure block.
+        takes precedence; otherwise they come from the text. Exposure starts
+        unconfirmed so the first saved report is a plain assessment; the
+        post-verdict checklist can replace it later.
         """
         derived = derive_inputs(message)
         inferred = channel is None
@@ -91,13 +87,6 @@ class IOManager:
         sender = derived["sender"] if sender is None else sender
         if inferred:
             self._terminal.write(f"Detected: {channel}")
-        interaction = self.collect_interaction()
-        if interaction is None:
-            clicked, downloaded, submitted_category = False, False, None
-        else:
-            clicked = interaction["clicked"]
-            downloaded = interaction["downloaded"]
-            submitted_category = interaction["submitted_category"]
         return {
             "channel": channel,
             "sender": sender,
@@ -106,10 +95,10 @@ class IOManager:
             "link": derived["link"],
             "has_file": derived["has_file"],
             "file_name": derived["file_name"],
-            "clicked": clicked,
-            "downloaded": downloaded,
-            "submitted_category": submitted_category,
-            "disclosure_answered": interaction is not None,
+            "clicked": False,
+            "downloaded": False,
+            "submitted_category": None,
+            "disclosure_answered": False,
         }
 
     def collect_input_from_upload(self, upload) -> dict:
@@ -197,22 +186,33 @@ class IOManager:
             "corrected_priority": corrected_priority,
         }
 
-    def collect_interaction(self) -> dict | None:
-        """Ask the one interaction question; blank means unconfirmed."""
-        answer = self._terminal.read(INTERACTION_PROMPT).strip().lower()
-        while answer not in INTERACTION_CHOICES:
-            answer = self._terminal.read(
-                "Invalid answer. Please enter 1, 2, 3, 4, or press Enter to skip: "
-            ).strip().lower()
-        interaction = INTERACTION_CHOICES[answer]
-        if interaction is None:
-            return None
-        clicked, downloaded, submitted_category = interaction
-        return {
-            "clicked": clicked,
-            "downloaded": downloaded,
-            "submitted_category": submitted_category,
-        }
+    def collect_exposure(self) -> dict | None:
+        """Offer the optional post-verdict checklist, or None when skipped.
+
+        A POSIX TTY gets the interactive checkbox screen. Pipes, CI and tests
+        get a numbered prompt through the terminal so line-based input still
+        works. Both paths map to the same stored exposure fields.
+        """
+        stdin = self._stdin if self._stdin is not None else sys.stdin
+        if stdin.isatty() and tty_supported():
+            stdout = self._stdout if self._stdout is not None else sys.stdout
+            selection = ExposureScreen(stdin, stdout).run()
+        else:
+            selection = self._read_numbered_exposure()
+        return build_exposure(selection)
+
+    def _read_numbered_exposure(self) -> tuple[str, ...] | None:
+        """Read comma-separated numbers until valid; blank means skip."""
+        self._terminal.write(NUMBERED_HEADING)
+        answer = self._terminal.read(NUMBERED_PROMPT)
+        while True:
+            try:
+                return parse_numbered_selection(answer)
+            except ValueError:
+                answer = self._terminal.read(
+                    "Invalid answer. Enter numbers like 1,3,4 + Enter, "
+                    "or Enter to skip: "
+                )
 
     def get_message(self):
         """Collect a multi-line message until END is entered on its own line."""

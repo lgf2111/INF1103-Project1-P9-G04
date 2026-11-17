@@ -57,7 +57,7 @@ def test_one_paste_with_a_url_and_phone_is_sms_without_input_prompts(tmp_path, m
         "1",
         "Call +65 9123 4567 or visit https://evil.example.test/login. ",
         "END",
-        "4",
+        "",
         "5",
     ]
     app, ai, data = build_app(tmp_path, terminal)
@@ -74,8 +74,7 @@ def test_one_paste_with_a_url_and_phone_is_sms_without_input_prompts(tmp_path, m
     assert record["sender"] == "+65 9123 4567"
     [saved] = data.load(strict=True)
     assert saved["channel"] == "sms"
-    assert saved["has_link"] is True
-    assert saved["link"] == "https://evil.example.test/login"
+    assert saved["result"]["score"] == 60
     terminal.write.assert_any_call("Detected: sms")
 
 
@@ -116,10 +115,10 @@ def test_upload_at_the_menu_prompt_reaches_the_browser_uploader(tmp_path, monkey
     terminal = Mock()
     terminal.read.side_effect = [
         "upload",
-        "4",
+        "",
         "5",
     ]
-    app, _, data = build_app(tmp_path, terminal)
+    app, ai, data = build_app(tmp_path, terminal)
     receive = Mock(return_value={
         "filename": "fictional.eml",
         "content": (
@@ -138,7 +137,7 @@ def test_upload_at_the_menu_prompt_reaches_the_browser_uploader(tmp_path, monkey
     receive.assert_called_once_with()
     [saved] = data.load(strict=True)
     assert saved["channel"] == "email"
-    assert saved["sender"] == "fictional@example.test"
+    assert ai.assess.call_args.args[0]["sender"] == "fictional@example.test"
 
 
 def test_feedback_at_the_menu_corrects_the_newest_report_without_adding_one(tmp_path, monkeypatch):
@@ -169,8 +168,8 @@ def test_feedback_at_the_menu_corrects_the_newest_report_without_adding_one(tmp_
     terminal.write.assert_any_call("Thank you. Your feedback was saved for review.")
 
 
-def test_blank_interaction_saves_the_report_without_an_exposure_block(tmp_path, monkeypatch):
-    """A skipped interaction answer is unconfirmed, not a confirmed no."""
+def test_skipping_the_post_verdict_checklist_keeps_the_plain_report(tmp_path, monkeypatch):
+    """A skipped checklist answer is unconfirmed, not a confirmed no."""
     monkeypatch.setattr(AppLogging, "setup", lambda: True)
     terminal = Mock()
     terminal.read.side_effect = [
@@ -189,15 +188,15 @@ def test_blank_interaction_saves_the_report_without_an_exposure_block(tmp_path, 
     assert saved["result"]["score"] == 60
 
 
-def test_interaction_two_records_a_password_and_scores_ninety(tmp_path, monkeypatch):
-    """The single interaction answer maps to the disclosure rule."""
+def test_post_verdict_password_selection_rescores_to_ninety(tmp_path, monkeypatch):
+    """The checklist answer maps to the disclosure rule after the verdict."""
     monkeypatch.setattr(AppLogging, "setup", lambda: True)
     terminal = Mock()
     terminal.read.side_effect = [
         "1",
         "A fictional message asks for a password.",
         "END",
-        "2",
+        "3",
         "5",
     ]
     app, _, data = build_app(tmp_path, terminal)
@@ -219,28 +218,30 @@ def test_interaction_two_records_a_password_and_scores_ninety(tmp_path, monkeypa
     "answer, expected",
     [
         ("1", {"clicked": True, "downloaded": False, "submitted_category": None}),
-        ("clicked", {"clicked": True, "downloaded": False, "submitted_category": None}),
-        ("2", {"clicked": False, "downloaded": False, "submitted_category": "password"}),
-        ("password", {"clicked": False, "downloaded": False, "submitted_category": "password"}),
-        ("3", {"clicked": False, "downloaded": True, "submitted_category": None}),
-        ("downloaded", {"clicked": False, "downloaded": True, "submitted_category": None}),
-        ("4", {"clicked": False, "downloaded": False, "submitted_category": None}),
-        ("no", {"clicked": False, "downloaded": False, "submitted_category": None}),
+        ("2", {"clicked": False, "downloaded": True, "submitted_category": None}),
+        ("3", {"clicked": False, "downloaded": False, "submitted_category": "password"}),
+        ("4", {"clicked": False, "downloaded": False, "submitted_category": "otp"}),
+        (
+            "1,3,4",
+            {"clicked": True, "downloaded": False, "submitted_category": "password"},
+        ),
     ],
 )
-def test_interaction_accepts_numbers_and_words(answer, expected):
-    """The one question accepts 1-4 and the words themselves."""
+def test_numbered_exposure_accepts_multiple_answers(answer, expected):
+    """The non-TTY prompt accepts any combination of 1-4."""
     terminal = Mock()
     terminal.read.return_value = answer
 
-    assert IOManager(terminal).collect_interaction() == expected
-    terminal.read.assert_called_once()
-    assert "Did you interact with it?" in terminal.read.call_args.args[0]
+    result = IOManager(terminal).collect_exposure()
+
+    assert {key: result[key] for key in expected} == expected
+    assert result["disclosure_answered"] is True
+    assert "1,3,4 + Enter, or Enter to skip" in terminal.read.call_args.args[0]
 
 
-def test_blank_interaction_is_unconfirmed():
-    """Blank ends the question without inventing an exposure answer."""
+def test_blank_numbered_exposure_is_unconfirmed():
+    """Blank ends the checklist without inventing an exposure answer."""
     terminal = Mock()
     terminal.read.return_value = ""
 
-    assert IOManager(terminal).collect_interaction() is None
+    assert IOManager(terminal).collect_exposure() is None

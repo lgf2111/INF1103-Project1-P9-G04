@@ -269,7 +269,7 @@ def main_record():
 
 
 @pytest.mark.parametrize("invented_contact", [False, True])
-@pytest.mark.parametrize("disclosure, expected_score", [("4", 60), ("otp", 90)])
+@pytest.mark.parametrize("disclosure, expected_score", [("", 60), ("4", 90)])
 def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
     cli,
     main_app_boundary,
@@ -315,7 +315,9 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
         assert "https://credential.example.test/login" in message
         assert "<p>" not in message and "Content-Type:" not in message
         assert records[0]["result"]["score"] == expected_score
-        cli.io_manager.display_result.assert_called_once()
+        assert cli.io_manager.display_result.call_count == (
+            2 if expected_score == 90 else 1
+        )
         displayed = cli.io_manager.display_result.call_args.args[0]
         assert displayed["assessment_id"] == records[0]["assessment_id"]
         assert {
@@ -378,7 +380,7 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
     # the picker's retry: the malformed file is rejected, then the good one is
     # decoded. The newest files are listed first, so encoded.eml is 1 and
     # malformed.eml is 2.
-    answers = iter([str(tmp_path), "2", "1", "4"])
+    answers = iter([str(tmp_path), "2", "1", ""])
     prompts = []
 
     def answer(prompt):
@@ -389,7 +391,6 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
     record = cli.io_manager.collect_input_from_folder()
     cli.app.check_message(record)
     assert any("email folder" in prompt.lower() for prompt in prompts)
-    assert prompts[-1].startswith("Did you interact with it?")
     assert not any(
         "channel" in prompt.lower() or "input method" in prompt.lower() for prompt in prompts
     )
@@ -404,6 +405,7 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
         assert len(records) == 1
         assert records[0]["message"] == "Subject: Fictional request\n\n" + body
         assert records[0]["result"]["score"] == 60
+        assert prompts[-1].startswith("Enter numbers like 1,3,4 + Enter")
         cli.io_manager.display_result.assert_called_once()
         displayed = cli.io_manager.display_result.call_args.args[0]
         assert displayed["assessment_id"] == records[0]["assessment_id"]

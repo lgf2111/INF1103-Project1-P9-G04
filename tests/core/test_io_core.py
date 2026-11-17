@@ -530,10 +530,7 @@ def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, mo
         [
             "Verify your account at https://example.test/verify.",
             "END",
-            "2",
             "1",
-            "2",
-            "2",
         ]
     )
     manager = IOManager(terminal)
@@ -548,24 +545,17 @@ def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, mo
         "file_name": None,
         "clicked": False,
         "downloaded": False,
-        "submitted_category": "password",
-        "disclosure_answered": True,
+        "submitted_category": None,
+        "disclosure_answered": False,
     }
     assert manager.collect_input() == {**expected, "channel": "chat", "sender": None}
     assert manager.collect_input_from_folder() == expected
     upload = {"filename": "message.EML", "content": raw}
     assert manager.collect_input_from_upload(upload) == expected
 
-    interaction = (
-        "Did you interact with it? [1] clicked [2] shared a password/OTP "
-        "[3] downloaded [4] no (Enter to skip): "
-    )
     assert terminal.prompts == [
         "Enter the suspicious message: ", "",
-        interaction,
         "Enter a number to pick a file, or 'c' to cancel: ",
-        interaction,
-        interaction,
     ]
     assert terminal.lines == [
         "Paste your message. Type END on its own line to finish.",

@@ -178,7 +178,7 @@ def test_custom_assessment_policy_enters_existing_save_workflow(plugin_file, ext
     )
     app, terminal, ai, logic, data, feedback = extension_app
     app._feedback_service = None
-    terminal.read.side_effect = ["4"]
+    terminal.read.side_effect = [""]
 
     app.check_message(command_text="/extension_probe Preserved assessment payload ")
 

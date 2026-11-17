@@ -3,6 +3,7 @@
 # input -> validated AI assessment -> logic -> save and display
 
 import os
+from uuid import uuid4
 
 from phishreport.ai import AIManager
 from phishreport.ai.errors import AIErrorTranslator
@@ -92,6 +93,8 @@ class PhishReportApp:
         routed through the shared command catalog.
         Stop assessment on handled AI/validation failures. Save the
         version-3 outcome locally, then display it even if persistence fails.
+        Offer the optional exposure checklist only after a successful save and
+        replace the same report when the user confirms an answer.
         """
         if command_text is None and record is None:
             try:
@@ -110,7 +113,7 @@ class PhishReportApp:
                 prepare_record=lambda request: self._io_manager.build_record_from_message(
                     request.text
                 ),
-                assess_record=self._assessment.assess,
+                assess_record=self._assessment.assess_with_findings,
                 session_status=lambda request: "CLI conversation active",
                 report_count=lambda: len(self._report_query.load()),
             ))
@@ -120,7 +123,8 @@ class PhishReportApp:
 
         try:
             if command_text is None:
-                result = self._assessment.assess(record)
+                snapshot = self._assessment.assess_with_findings(record)
+                result, findings = snapshot.result, snapshot.findings
             else:
                 try:
                     reply = router.route(request)
@@ -150,20 +154,25 @@ class PhishReportApp:
                     self._io_manager.show_message(reply.text)
                     return
                 outcome = request.session["check_outcome"]
-                record, result = outcome.record, outcome.result
+                record, result, findings = outcome.record, outcome.result, outcome.findings
 
         except AssessmentError as error:
             AppLogging.log_failure(logger, "Assessment failed")
             self._io_manager.show_message(self._error_translator.translate(error))
             return
         # Retain the original message and assessment with an identifier for feedback.
+        assessment_id = str(uuid4())
+        result = {**result, "assessment_id": assessment_id}
         report = self._build_report(record, result)
+        saved = True
         try:
             self._data_manager.save(report)
         except AssessmentError as error:
+            saved = False
             AppLogging.log_failure(logger, "Local report save failed")
             self._io_manager.show_message(self._error_translator.translate(error))
         except (OSError, ValueError):
+            saved = False
             AppLogging.log_failure(logger, "Local report save failed")
             self._io_manager.show_message(
                 "Could not save the local report; existing history preserved."
@@ -171,6 +180,49 @@ class PhishReportApp:
 
         # A storage failure does not discard an assessment already completed successfully.
         self._io_manager.display_result(result)
+
+        if saved and findings is not None and self._supports_exposure_follow_up():
+            self._collect_exposure_update(record, findings, assessment_id)
+
+    def _supports_exposure_follow_up(self) -> bool:
+        """Whether this transport offers the optional post-verdict checklist."""
+        return getattr(
+            self._io_manager, "supports_post_verdict_exposure", False,
+        ) is True
+
+    def _collect_exposure_update(self, record: dict, findings: dict, assessment_id: str):
+        """Offer the checklist and replace the saved report with a re-score.
+
+        The retained findings keep the AI out of this path. Skipping, Escape or
+        empty confirmation leaves the already saved plain assessment untouched.
+        """
+        try:
+            exposure = self._io_manager.collect_exposure()
+        except (EOFError, OSError):
+            return
+        if exposure is None:
+            return
+
+        updated_record = {**record, **exposure}
+        try:
+            updated = self._assessment.rescore(updated_record, findings)
+            report = self._assessment.build_exposure_report(
+                updated_record, updated, exposure, assessment_id=assessment_id,
+            )
+            self._data_manager.save(report)
+        except AssessmentError as error:
+            AppLogging.log_failure(logger, "Local report update failed")
+            self._io_manager.show_message(self._error_translator.translate(error))
+            return
+        except (OSError, ValueError):
+            AppLogging.log_failure(logger, "Local report update failed")
+            self._io_manager.show_message(
+                "Could not update the local report; existing history preserved."
+            )
+            return
+
+        self._io_manager.display_result({**updated, "assessment_id": assessment_id})
+        self._io_manager.show_message("Saved report updated.")
 
     def _build_report(self, record: dict, result: dict) -> dict:
         """Save answered exposure; otherwise use the plain v3 record."""

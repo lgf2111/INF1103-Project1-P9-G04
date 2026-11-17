@@ -24,8 +24,9 @@ def test_cli_saves_exposure_answers_and_summary_counts_them(tmp_path, monkeypatc
     app = PhishReportApp(
         IOManager(ConsoleTerminal()), ai_manager, LogicManager(), data_manager
     )
-    # Two manual checks: one clicked link, one shared password. The single
-    # interaction question describes one action at a time.
+    # Two manual checks, each followed by its post-verdict checklist answer:
+    # one clicked link, one shared password. The final two blanks keep the
+    # summary filter unfiltered.
     answers = iter(
         [
             "Visit https://example.test/login now.",
@@ -33,7 +34,7 @@ def test_cli_saves_exposure_answers_and_summary_counts_them(tmp_path, monkeypatc
             "1",
             "A fictional message asks for a password.",
             "END",
-            "2",
+            "3",
             "",
             "",
         ]

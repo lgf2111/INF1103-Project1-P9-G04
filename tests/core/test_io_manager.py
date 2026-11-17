@@ -135,11 +135,7 @@ def test_io_manager_collect_input_preserves_five_line_message(monkeypatch):
         "Regards, Support"
     ]
 
-    answers = iter([
-        *body,
-        "END",
-        "4"
-    ])
+    answers = iter([*body, "END"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
@@ -151,9 +147,7 @@ def test_io_manager_collect_input_preserves_five_line_message(monkeypatch):
 
 
 def test_io_manager_derives_the_first_link_and_attachment():
-    terminal = Mock()
-    terminal.read.return_value = "4"
-    manager = IOManager(terminal)
+    manager = IOManager(Mock())
 
     record = manager.build_record_from_message(
         "See https://example.test/login, then open invoice.pdf. Attached for review."
@@ -165,18 +159,19 @@ def test_io_manager_derives_the_first_link_and_attachment():
     assert record["file_name"] == "invoice.pdf"
 
 
-def test_io_manager_interaction_question_reprompts_invalid_input(monkeypatch):
-    answers = iter(["hello", "credit card", "2"])
+def test_io_manager_exposure_question_reprompts_invalid_input():
+    terminal = Mock()
+    terminal.read.side_effect = ["hello", "credit card", "1,3"]
 
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
-
-    result = io_manager.collect_interaction()
+    result = IOManager(terminal).collect_exposure()
 
     assert result == {
-        "clicked": False,
+        "clicked": True,
         "downloaded": False,
         "submitted_category": "password",
+        "disclosure_answered": True,
     }
+    assert terminal.read.call_count == 3
 
 
 def test_io_manager_collect_input_returns_complete_record(monkeypatch):
@@ -184,7 +179,6 @@ def test_io_manager_collect_input_returns_complete_record(monkeypatch):
         [
             "Download Update.exe immediately. Write to update@micr0soft.com.",
             "END",
-            "3",
         ]
     )
 
@@ -201,9 +195,9 @@ def test_io_manager_collect_input_returns_complete_record(monkeypatch):
         "has_file": True,
         "file_name": "Update.exe",
         "clicked": False,
-        "downloaded": True,
+        "downloaded": False,
         "submitted_category": None,
-        "disclosure_answered": True,
+        "disclosure_answered": False,
     }
 
 
@@ -274,16 +268,6 @@ def test_io_manager_collect_input_from_folder_derives_follow_up_answers(monkeypa
         encoding="utf-8",
     )
 
-    answers = iter(["2"])  # Shared a password/OTP.
-
-    prompts = []
-
-    def fake_input(prompt):
-        prompts.append(prompt)
-        return next(answers)
-
-    monkeypatch.setattr("builtins.input", fake_input)
-
     picker = io_manager.folder_picker
     monkeypatch.setattr(picker, "get_eml_folder", lambda: str(tmp_path))
     monkeypatch.setattr(picker, "choose_eml_file", lambda folder: email_file)
@@ -302,14 +286,9 @@ def test_io_manager_collect_input_from_folder_derives_follow_up_answers(monkeypa
         "file_name": "Update.exe",
         "clicked": False,
         "downloaded": False,
-        "submitted_category": "password",
-        "disclosure_answered": True,
+        "submitted_category": None,
+        "disclosure_answered": False,
     }
-
-    assert prompts == [
-        "Did you interact with it? [1] clicked [2] shared a password/OTP "
-        "[3] downloaded [4] no (Enter to skip): "
-    ]
 
 
 def test_io_manager_read_eml_details_rejects_deeply_nested_mime(tmp_path):
@@ -746,13 +725,6 @@ def test_io_manager_collect_input_from_folder_without_link_or_file(monkeypatch, 
         b"This is a test message.\r\n"
     )
 
-    answers = iter(["4"])  # Nothing happened.
-
-    monkeypatch.setattr(
-        "builtins.input",
-        lambda _: next(answers),
-    )
-
     picker = io_manager.folder_picker
     monkeypatch.setattr(picker, "get_eml_folder", lambda: str(tmp_path))
     monkeypatch.setattr(picker, "choose_eml_file", lambda folder: email_file)
@@ -769,7 +741,7 @@ def test_io_manager_collect_input_from_folder_without_link_or_file(monkeypatch, 
         "clicked": False,
         "downloaded": False,
         "submitted_category": None,
-        "disclosure_answered": True,
+        "disclosure_answered": False,
     }
 
 
@@ -1079,14 +1051,13 @@ def test_html_email_browser_and_folder_email_imports_produce_identical_records(
         "get_eml_from_folder",
         lambda: io_manager.eml_reader.read_path(path),
     )
-    answers = iter(["otp"] * 2)
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
     folder = io_manager.collect_input_from_folder()
     browser = io_manager.collect_input_from_upload({"filename": "fictional.eml", "content": raw})
     assert folder == browser
     assert browser["has_link"] and not browser["clicked"]
     assert browser["link"] == "https://credential.example.test"
-    assert browser["submitted_category"] == "password"
+    assert browser["submitted_category"] is None
+    assert browser["disclosure_answered"] is False
     assert browser["has_file"] is False and browser["file_name"] is None
     assert "fictional.eml" not in browser["message"]
 
