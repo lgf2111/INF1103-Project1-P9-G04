@@ -219,7 +219,8 @@ def test_env_loading_actual_cli_reaches_menu_after_configuration_failure(
     assert run.stdout.count("Warning: .env could not be loaded") == 1
     assert ("Bye!" if answers else "Interrupted. Goodbye!") in run.stdout
     assert "Traceback" not in run.stderr
-    logs = (env_loading_env_folder.parent / "logs" / "phishreport.log").read_text(encoding="utf-8")
+    log_dir = env_loading_env_folder.parent / "logs"
+    logs = next(log_dir.glob("phishreport-*.log")).read_text(encoding="utf-8")
     assert "PRIVATE_CONFIG_SENTINEL" not in run.stdout + run.stderr + logs
 
 
