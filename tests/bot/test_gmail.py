@@ -18,7 +18,7 @@ from phishreport.bot.gmail import (
     MailboxError,
 )
 from phishreport.bot.gmail_handlers import GmailLinkHandlers
-from phishreport.bot.monitor import CLEAN, EmailMonitor
+from phishreport.bot.monitor import EmailMonitor, Handled, Outcome
 from phishreport.data import DataManager, JsonReportStorage
 from phishreport.errors import AIUnavailable
 from phishreport.feedback import FeedbackService, FeedbackStore
@@ -264,7 +264,7 @@ def test_inflight_check_cannot_restore_unlinked_or_replace_relinked_account(
         await handlers.unlink(update(), SimpleNamespace(args=[]))
         if relink:
             await handlers.link(update(), SimpleNamespace(args=["a@gmail.com", "x"]))
-        return CLEAN
+        return Handled(Outcome.SENT)
 
     monitor._handle = finish_after_unlink
     reply = asyncio.run(monitor.check_unread(1) if manual else monitor.poll_once())
@@ -350,7 +350,8 @@ def test_checkmail_assesses_unread_mail_and_summarises(tmp_path):
 
     assert reply == "Checked 2 unread email(s): 2 flagged, 0 looked fine."
     assert bot.send_message.await_count == 2
-    assert store.get(1).last_uid == 11
+    assert store.get(1).last_uid == 5  # Only the poller moves the cursor.
+    assert store.get(1).handled == [9, 11]
 
 
 def test_checkmail_with_nothing_unread_or_nothing_linked(tmp_path):
@@ -371,9 +372,9 @@ def test_checkmail_command_replies_with_the_summary(tmp_path):
     assert up.effective_message.reply_text.call_args.args[0] == "No unread emails to check."
 
 
-def test_one_unexpected_error_skips_that_email_not_the_rest(tmp_path):
+def test_one_unexpected_error_retries_that_email_and_keeps_the_cursor(tmp_path):
     monitor, store, bot, _ = monitor_for(tmp_path, FakeMailbox([(9, RAW), (10, RAW)]))
-    calls = iter([KeyError("boom"), PHISHING])
+    calls = iter([KeyError("boom"), PHISHING, PHISHING])
 
     def assess(record):
         outcome = next(calls)
@@ -385,7 +386,11 @@ def test_one_unexpected_error_skips_that_email_not_the_rest(tmp_path):
 
     asyncio.run(monitor.poll_once())
 
-    assert bot.send_message.await_count == 1
+    assert bot.send_message.await_count == 0 and store.get(1).last_uid == 5
+
+    asyncio.run(monitor.poll_once())
+
+    assert bot.send_message.await_count == 2
     assert store.get(1).last_uid == 10
 
 
@@ -444,10 +449,11 @@ def test_account_storage_failures_get_safe_replies(operation, error_type):
 def test_progress_save_failure_retains_in_memory_uid(tmp_path, manual):
     monitor, store, _, _ = monitor_for(tmp_path, FakeMailbox([(9, RAW)]))
     account = store.get(1)
-    monitor._store = Mock(
-        wraps=store, advance_cursor=Mock(side_effect=OSError("PRIVATE progress")),
-    )
+    failing = "mark_handled" if manual else "advance_cursor"
+    monitor._store = Mock(wraps=store, **{f"{failing}.side_effect": OSError("PRIVATE progress")})
     asyncio.run(monitor.check_unread(1) if manual else monitor._poll_account(account))
-    monitor._store.advance_cursor.assert_called_once_with(account, 9)
+    getattr(monitor._store, failing).assert_called_once_with(
+        account, [9] if manual else 9
+    )
     assert account.last_uid == 5
     assert store.get(1).last_uid == 5

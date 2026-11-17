@@ -26,6 +26,14 @@ class MailboxError(Exception):
         self.retryable = retryable
 
 
+class FetchRejected(MailboxError):
+    """Gmail refused to return one message, so its content is unknown, not empty."""
+
+    def __init__(self, uid: int) -> None:
+        super().__init__("Gmail did not return a message.")
+        self.uid = uid
+
+
 @dataclass
 class LinkedAccount:
     """One Telegram chat linked to one Gmail address."""
@@ -35,6 +43,8 @@ class LinkedAccount:
     password: str
     last_uid: int  # Only mail with a higher IMAP UID is checked.
     link_id: str | None = field(default=None, compare=False, repr=False)
+    # UIDs above last_uid that /checkmail already handled; the poller skips them.
+    handled: list[int] = field(default_factory=list, compare=False, repr=False)
 
 
 class AccountStore:
@@ -114,8 +124,33 @@ class AccountStore:
                 return False
             if uid > current["last_uid"]:
                 current["last_uid"] = uid
+                current["handled"] = [h for h in current.get("handled", []) if h > uid]
                 self._write(data)
             return True
+
+    def mark_handled(self, account: LinkedAccount, uids: list[int]) -> bool:
+        """Record UIDs handled out of order without moving the cursor.
+
+        Return False for a stale snapshot. UIDs at or below the cursor are ignored.
+        """
+        with self._lock:
+            data = self._read()
+            current = data.get(str(account.chat_id))
+            if not self._matches_link(current, account):
+                return False
+            merged = sorted(
+                {*current.get("handled", []), *(u for u in uids if u > current["last_uid"])}
+            )
+            if merged != current.get("handled", []):
+                current["handled"] = merged
+                self._write(data)
+            return True
+
+    def is_handled(self, account: LinkedAccount, uid: int) -> bool:
+        """Return whether /checkmail already handled this UID for the active link."""
+        with self._lock:
+            current = self._read().get(str(account.chat_id))
+            return self._matches_link(current, account) and uid in current.get("handled", [])
 
     def remove(self, chat_id: int, *, expected: LinkedAccount | None = None) -> bool:
         """Remove a link, optionally requiring the caller's link to still be active."""
@@ -185,21 +220,17 @@ class GmailMailbox:
         """Return up to `limit` (uid, raw message) pairs newer than last_uid.
 
         Read state is ignored: opening or moving a message in Gmail marks it read, and
-        the stored UID already prevents checking the same message twice.
+        the stored UID already prevents checking the same message twice. Raises
+        FetchRejected if the oldest message cannot be fetched.
         """
         connection = self._connect()
         try:
             status, data = connection.uid("SEARCH", "UID", f"{last_uid + 1}:*")
             if status != "OK":
-                return []
+                raise MailboxError("Could not search the Gmail inbox.")
             # A "n:*" range always includes the newest message, even if it is older.
             uids = sorted(uid for uid in self._uids(data) if uid > last_uid)[:limit]
-            messages = []
-            for uid in uids:
-                status, parts = connection.uid("FETCH", str(uid), "(BODY.PEEK[])")
-                raw = next((p[1] for p in parts if isinstance(p, tuple) and status == "OK"), b"")
-                messages.append((uid, raw))
-            return messages
+            return self._fetch(connection, uids)
         except (OSError, imaplib.IMAP4.error) as error:
             raise MailboxError("Could not read the Gmail inbox.") from error
         finally:
@@ -210,8 +241,9 @@ class GmailMailbox:
         connection = self._connect()
         try:
             status, data = connection.uid("SEARCH", "UNSEEN")
-            uids = sorted(self._uids(data))[-limit:] if status == "OK" else []
-            return self._fetch(connection, uids)
+            if status != "OK":
+                raise MailboxError("Could not search the Gmail inbox.")
+            return self._fetch(connection, sorted(self._uids(data))[-limit:])
         except (OSError, imaplib.IMAP4.error) as error:
             raise MailboxError("Could not read the Gmail inbox.") from error
         finally:
@@ -219,10 +251,19 @@ class GmailMailbox:
 
     @staticmethod
     def _fetch(connection, uids: list[int]) -> list[tuple[int, bytes]]:
+        """Fetch messages in order. A refused fetch ends the batch, never becomes b"".
+
+        Messages before the refused one are still returned so they are not delayed;
+        the refused UID is the first one of the next batch and raises FetchRejected.
+        """
         messages = []
         for uid in uids:
             status, parts = connection.uid("FETCH", str(uid), "(BODY.PEEK[])")
-            raw = next((p[1] for p in parts if isinstance(p, tuple) and status == "OK"), b"")
+            raw = next((p[1] for p in parts or [] if isinstance(p, tuple) and p[1]), None)
+            if status != "OK" or raw is None:
+                if messages:
+                    break
+                raise FetchRejected(uid)
             messages.append((uid, raw))
         return messages
 
