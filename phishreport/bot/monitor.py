@@ -26,6 +26,7 @@ ALERT_PRIORITIES = {"MEDIUM", "HIGH"}
 POLL_SECONDS = 60
 MANUAL_LIMIT = 20  # Newest unread emails checked by /checkmail.
 FLAGGED, CLEAN, SKIPPED, RETRY = "flagged", "clean", "skipped", "retry"
+LINK_CHANGED = "link_changed"
 
 
 class EmailMonitor:
@@ -86,9 +87,13 @@ class EmailMonitor:
                       else "Gmail rejected the saved login.")
             if not error.retryable:
                 try:
-                    await asyncio.to_thread(self._store.remove, account.chat_id)
+                    removed = await asyncio.to_thread(
+                        self._store.remove, account.chat_id, expected=account,
+                    )
                 except (AssessmentError, OSError, ValueError):
                     self._say("Could not remove the Gmail link. Will retry.")
+                    return
+                if not removed:
                     return
                 await self._send(
                     account.chat_id,
@@ -99,14 +104,12 @@ class EmailMonitor:
         if emails:
             self._say(f"{len(emails)} new email(s) in {account.address}; checking.")
         for uid, raw in emails:
-            if await self._handle(account, raw) == RETRY:
-                return  # Temporary AI failure: keep this email and retry next cycle.
-            previous_uid = account.last_uid
-            account.last_uid = uid
+            if await self._handle(account, raw) in (RETRY, LINK_CHANGED):
+                return
             try:
-                await asyncio.to_thread(self._store.save, account)
+                if not await asyncio.to_thread(self._store.advance_cursor, account, uid):
+                    return
             except (AssessmentError, OSError, ValueError):
-                account.last_uid = previous_uid
                 self._say("Could not save Gmail progress. Will retry.")
                 return
 
@@ -130,16 +133,18 @@ class EmailMonitor:
         if not emails:
             return "No unread emails to check."
         counts = {FLAGGED: 0, CLEAN: 0, SKIPPED: 0, RETRY: 0}
-        previous_uid = account.last_uid
+        last_uid = account.last_uid
         for uid, raw in emails:
             outcome = await self._handle(account, raw)
+            if outcome == LINK_CHANGED:
+                return "Gmail link changed during the check. Run /checkmail again."
             counts[outcome] += 1
-            if outcome != RETRY and uid > account.last_uid:
-                account.last_uid = uid  # Do not alert on it again in the background.
+            if outcome != RETRY and uid > last_uid:
+                last_uid = uid  # Do not alert on it again in the background.
         try:
-            await asyncio.to_thread(self._store.save, account)
+            if not await asyncio.to_thread(self._store.advance_cursor, account, last_uid):
+                return "Gmail link changed during the check. Run /checkmail again."
         except (AssessmentError, OSError, ValueError):
-            account.last_uid = previous_uid
             return "Could not save Gmail progress. Please try again."
         reply = (
             f"Checked {len(emails)} unread email(s): {counts[FLAGGED]} flagged, "
@@ -152,7 +157,7 @@ class EmailMonitor:
         return reply + "."
 
     async def _handle(self, account: LinkedAccount, raw: bytes) -> str:
-        """Assess one email; return FLAGGED, CLEAN, SKIPPED or RETRY (check again later)."""
+        """Assess one email and return its result, retry, or link-changed outcome."""
         try:
             return await self._assess_email(account, raw)
         except Exception as error:  # One bad email must not block the ones after it.
@@ -181,6 +186,12 @@ class EmailMonitor:
         except AssessmentError as error:
             AppLogging.log_failure(logger, "Email assessment failed after AI retries")
             self._say(f"AI check failed, will retry: {self._errors.translate(error)}")
+            return RETRY
+        try:
+            if not await asyncio.to_thread(self._store.is_current, account):
+                return LINK_CHANGED
+        except (AssessmentError, OSError, ValueError):
+            AppLogging.log_failure(logger, "Could not verify the Gmail link is still active")
             return RETRY
         saved = False
         try:

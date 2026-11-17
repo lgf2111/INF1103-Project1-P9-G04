@@ -2,6 +2,7 @@
 
 import asyncio
 import os
+import ssl
 import stat
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
@@ -9,9 +10,15 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from phishreport.assessment import AssessmentService
-from phishreport.bot.gmail import AccountStore, EmailSource, LinkedAccount, MailboxError
+from phishreport.bot.gmail import (
+    AccountStore,
+    EmailSource,
+    GmailMailbox,
+    LinkedAccount,
+    MailboxError,
+)
 from phishreport.bot.gmail_handlers import GmailLinkHandlers
-from phishreport.bot.monitor import EmailMonitor
+from phishreport.bot.monitor import CLEAN, EmailMonitor
 from phishreport.data import DataManager, JsonReportStorage
 from phishreport.errors import AIUnavailable
 from phishreport.feedback import FeedbackService, FeedbackStore
@@ -58,6 +65,46 @@ def test_store_keeps_the_password_private_and_round_trips(tmp_path):
     assert store.get(1) == LinkedAccount(1, "a@gmail.com", "secret", 5)
     assert stat.S_IMODE(os.stat(tmp_path / "gmail.json").st_mode) == 0o600
     assert store.remove(1) is True and store.remove(1) is False and store.all() == []
+
+
+def test_gmail_connection_verifies_certificates_and_hostname(monkeypatch):
+    connection = Mock()
+    transport = Mock(return_value=connection)
+    monkeypatch.setattr("phishreport.bot.gmail.imaplib.IMAP4_SSL", transport)
+
+    assert GmailMailbox("example@example.test", "password")._connect() is connection
+
+    context = transport.call_args.kwargs["ssl_context"]
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname
+    connection.login.assert_called_once_with("example@example.test", "password")
+    connection.select.assert_called_once_with("INBOX", readonly=True)
+
+
+def test_certificate_rejection_is_retryable(monkeypatch):
+    rejected = ssl.SSLCertVerificationError("simulated untrusted certificate")
+    transport = Mock(side_effect=rejected)
+    monkeypatch.setattr("phishreport.bot.gmail.imaplib.IMAP4_SSL", transport)
+
+    with pytest.raises(MailboxError) as detected:
+        GmailMailbox("example@example.test", "password").latest_uid()
+
+    assert detected.value.retryable
+    assert detected.value.__cause__ is rejected
+
+
+def test_legacy_link_cursor_updates_are_monotonic(tmp_path):
+    path = tmp_path / "gmail.json"
+    path.write_text(
+        '{"1": {"chat_id": 1, "address": "a@gmail.com", "password": "x", "last_uid": 5}}',
+        encoding="utf-8",
+    )
+    store = AccountStore(path)
+    legacy = store.get(1)
+
+    assert store.advance_cursor(legacy, 10)
+    assert store.advance_cursor(legacy, 8)
+    assert store.get(1).last_uid == 10
 
 
 def test_link_verifies_login_deletes_the_message_and_saves_from_now(tmp_path):
@@ -204,6 +251,65 @@ def test_a_network_failure_keeps_the_account_and_retries(tmp_path):
     bot.send_message.assert_not_awaited()
 
 
+@pytest.mark.parametrize("manual", [False, True])
+@pytest.mark.parametrize("relink", [False, True])
+def test_inflight_check_cannot_restore_unlinked_or_replace_relinked_account(
+    tmp_path, manual, relink,
+):
+    monitor, store, _, _ = monitor_for(tmp_path, FakeMailbox([(9, RAW)]))
+    handlers = GmailLinkHandlers(store, lambda _: True, lambda *_: FakeMailbox(newest=5))
+    original = store.get(1)
+
+    async def finish_after_unlink(_account, _raw):
+        await handlers.unlink(update(), SimpleNamespace(args=[]))
+        if relink:
+            await handlers.link(update(), SimpleNamespace(args=["a@gmail.com", "x"]))
+        return CLEAN
+
+    monitor._handle = finish_after_unlink
+    reply = asyncio.run(monitor.check_unread(1) if manual else monitor.poll_once())
+
+    if manual:
+        assert "Gmail link changed" in reply
+    if relink:
+        replacement = store.get(1)
+        assert replacement.link_id != original.link_id
+        assert replacement.last_uid == 5
+    else:
+        assert store.get(1) is None
+
+
+def test_unlink_during_ai_check_discards_the_old_result(tmp_path):
+    monitor, store, bot, data = monitor_for(tmp_path, FakeMailbox([(9, RAW)]))
+    assess = monitor._assessment.assess
+
+    def finish_after_unlink(record):
+        assert store.remove(1)
+        return assess(record)
+
+    monitor._assessment.assess = finish_after_unlink
+    asyncio.run(monitor.poll_once())
+
+    assert store.get(1) is None
+    data.save.assert_not_called()
+    bot.send_message.assert_not_awaited()
+
+
+def test_login_failure_from_old_poll_does_not_remove_replacement(tmp_path):
+    mailbox = FakeMailbox()
+    monitor, store, bot, _ = monitor_for(tmp_path, mailbox)
+
+    def reject_after_relink(_last_uid):
+        store.save(LinkedAccount(1, "a@gmail.com", "x", 20))
+        raise MailboxError("old login rejected", False)
+
+    mailbox.new_since = reject_after_relink
+    asyncio.run(monitor.poll_once())
+
+    assert store.get(1).last_uid == 20
+    bot.send_message.assert_not_awaited()
+
+
 def test_alert_is_html_escaped_and_clipped():
     from phishreport.bot.messages import PhishingAlertFormatter
 
@@ -338,8 +444,10 @@ def test_account_storage_failures_get_safe_replies(operation, error_type):
 def test_progress_save_failure_retains_in_memory_uid(tmp_path, manual):
     monitor, store, _, _ = monitor_for(tmp_path, FakeMailbox([(9, RAW)]))
     account = store.get(1)
-    monitor._store = Mock(get=Mock(return_value=account),
-                          save=Mock(side_effect=OSError("PRIVATE progress")))
+    monitor._store = Mock(
+        wraps=store, advance_cursor=Mock(side_effect=OSError("PRIVATE progress")),
+    )
     asyncio.run(monitor.check_unread(1) if manual else monitor._poll_account(account))
+    monitor._store.advance_cursor.assert_called_once_with(account, 9)
     assert account.last_uid == 5
     assert store.get(1).last_uid == 5
