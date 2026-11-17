@@ -406,6 +406,8 @@ to select JSON or its SQLite sibling, as described under
 The `all` target runs the interactive CLI on the main thread and the bot on a
 daemon thread in the same container. Both adapters share one storage backend and
 one report manager, so a CLI save and a bot save cannot overwrite each other.
+The bot's startup guide is printed before the CLI banner, so the menu never
+appears above the guide.
 The combined launcher defaults to SQLite (`PHISHREPORT_STORAGE=sqlite`) because
 its write transactions are safer for two threads; set `PHISHREPORT_STORAGE=json`
 in `.env` only if you deliberately want the older JSON backend.

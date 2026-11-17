@@ -36,6 +36,15 @@ from phishreport.logic import LogicManager
 
 logger = AppLogging.get_logger(__name__)
 
+# The bot guide ends with a stop line written for the bot-only launcher.
+BOT_STOP_LINE = "Press Ctrl+C to stop the bot."
+ALL_STOP_LINE = "Bot is running. Choose a CLI option below, or press Ctrl+C to stop both."
+
+
+def all_startup_guide(username: str) -> str:
+    """Return the startup guide with the combined-mode final line."""
+    return startup_guide(username).replace(BOT_STOP_LINE, ALL_STOP_LINE)
+
 
 def _write_line(stream, text: str) -> None:
     """Write and flush one complete line without owning terminal input."""
@@ -73,9 +82,14 @@ class LockedDataManager(DataManager):
 class BotThread(threading.Thread):
     """Run a bot worker on a daemon thread and surface any failure."""
 
-    def __init__(self, worker: Callable[[threading.Event], None]) -> None:
+    def __init__(
+        self,
+        worker: Callable[[threading.Event], None],
+        ready: threading.Event | None = None,
+    ) -> None:
         super().__init__(daemon=True, name="phishreport-bot")
         self._worker = worker
+        self._ready = ready
         self._stop_event = threading.Event()
         self.failure: BaseException | None = None
 
@@ -89,6 +103,9 @@ class BotThread(threading.Thread):
                 sys.stderr,
                 "Telegram bot stopped unexpectedly; the CLI is still running.",
             )
+            # Release a main thread that is waiting for the bot's guide.
+            if self._ready is not None:
+                self._ready.set()
 
     def stop(self, timeout: float = 10.0) -> None:
         """Ask the bot loop to finish, then wait for its thread."""
@@ -105,17 +122,32 @@ class BothApp:
         bot_worker: Callable[[threading.Event], None],
         cli_loop: Callable[[], None],
         *,
+        ready: threading.Event | None = None,
+        ready_timeout: float = 15.0,
         stop_timeout: float = 10.0,
     ) -> None:
         self._bot_worker = bot_worker
         self._cli_loop = cli_loop
+        self._ready = ready
+        self._ready_timeout = ready_timeout
         self._stop_timeout = stop_timeout
 
     def run(self) -> int:
-        """Start both adapters, then stop the bot when the CLI loop ends."""
-        bot = BotThread(self._bot_worker)
+        """Start both adapters, then stop the bot when the CLI loop ends.
+
+        The CLI menu waits for the bot's startup guide so the screen reads in
+        order. If the bot never reports readiness, one warning line is printed
+        and the CLI starts anyway.
+        """
+        _write_line(sys.stdout, "Starting the CLI and the Telegram bot in one process.")
+        bot = BotThread(self._bot_worker, self._ready)
         bot.start()
         try:
+            if self._ready is not None and not self._ready.wait(self._ready_timeout):
+                _write_line(
+                    sys.stderr,
+                    "Warning: the bot did not finish starting; continuing with the CLI.",
+                )
             self._cli_loop()
         except (KeyboardInterrupt, EOFError):
             pass
@@ -157,8 +189,15 @@ def build_bot_application(
     data_manager: DataManager,
     token: str,
     allowed_chat_id: int | None = None,
+    *,
+    ready: threading.Event | None = None,
+    guide: Callable[[str], str] = startup_guide,
 ) -> Application:
-    """Build the polling application around the shared report manager."""
+    """Build the polling application around the shared report manager.
+
+    When a readiness event is supplied, it is set at the end of startup, after
+    the guide has been written and flushed and before polling begins.
+    """
     assessment = AssessmentService(AIManager(), LogicManager())
     feedback_service = FeedbackService(
         FeedbackStore(os.environ.get("PHISHREPORT_FEEDBACK_PATH", "feedback.json"))
@@ -204,7 +243,10 @@ def build_bot_application(
         )
         application.bot_data["monitor"] = monitor
         application.bot_data["monitor_task"] = asyncio.create_task(monitor.run())
-        _write_line(sys.stdout, startup_guide(application.bot.username))
+        _write_line(sys.stdout, guide(application.bot.username))
+        if ready is not None:
+            # The guide is on screen, so the main thread may print the CLI menu.
+            ready.set()
 
     async def stop_monitor(application: Application) -> None:
         task = application.bot_data.get("monitor_task")
@@ -316,13 +358,20 @@ def main() -> int:
         return 1
 
     data_manager = build_shared_manager()
-    application = build_bot_application(data_manager, token, allowed_chat_id)
+    ready = threading.Event()
+    application = build_bot_application(
+        data_manager,
+        token,
+        allowed_chat_id,
+        ready=ready,
+        guide=all_startup_guide,
+    )
     cli_app = build_cli_app(data_manager)
 
     def bot_worker(stop_event: threading.Event) -> None:
         _bot_worker(application, stop_event)
 
-    return BothApp(bot_worker, cli_app.run).run()
+    return BothApp(bot_worker, cli_app.run, ready=ready).run()
 
 
 if __name__ == "__main__":
