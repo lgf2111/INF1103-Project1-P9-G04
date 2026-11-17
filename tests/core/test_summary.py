@@ -420,13 +420,16 @@ def test_summarize_reports_filters_saved_history_before_counting():
     assert "Reports: 1" in terminal.lines
 
 
-def test_summarize_reports_with_no_history_reports_zero():
-    terminal = ScriptedTerminal(["", ""])
+def test_summarize_reports_distinguishes_no_history_from_no_matches():
+    empty = ScriptedTerminal()
+    _app(empty, MemoryStorage()).summarize_reports()
+    assert empty.lines == ["No saved reports yet."]
+    assert empty.prompts == []
 
-    _app(terminal, MemoryStorage()).summarize_reports()
-
-    assert "Reports: 0" in terminal.lines
-    assert "No saved reports match." in terminal.lines
+    no_matches = ScriptedTerminal(["high", "chat"])
+    _app(no_matches, MemoryStorage(RECORDS)).summarize_reports()
+    assert "Reports: 0" in no_matches.lines
+    assert "No saved reports match." in no_matches.lines
 
 
 def test_summarize_reports_stops_cleanly_when_history_is_unreadable():

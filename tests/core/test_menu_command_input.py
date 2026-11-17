@@ -17,10 +17,10 @@ def test_menu_returns_slash_input_untouched(text):
 
     assert IOManager(terminal).main_menu() == text
 
-    terminal.read.assert_called_once_with("Choose 1-6: ")
+    terminal.read.assert_called_once_with("Choose 1-7: ")
 
 
-@pytest.mark.parametrize("choice", ["1", "2", "3", "4", "5", "6"])
+@pytest.mark.parametrize("choice", ["1", "2", "3", "4", "5", "6", "7"])
 def test_menu_still_normalizes_numeric_choices(choice):
     terminal = Mock()
     terminal.read.return_value = f" \t{choice}  "
@@ -31,15 +31,15 @@ def test_menu_still_normalizes_numeric_choices(choice):
 @pytest.mark.parametrize("accepted", ["  /check Mixed CASE  ", " 4 "])
 def test_menu_reprompts_invalid_non_commands_before_accepting_input(accepted):
     terminal = Mock()
-    terminal.read.side_effect = ["", "7", "ordinary text", accepted]
+    terminal.read.side_effect = ["", "8", "ordinary text", accepted]
 
     assert IOManager(terminal).main_menu() == (
         accepted if accepted.lstrip().startswith("/") else "4"
     )
 
     assert terminal.read.call_args_list == [
-        call("Choose 1-6: "),
-        *[call("Invalid choice. Please choose 1-6: ")] * 3,
+        call("Choose 1-7: "),
+        *[call("Invalid choice. Please choose 1-7: ")] * 3,
     ]
 
 

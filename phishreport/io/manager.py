@@ -28,15 +28,16 @@ class IOManager:
         self._terminal.write("4. View saved reports")
         self._terminal.write("5. Summarize saved reports")
         self._terminal.write("6. Quit")
+        self._terminal.write("7. Filter and export saved reports")
 
-        prompt = "Choose 1-6: "
+        prompt = "Choose 1-7: "
         while True:
             choice = self._terminal.read(prompt)
             if choice.lstrip().startswith("/"):
                 return choice
-            if choice.strip() in ("1", "2", "3", "4", "5", "6"):
+            if choice.strip() in ("1", "2", "3", "4", "5", "6", "7"):
                 return choice.strip()
-            prompt = "Invalid choice. Please choose 1-6: "
+            prompt = "Invalid choice. Please choose 1-7: "
 
     def get_valid_choice(self, prompt, valid_choices, error_message):
         """Prompt until stripped, lowercase input matches one of valid_choices.
@@ -294,7 +295,7 @@ class IOManager:
         self._presenter.display_record(record)
 
     def collect_summary_filter(self) -> dict:
-        """Ask which priority and channel to summarize; Enter keeps every report."""
+        """Ask which priority and channel to include; Enter keeps every report."""
         priority = self.get_valid_choice(
             "Priority to include (high, medium, low, or Enter for all): ",
             ("", "high", "medium", "low"),
@@ -306,6 +307,10 @@ class IOManager:
             "Please enter email, sms, chat, or press Enter: ",
         )
         return {"priority": priority or None, "channel": channel or None}
+
+    def collect_csv_path(self) -> str | None:
+        """Read a new CSV destination, or cancel on an empty response."""
+        return self._terminal.read("Path for new CSV file (Enter to skip): ").strip() or None
 
     def display_summary(self, summary, description: str = "all reports") -> None:
         """Display a report summary for the given filter description."""

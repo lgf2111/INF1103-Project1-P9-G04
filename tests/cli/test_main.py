@@ -385,7 +385,7 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
 
     monkeypatch.setattr("builtins.input", answer)
     cli.app.run()
-    assert prompts[0] == "Choose 1-6: "
+    assert prompts[0] == "Choose 1-7: "
     assert any("email folder" in prompt.lower() for prompt in prompts)
     assert not any(
         "channel" in prompt.lower() or "input method" in prompt.lower() for prompt in prompts
