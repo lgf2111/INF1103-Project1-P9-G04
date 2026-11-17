@@ -26,16 +26,21 @@ class DataManager:
     def save(self, record: dict) -> None:
         """Append a new v2 or v3 report after validating the complete history.
 
-        Validation and storage failures become domain errors without retrying. Storage
-        replacement provides single-process semantics, not concurrent writes.
+        Validation and storage failures become domain errors without retrying. The
+        append itself is one protected storage operation, so concurrent processes
+        do not discard each other's reports.
         """
         try:
             self._validator.validate_new(record)
         except ValueError as error:
             raise InvalidInput() from error
-        records = self.load(strict=True)
+        records = self.load(strict=True)  # Reject unreadable or invalid history first.
         try:
-            self._storage.write_records([*records, record])
+            if type(self._storage).append is ReportStorage.append:
+                # Storage without its own atomic append: read-then-write, single process only.
+                self._storage.write_records([*records, record])
+            else:
+                self._storage.append(record)
         except (OSError, ValueError) as error:
             raise StorageFailure() from error
 

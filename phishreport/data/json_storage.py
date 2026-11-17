@@ -3,17 +3,25 @@
 import json
 import os
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from .storage import ReportStorage
+
+try:
+    import fcntl
+except ImportError:  # Non-POSIX platform: appends fall back to unlocked read-then-write.
+    fcntl = None
 
 
 class JsonReportStorage(ReportStorage):
     """Store report dictionaries in UTF-8 JSON without validating their schema.
 
     Relative paths follow the working directory at operation time. Parent
-    directories must already exist; atomic writes do not prevent lost updates
-    from concurrent writers.
+    directories must already exist. write_records is atomic but does not stop
+    lost updates; append holds an exclusive lock on "<path>.lock" for its whole
+    read-modify-write, so concurrent processes cannot discard each other's records.
     """
 
     def __init__(self, path: str | os.PathLike[str] = "reports.json") -> None:
@@ -53,6 +61,30 @@ class JsonReportStorage(ReportStorage):
         if any(not isinstance(record, dict) for record in records):
             raise ValueError("Stored reports must be objects.")
         return records
+
+    @contextmanager
+    def _exclusive_lock(self) -> Iterator[None]:
+        """Hold an exclusive flock on the sibling lock file, creating it if missing."""
+        if fcntl is None:
+            yield
+            return
+        lock_path = os.path.abspath(self._path) + ".lock"
+        with open(lock_path, "a") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def append(self, record: dict) -> None:
+        """Read, extend and replace the history while holding the exclusive lock.
+
+        A malformed file raises ValueError and is left untouched.
+        """
+        if not isinstance(record, dict):
+            raise ValueError("Stored reports must be objects.")
+        with self._exclusive_lock():
+            self.write_records([*self.read_records(), record])
 
     def write_records(self, records: list[dict]) -> None:
         """Serialize, flush and sync a sibling file before atomic replacement."""

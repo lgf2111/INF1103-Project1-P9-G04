@@ -11,6 +11,8 @@ class ReportStorage(ABC):
     Writes preserve values and order without mutating or retaining mutable
     caller data. Failures before replacement leave prior contents unchanged.
     Implementations propagate failures and do not print or recover silently.
+    append adds one record as a single protected operation, so concurrent
+    writers cannot discard each other's records.
     """
 
     @abstractmethod
@@ -20,3 +22,11 @@ class ReportStorage(ABC):
     @abstractmethod
     def write_records(self, records: list[dict]) -> None:
         """Replace all records, preserving prior contents on pre-replace failure."""
+
+    def append(self, record: dict) -> None:
+        """Add one record after the stored ones in a single protected operation.
+
+        This default is read, then write, and is NOT safe against concurrent
+        writers. Backends shared between processes override it.
+        """
+        self.write_records([*self.read_records(), record])

@@ -3,10 +3,14 @@
 import json
 import os
 import sqlite3
+import time
 from pathlib import Path
 
 from .json_storage import JsonReportStorage
 from .storage import ReportStorage
+
+_BUSY_RETRIES = 3
+_BUSY_PAUSE = 0.05
 
 
 class SqliteReportStorage(ReportStorage):
@@ -118,17 +122,7 @@ class SqliteReportStorage(ReportStorage):
                     "position INTEGER PRIMARY KEY, payload TEXT)"
                 )
             connection.execute("BEGIN IMMEDIATE")
-            table = connection.execute(
-                "SELECT type FROM sqlite_master WHERE name = 'records'"
-            ).fetchone()
-            columns = connection.execute("PRAGMA table_xinfo(records)").fetchall()
-            if table != ("table",) or [
-                (column[1], column[2].upper(), column[5], column[6]) for column in columns
-            ] != [("position", "INTEGER", 1, 0), ("payload", "TEXT", 0, 0)]:
-                raise ValueError("SQLite report history has an incompatible schema.")
-            indexes = connection.execute("PRAGMA index_list(records)").fetchall()
-            if any(index[3] == "pk" for index in indexes):
-                raise ValueError("SQLite report positions must be integer rowid keys.")
+            self._check_schema(connection)
             connection.execute("DELETE FROM records")
             for position, payload in enumerate(payloads):
                 connection.execute(
@@ -163,6 +157,93 @@ class SqliteReportStorage(ReportStorage):
                             f"Cannot close SQLite database: {self._path}"
                         ) from cleanup_error
                     primary_error.add_note(f"SQLite connection cleanup failed: {cleanup_error}")
+
+    def append(self, record: dict) -> None:
+        """Insert one record after the stored ones in a single immediate transaction.
+
+        Connections wait up to 5000 ms for a competing writer; if SQLite still
+        reports the database as locked, the whole attempt is retried a few times.
+        Failures roll back and map to OSError or ValueError like write_records.
+        """
+        if not isinstance(record, dict):
+            raise ValueError("Stored reports must be objects.")
+        payload = json.dumps(record, ensure_ascii=False, allow_nan=False)
+        payload.encode("utf-8")
+        for attempt in range(_BUSY_RETRIES + 1):
+            try:
+                self._append_once(payload)
+                return
+            except OSError as error:
+                cause = error.__cause__
+                busy = isinstance(cause, sqlite3.OperationalError) and (
+                    getattr(cause, "sqlite_errorcode", 0) & 0xFF
+                    in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+                )
+                if not busy or attempt == _BUSY_RETRIES:
+                    raise
+                time.sleep(_BUSY_PAUSE * (attempt + 1))
+
+    def _append_once(self, payload: str) -> None:
+        """Run one BEGIN IMMEDIATE, insert, COMMIT attempt."""
+        existed = self._path.exists()
+        connection = None
+        primary_error = None
+        try:
+            connection = self._connect()
+            if not existed:
+                connection.execute(
+                    "CREATE TABLE IF NOT EXISTS records("
+                    "position INTEGER PRIMARY KEY, payload TEXT)"
+                )
+            connection.execute("BEGIN IMMEDIATE")
+            self._check_schema(connection)
+            connection.execute(
+                "INSERT INTO records(position, payload) "
+                "SELECT COALESCE(MAX(position) + 1, 0), ? FROM records",
+                (payload,),
+            )
+            connection.execute("COMMIT")
+        except BaseException as error:
+            primary_error = error
+            if isinstance(error, sqlite3.Error):
+                primary_code = getattr(error, "sqlite_errorcode", 0) & 0xFF
+                if primary_code in (sqlite3.SQLITE_CORRUPT, sqlite3.SQLITE_NOTADB):
+                    primary_error = ValueError(f"Malformed SQLite database: {self._path}")
+                else:
+                    primary_error = OSError(f"Cannot write SQLite database: {self._path}")
+            if connection is not None:
+                try:
+                    if connection.in_transaction:
+                        connection.execute("ROLLBACK")
+                except sqlite3.Error as cleanup_error:
+                    primary_error.add_note(f"SQLite rollback cleanup failed: {cleanup_error}")
+            if primary_error is not error:
+                raise primary_error from error
+            raise
+        finally:
+            if connection is not None:
+                try:
+                    connection.close()
+                except sqlite3.Error as cleanup_error:
+                    if primary_error is None:
+                        raise OSError(
+                            f"Cannot close SQLite database: {self._path}"
+                        ) from cleanup_error
+                    primary_error.add_note(f"SQLite connection cleanup failed: {cleanup_error}")
+
+    def _check_schema(self, connection: sqlite3.Connection) -> None:
+        """Require the exact records table the read contract expects."""
+        table = connection.execute(
+            "SELECT type FROM sqlite_master WHERE name = 'records'"
+        ).fetchone()
+        columns = connection.execute("PRAGMA table_xinfo(records)").fetchall()
+        if table != ("table",) or [
+            (column[1], column[2].upper(), column[5], column[6]) for column in columns
+        ] != [("position", "INTEGER", 1, 0), ("payload", "TEXT", 0, 0)]:
+            raise ValueError("SQLite report history has an incompatible schema.")
+        indexes = connection.execute("PRAGMA index_list(records)").fetchall()
+        if any(index[3] == "pk" for index in indexes):
+            raise ValueError("SQLite report positions must be integer rowid keys.")
 
     def _connect(self, *, readonly: bool = False) -> sqlite3.Connection:
         """Open a configured connection; the caller must close it on success.
