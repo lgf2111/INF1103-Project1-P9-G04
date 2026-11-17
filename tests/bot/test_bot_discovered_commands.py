@@ -29,6 +29,18 @@ def update_for(text, message_id=100):
     )
 
 
+def confirmation_callback(pending, action):
+    return SimpleNamespace(
+        effective_chat=SimpleNamespace(id=123, type="private"),
+        effective_user=SimpleNamespace(id=42),
+        effective_message=SimpleNamespace(message_id=pending.card_message_id),
+        callback_query=SimpleNamespace(
+            data=f"exposure:{pending.token}:{action}", answer=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        ),
+    )
+
+
 @pytest.fixture
 def plugin_file(tmp_path, monkeypatch):
     monkeypatch.setattr(command_plugins, "__path__", [*command_plugins.__path__, str(tmp_path)])
@@ -202,7 +214,11 @@ def test_custom_assessment_keeps_findings_dedup_and_high_rescore(plugin_file, ex
     ai.assess.assert_called_once()
     builder.build.assert_called_once()
     update.effective_message.reply_text.assert_awaited_once()
-    data.save.assert_not_called()
+    assert data.save.call_count == 2
+    initial, revised = data.save.call_args_list[0].args[0], data.save.call_args_list[1].args[0]
+    assert initial["assessment_id"] == revised["assessment_id"]
+    assert (initial["result"]["score"], initial["result"]["priority"]) == (60, "MEDIUM")
+    assert (revised["result"]["score"], revised["result"]["priority"]) == (80, "HIGH")
 
 
 @pytest.mark.parametrize("body,error_type", [
@@ -232,12 +248,18 @@ def test_free_unknown_assessment_io_errors_surface_without_command_translation(e
     ai.assess.side_effect = error
     update = update_for(text)
 
+    asyncio.run(manager.assess_message(update, None))
+    pending, = manager._confirmations.values()
+    callback = confirmation_callback(pending, "confirm")
     with pytest.raises(OSError) as caught:
-        asyncio.run(manager.assess_message(update, None))
+        asyncio.run(manager.exposure_callback(callback, None))
 
     assert caught.value is error
     builder.build.assert_called_once_with(text)
-    update.effective_message.reply_text.assert_not_awaited()
+    update.effective_message.reply_text.assert_awaited_once()
+    assert "Check this message?" in update.effective_message.reply_text.call_args.args[0]
+    assert manager._sessions == {} and manager._source_sessions == {}
+    data.save.assert_not_called()
 
 
 def test_factory_error_is_not_translated_as_service_failure(plugin_file, extension_bot):

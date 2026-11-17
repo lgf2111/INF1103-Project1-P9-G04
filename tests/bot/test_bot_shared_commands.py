@@ -28,6 +28,18 @@ def message_update(text, message_id=100):
     )
 
 
+def confirmation_callback(pending, action):
+    return SimpleNamespace(
+        effective_chat=SimpleNamespace(id=123, type="private"),
+        effective_user=SimpleNamespace(id=42),
+        effective_message=SimpleNamespace(message_id=pending.card_message_id),
+        callback_query=SimpleNamespace(
+            data=f"exposure:{pending.token}:{action}", answer=AsyncMock(),
+            edit_message_text=AsyncMock(),
+        ),
+    )
+
+
 @pytest.fixture
 def command_bot():
     ai = Mock(**{"assess.return_value": FINDINGS})
@@ -51,12 +63,24 @@ def test_bot_non_commands_reach_original_builder_untouched(command_bot, monkeypa
 
     builder.build.assert_called_once_with(text)
     execute.assert_not_called()
-    ai.assess.assert_called_once()
+    ai.assess.assert_not_called()
+    data.save.assert_not_called()
+    assert manager._sessions == {} and manager._source_sessions == {}
+    pending, = manager._confirmations.values()
+    assert pending.record["message"] == text
+    assert "Check this message?" in update.effective_message.reply_text.call_args.args[0]
+
+    incoming = confirmation_callback(pending, "confirm")
+    asyncio.run(manager.exposure_callback(incoming, None))
+
     session, = manager._sessions.values()
     assert session.record["message"] == text
     assert session.findings == FINDINGS
-    assert "Provisional assessment" in update.effective_message.reply_text.call_args.args[0]
-    data.save.assert_not_called()
+    rendered = incoming.callback_query.edit_message_text.call_args.args[0]
+    assert "Priority: Medium" in rendered
+    assert "Provisional assessment" not in rendered
+    data.save.assert_called_once()
+    assert data.save.call_args.args[0]["assessment_id"] == session.assessment_id
 
 
 def test_bot_check_routes_once_and_retains_snapshot_for_exposure(command_bot, monkeypatch):
@@ -101,7 +125,11 @@ def test_bot_check_routes_once_and_retains_snapshot_for_exposure(command_bot, mo
     builder.build.assert_called_once_with(executed[0])
     ai.assess.assert_called_once()
     update.effective_message.reply_text.assert_called_once()
-    data.save.assert_not_called()
+    assert data.save.call_count == 2
+    initial, revised = data.save.call_args_list[0].args[0], data.save.call_args_list[1].args[0]
+    assert initial["assessment_id"] == revised["assessment_id"]
+    assert (initial["result"]["score"], initial["result"]["priority"]) == (60, "MEDIUM")
+    assert (revised["result"]["score"], revised["result"]["priority"]) == (80, "HIGH")
 
 
 @pytest.mark.parametrize("available", [True, False])

@@ -70,7 +70,7 @@ def test_shared_renderer_preserves_tolerant_historical_model_projection():
     assert result == before
 
 
-def test_completed_telegram_output_uses_frozen_report_not_mutated_live_state():
+def test_saved_telegram_card_is_the_compact_committed_result():
     session = ExposureSession({}, AssessmentSnapshot({}, deepcopy(RESULT)),
                               chat_id=1, user_id=2, message_id=3)
     session.report = {
@@ -79,20 +79,20 @@ def test_completed_telegram_output_uses_frozen_report_not_mutated_live_state():
         "exposure": {"clicked": True, "downloaded": False,
                      "submitted_category": "password", "disclosure_answered": True},
     }
-    session.completed = True
     session.saved = True
-    session.result = {**RESULT, "score": 20, "priority": "LOW"}
-    session.exposure = {"clicked": False, "downloaded": True,
-                        "submitted_category": None, "disclosure_answered": False}
     before = deepcopy(session.report)
 
     text = ResultFormatter().format(session.result, session=session)
 
+    assert "Priority: High" in text
     assert "Rule-based score: 80" in text
-    assert "Clicked link: Yes" in text
-    assert "Downloaded file: No" in text
-    assert "Information submitted: Password" in text
+    assert "Suspicious link" in text
+    assert "Rule evaluation trace" not in text
+    assert "Clicked link: Yes" not in text
+    assert "Downloaded file: No" not in text
+    assert "Information submitted: Password" not in text
     assert "Exposure unconfirmed" not in text
+    assert ResultFormatter.FOOTER not in text
     assert session.report == before
 
 
