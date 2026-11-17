@@ -70,8 +70,32 @@ def test_cli_saved_plain_report_round_trips_with_the_displayed_identifier(data_m
     io.display_result.assert_called_once()
 
 
-@pytest.mark.parametrize("completion", ["finish", "skip"])
-def test_telegram_saved_exposure_report_round_trips_after_completion(data_manager, completion):
+@pytest.mark.parametrize(
+    "actions,expected_score,expected_priority,expected_exposure",
+    [
+        pytest.param(
+            ("clicked",), 80, "HIGH",
+            {"clicked": True, "downloaded": None,
+             "submitted_category": None, "disclosure_answered": False},
+            id="clicked",
+        ),
+        pytest.param(
+            ("password",), 90, "HIGH",
+            {"clicked": None, "downloaded": None,
+             "submitted_category": "password", "disclosure_answered": True},
+            id="password",
+        ),
+        pytest.param(
+            ("clicked", "password"), 90, "HIGH",
+            {"clicked": True, "downloaded": None,
+             "submitted_category": "password", "disclosure_answered": True},
+            id="both",
+        ),
+    ],
+)
+def test_telegram_saved_exposure_report_round_trips_after_follow_up(
+    data_manager, actions, expected_score, expected_priority, expected_exposure,
+):
     ai = Mock(**{"assess.return_value": FINDINGS})
     manager = TelegramIOManager(
         data_manager, allowed_chat_id=12345,
@@ -80,43 +104,39 @@ def test_telegram_saved_exposure_report_round_trips_after_completion(data_manage
 
     async def scenario():
         await manager.assess_message(_update(MESSAGE), None)
-        assert data_manager.load(strict=True) == []
         session, = manager._sessions.values()
-        if completion == "finish":
-            await manager.exposure_callback(_callback(session, "clicked"), None)
-            await manager.exposure_callback(_callback(session, "password"), None)
-            assert data_manager.load(strict=True) == []
-        await manager.exposure_callback(_callback(session, completion), None)
-        assert session.completed and session.saved
-        frozen = session.report
-        # Replayed completion must retain the frozen identifier and save only once.
-        await manager.exposure_callback(_callback(session, completion), None)
-        saved, = data_manager.load(strict=True)
-        assert saved == frozen
-        return saved
+        initial, = data_manager.load(strict=True)
+        assert initial["result"]["priority"] == "MEDIUM"
+        assert initial["result"]["score"] == 60
+        assert initial["assessment_id"] == session.assessment_id
 
-    saved = asyncio.run(scenario())
+        for action in actions:
+            await manager.exposure_callback(_callback(session, action), None)
+        assert session.saved
+        saved = data_manager.load(strict=True)[-1]
+        # A replayed answer keeps the same revision and saves nothing new.
+        await manager.exposure_callback(_callback(session, actions[-1]), None)
+        assert data_manager.load(strict=True)[-1] == saved
+        assert len(data_manager.load(strict=True)) == 1 + len(actions)
+        return initial, saved
+
+    initial, saved = asyncio.run(scenario())
+    assert Report.from_legacy(initial).to_dict() == initial
     report = Report.from_legacy(saved)
     assert report.to_dict() == saved
     assert type(saved) is dict
     assert report.schema_version == 3
-    assert report.assessment_id
+    assert report.assessment_id == initial["assessment_id"]
     assert "assessment_id" not in saved["result"]
     assert report.channel == "chat"
     assert report.message == MESSAGE
     assert (report.has_link, report.link) == (True, "https://example.test/login")
     assert (report.has_file, report.file_name) == (True, "invoice.pdf")
     assert report.has_nested_exposure is True
-    expected = {
-        "clicked": True if completion == "finish" else None,
-        "downloaded": False if completion == "finish" else None,
-        "submitted_category": "password" if completion == "finish" else None,
-        "disclosure_answered": completion == "finish",
-    }
-    assert saved["exposure"] == expected
-    for field, value in expected.items():
+    assert saved["exposure"] == expected_exposure
+    for field, value in expected_exposure.items():
         assert getattr(report.exposure, field) == value
     assert (report.result.score, report.result.priority) == (
-        (90, "HIGH") if completion == "finish" else (60, "MEDIUM")
+        expected_score, expected_priority,
     )
     ai.assess.assert_called_once()

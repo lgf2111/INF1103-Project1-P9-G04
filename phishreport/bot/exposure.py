@@ -1,17 +1,19 @@
-"""Per-assessment state for pending Telegram exposure answers."""
+"""Per-assessment state for an exposure card that is saved as soon as it is shown."""
 
 import asyncio
 import secrets
 import time
 from copy import deepcopy
+from uuid import uuid4
 
 from phishreport.assessment import AssessmentService, AssessmentSnapshot
 
 SESSION_TIMEOUT_SECONDS = 30 * 60
+ANSWER_ACTIONS = {"clicked", "password"}
 
 
 class ExposureSession:
-    """Keep one user's pending assessment and lifecycle state independent."""
+    """Keep one saved assessment and the follow-up answers it still accepts."""
 
     def __init__(
         self,
@@ -31,6 +33,7 @@ class ExposureSession:
             "submitted_category": None,
             "disclosure_answered": False,
         }
+        self.assessment_id = str(uuid4())
         self.chat_id = chat_id
         self.user_id = user_id
         self.message_id = message_id
@@ -38,39 +41,61 @@ class ExposureSession:
         self.token = secrets.token_urlsafe(12)
         self.created_at = time.monotonic()
         self.expires_at = self.created_at + SESSION_TIMEOUT_SECONDS
-        self.completed = False
-        self.saved = False
         self.report = None
+        self.saved = False
+        self.dismissed = False
         self.lock = asyncio.Lock()
 
-    def apply_answer(self, action: str, assessment: AssessmentService) -> dict:
-        """Apply one answer and re-score retained findings without I/O.
+    @property
+    def answered(self) -> bool:
+        """Whether at least one follow-up answer is already part of the result."""
+        return (
+            self.exposure["clicked"] is True
+            or self.exposure["disclosure_answered"] is True
+        )
 
-        Async callback callers must serialize this operation with self.lock.
-        Rejected answers and scoring/copy failures leave the session unchanged.
-        Return a result independent of both stored and collaborator payloads.
+    def build_report(
+        self,
+        assessment: AssessmentService,
+        *,
+        exposure: dict | None = None,
+        result: dict | None = None,
+    ) -> dict:
+        """Build one v3 revision with this session's stable assessment identifier.
+
+        Use the supplied candidate answers and result, or the retained state.
+        Inputs and the returned report are independent copies; nothing changes.
         """
-        interaction_answers = {
-            "clicked": (True, False),
-            "downloaded": (False, True),
-            "both": (True, True),
-            "neither": (False, False),
-        }
-        if not isinstance(action, str) or action not in (
-            *interaction_answers, "password", "otp", "no_disclosure"
-        ):
+        return assessment.build_exposure_report(
+            deepcopy(self.record),
+            deepcopy(self.result if result is None else result),
+            deepcopy(self.exposure if exposure is None else exposure),
+            assessment_id=self.assessment_id,
+        )
+
+    def answer(self, action: str, assessment: AssessmentService) -> tuple[dict, dict] | None:
+        """Return candidate answers and a re-scored result without I/O.
+
+        Async callers must serialize this with self.lock and persist the matching
+        report before committing the candidate. Return None when the answer is
+        already recorded. Unknown, dismissed or late answers raise ValueError
+        and change nothing; retained findings keep the AI out of this path.
+        """
+        if not isinstance(action, str) or action not in ANSWER_ACTIONS:
             raise ValueError("Unknown exposure answer")
-        if self.completed or self.saved:
-            raise ValueError("Exposure session is already completed or saved")
+        if self.dismissed:
+            raise ValueError("Exposure session is dismissed")
         if time.monotonic() >= self.expires_at:
             raise ValueError("Exposure session has expired")
 
         candidate = deepcopy(self.exposure)
-        if action in interaction_answers:
-            candidate["clicked"], candidate["downloaded"] = interaction_answers[action]
+        if action == "clicked":
+            candidate["clicked"] = True
         else:
-            candidate["submitted_category"] = None if action == "no_disclosure" else action
+            candidate["submitted_category"] = "password"
             candidate["disclosure_answered"] = True
+        if candidate == self.exposure:
+            return None
 
         record = deepcopy(self.record)
         record["clicked"] = candidate["clicked"] is True
@@ -80,29 +105,15 @@ class ExposureSession:
             if candidate["disclosure_answered"] is True else None
         )
         result = deepcopy(assessment.rescore(record, deepcopy(self.findings)))
-        returned_result = deepcopy(result)
-        self.exposure = candidate
-        self.result = result
-        return returned_result
+        return candidate, result
 
-    def complete(self, assessment: AssessmentService) -> dict:
-        """Freeze the current answers/result into a v3 report without I/O.
+    def commit(self, exposure: dict, result: dict, report: dict) -> None:
+        """Adopt one revision only after its write succeeded."""
+        self.exposure = deepcopy(exposure)
+        self.result = deepcopy(result)
+        self.report = deepcopy(report)
+        self.saved = True
 
-        Async callback callers must serialize this operation with self.lock.
-        Stage independent report/return copies before changing lifecycle state;
-        failures leave the session unchanged. Replays return the cached report
-        even after expiry, supporting later storage retries without re-scoring.
-        Completion alone does not mark the report as saved.
-        """
-        if self.completed:
-            return deepcopy(self.report)
-        if time.monotonic() >= self.expires_at:
-            raise ValueError("Exposure session has expired")
-
-        report = deepcopy(assessment.build_exposure_report(
-            deepcopy(self.record), deepcopy(self.result), deepcopy(self.exposure)
-        ))
-        returned_report = deepcopy(report)
-        self.report = report
-        self.completed = True
-        return returned_report
+    def dismiss(self) -> None:
+        """Stop offering answers while leaving the saved report untouched."""
+        self.dismissed = True

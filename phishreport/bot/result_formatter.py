@@ -1,11 +1,21 @@
-"""Format assessment results and exposure notices as Telegram text replies."""
+"""Format assessment results and the compact Telegram exposure card."""
 
 from phishreport.bot.exposure import ExposureSession
 from phishreport.io.plain_text_renderer import PlainTextRenderer
 from phishreport.io.render import AssessmentRenderer
-from phishreport.model import SCHEMA_VERSION, SCHEMA_VERSION_KEY, AssessmentResult, Report
+from phishreport.model import AssessmentResult
 
 MAX_REPLY_CHARS = 4000  # Telegram rejects messages longer than 4096 characters.
+
+
+def _bounded(text: str, suffix: str = "") -> str:
+    """Fit text and its suffix into Telegram's UTF-16 reply limit."""
+    # Telegram's UTF-16 limit counts non-BMP characters as two units.
+    budget = MAX_REPLY_CHARS - len(suffix.encode("utf-16-le")) // 2
+    encoded = text.encode("utf-16-le")
+    if len(encoded) // 2 > budget:
+        text = encoded[: (budget - 3) * 2].decode("utf-16-le", errors="ignore") + "..."
+    return text + suffix
 
 
 class ResultFormatter:
@@ -20,64 +30,40 @@ class ResultFormatter:
     def format(
         self, result: AssessmentResult | dict | None, *, session: ExposureSession | None = None,
     ) -> str:
-        """Render current or frozen exposure answers, reserving mandatory notices."""
-        notices = []
+        """Render the full console text, or the saved assessment card for Telegram.
+
+        The card keeps the priority, score, matched rule, reasons and recommended
+        actions. It leaves out the rule trace, provisional notes and disclaimers
+        so one pasted message produces one short reply.
+        """
         if session is not None:
-            if (session.completed or session.saved) and session.report is not None:
-                report = Report(session.report)
-            else:
-                report = Report({
-                    SCHEMA_VERSION_KEY: SCHEMA_VERSION,
-                    "result": session.result,
-                    "exposure": session.exposure,
-                })
-            assessment = report.result
-            exposure = report.exposure
-            clicked = exposure.clicked if exposure is not None else None
-            downloaded = exposure.downloaded if exposure is not None else None
-            category = exposure.submitted_category if exposure is not None else None
-            disclosure_answered = exposure.disclosure_answered if exposure is not None else None
+            return _bounded(self._card(session.result))
+        text = self._text_renderer.render(self._assessment_renderer.render(result))
+        return _bounded(text, "\n\n" + self.FOOTER)
 
-            pending = not (session.completed or session.saved)
-            if pending:
-                notices.append("Provisional assessment.")
-                notices.append("Did you click the link / download the file?")
-            for answer, label in ((clicked, "Clicked link"),
-                                (downloaded, "Downloaded file")):
-                value = "Yes" if answer is True else "No" if answer is False else "Unconfirmed"
-                notices.append(f"{label}: {value}")
-            if pending:
-                notices.append("Did you enter a password or code?")
-            disclosure = "Unconfirmed"
-            if disclosure_answered is True:
-                if category == "password":
-                    disclosure = "Password"
-                elif category == "otp":
-                    disclosure = "One-time code"
-                elif category is None:
-                    disclosure = "None reported"
-            notices.append(f"Information submitted: {disclosure}")
-            if (type(clicked) is not bool
-                    or type(downloaded) is not bool
-                    or disclosure_answered is not True):
-                notices.append("Exposure unconfirmed")
-            if session.saved:
-                notices.append("Report saved locally.")
-            elif session.completed:
-                notices.append("Report not saved. Use Retry saving.")
-            else:
-                notices.append("Report not saved until Finish and save or Skip unanswered.")
-                notices.append("Unfinished sessions expire after 30 minutes or bot restart.")
-        else:
-            assessment = result
-
-        text = self._text_renderer.render(self._assessment_renderer.render(assessment))
-        suffix = "\n\n" + "\n".join([*notices, self.FOOTER])
-        # Telegram's UTF-16 limit counts non-BMP characters as two units.
-        budget = MAX_REPLY_CHARS - len(suffix.encode("utf-16-le")) // 2
-        encoded = text.encode("utf-16-le")
-        if len(encoded) // 2 > budget:
-            text = encoded[: (budget - 3) * 2].decode("utf-16-le", errors="ignore") + "..."
-        return text + suffix
-
-
+    def _card(self, result: AssessmentResult | dict | None) -> str:
+        """Render the reply for a session that is already saved."""
+        document = self._assessment_renderer.render(result)
+        if not document.available:
+            return "No assessment available."
+        lines = []
+        for kind, title, entries in document.sections:
+            if kind == "fields":
+                for label, value in entries:
+                    if label == "Priority":
+                        value = (value or "unavailable").replace("_", " ").title()
+                    elif label == "Rule-based score" and value is None:
+                        value = "Unavailable"
+                    lines.append(f"{label}: {value}")
+                continue
+            if kind == "trace":
+                continue
+            lines.extend(("", f"{title}:"))
+            if kind == "bullets":
+                lines.extend(f"- {value}" for _, value in entries)
+            elif kind == "numbered":
+                lines.extend(
+                    f"{number}. {value}"
+                    for number, (_, value) in enumerate(entries, start=1)
+                )
+        return "\n".join(lines)

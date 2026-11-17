@@ -11,45 +11,20 @@ EXPOSURE_CALLBACK_PREFIX = "exposure"
 
 
 def build_exposure_keyboard(session: ExposureSession) -> InlineKeyboardMarkup | None:
-    """Render explicit exposure answers and save actions without changing state."""
-    if session.saved:
+    """Render the two follow-up answers and the dismissal without changing state."""
+    if session.dismissed or not session.saved:
         return None
-    if session.completed:
-        return InlineKeyboardMarkup([[InlineKeyboardButton(
-            "Retry saving", callback_data=f"{EXPOSURE_CALLBACK_PREFIX}:{session.token}:retry"
-        )]])
 
-    selected = set()
-    clicked = session.exposure["clicked"]
-    downloaded = session.exposure["downloaded"]
-    if type(clicked) is bool and type(downloaded) is bool:
-        selected.add({
-            (True, False): "clicked",
-            (False, True): "downloaded",
-            (True, True): "both",
-            (False, False): "neither",
-        }[(clicked, downloaded)])
-    if session.exposure["disclosure_answered"] is True:
-        category = session.exposure["submitted_category"]
-        if category in ("password", "otp"):
-            selected.add(category)
-        elif category is None:
-            selected.add("no_disclosure")
+    def button(label: str, action: str) -> InlineKeyboardButton:
+        return InlineKeyboardButton(
+            label, callback_data=f"{EXPOSURE_CALLBACK_PREFIX}:{session.token}:{action}"
+        )
 
-    rows = [
-        [("clicked", "Clicked link"), ("downloaded", "Downloaded file")],
-        [("both", "Both"), ("neither", "Neither")],
-        [("password", "Password"), ("otp", "One-time code")],
-        [("no_disclosure", "Neither password nor code")],
-        [("finish", "Finish and save"), ("skip", "Skip unanswered")],
-    ]
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton(
-            f"✓ {label}" if action in selected else label,
-            callback_data=f"{EXPOSURE_CALLBACK_PREFIX}:{session.token}:{action}",
-        ) for action, label in row]
-        for row in rows
-    ])
+    rows = [[button("Clicked link", "clicked"),
+             button("Shared a password/OTP", "password")]]
+    if not session.answered:
+        rows.append([button("Nothing happened", "nothing")])
+    return InlineKeyboardMarkup(rows)
 
 
 __all__ = [

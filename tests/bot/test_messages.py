@@ -1,7 +1,6 @@
 """Exposure keyboard payloads reflect explicit answers without changing state."""
 
 from copy import deepcopy
-from types import MappingProxyType
 from unittest.mock import Mock
 
 import pytest
@@ -11,7 +10,7 @@ from phishreport.assessment import AssessmentService, AssessmentSnapshot
 from phishreport.bot import messages
 from phishreport.bot.exposure import ExposureSession
 from phishreport.logic import LogicManager
-from phishreport.model import SCHEMA_VERSION, SCHEMA_VERSION_KEY, AssessmentResult, RuleTrace
+from phishreport.model import AssessmentResult, RuleTrace
 
 
 @pytest.fixture
@@ -26,22 +25,18 @@ def session():
     )
 
 
-def test_pending_keyboard_has_exact_rows_and_private_callback_payloads(session):
+def test_saved_card_keyboard_has_exact_buttons_and_private_callback_payloads(session):
+    session.saved = True
+
     keyboard = messages.build_exposure_keyboard(session)
 
     assert isinstance(keyboard, InlineKeyboardMarkup)
     assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
-        ["Clicked link", "Downloaded file"],
-        ["Both", "Neither"],
-        ["Password", "One-time code"],
-        ["Neither password nor code"],
-        ["Finish and save", "Skip unanswered"],
+        ["Clicked link", "Shared a password/OTP"],
+        ["Nothing happened"],
     ]
     assert messages.EXPOSURE_CALLBACK_PREFIX == "exposure"
-    actions = [
-        ["clicked", "downloaded"], ["both", "neither"],
-        ["password", "otp"], ["no_disclosure"], ["finish", "skip"],
-    ]
+    actions = [["clicked", "password"], ["nothing"]]
     assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
         [f"exposure:{session.token}:{action}" for action in row] for row in actions
     ]
@@ -53,82 +48,36 @@ def test_pending_keyboard_has_exact_rows_and_private_callback_payloads(session):
 
 
 @pytest.mark.parametrize(
-    ("clicked", "downloaded", "interaction"),
-    [(True, False, "Clicked link"), (False, True, "Downloaded file"),
-     (True, True, "Both"), (False, False, "Neither"), (None, None, None)],
+    ("clicked", "category", "answered"),
+    [(True, None, False), (None, "password", True), (True, "password", True)],
 )
-@pytest.mark.parametrize(
-    ("category", "answered", "disclosure"),
-    [("password", True, "Password"), ("otp", True, "One-time code"),
-     (None, True, "Neither password nor code"), (None, False, None)],
-)
-def test_selected_answers_remain_independent(
-    session, clicked, downloaded, interaction, category, answered, disclosure
+def test_answered_session_keeps_only_the_two_follow_up_buttons(
+    session, clicked, category, answered,
 ):
+    session.saved = True
     session.exposure.update(
-        clicked=clicked, downloaded=downloaded,
-        submitted_category=category, disclosure_answered=answered,
+        clicked=clicked, submitted_category=category, disclosure_answered=answered,
     )
 
     keyboard = messages.build_exposure_keyboard(session)
 
-    selected = {button.text for row in keyboard.inline_keyboard
-                for button in row if button.text.startswith("✓ ")}
-    assert selected == {f"✓ {label}" for label in (interaction, disclosure) if label}
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
+        ["Clicked link", "Shared a password/OTP"],
+    ]
 
 
-@pytest.mark.parametrize(
-    ("clicked", "downloaded"),
-    [(None, False), (False, None), (True, None), (None, True),
-     (1, False), (False, 1), (0, True), (True, 0), ("yes", False)],
-)
-def test_partial_or_nonboolean_interaction_does_not_fabricate_selection(
-    session, clicked, downloaded
-):
-    session.exposure.update(clicked=clicked, downloaded=downloaded)
-
-    keyboard = messages.build_exposure_keyboard(session)
-
-    assert not any(button.text.startswith("✓ ")
-                   for row in keyboard.inline_keyboard for button in row)
-
-
-@pytest.mark.parametrize(
-    ("category", "answered"),
-    [("password", False), ("otp", False), ("password", 1), (None, 1), ("unknown", True)],
-)
-def test_unconfirmed_or_unknown_disclosure_is_not_selected(session, category, answered):
-    session.exposure.update(submitted_category=category, disclosure_answered=answered)
-
-    keyboard = messages.build_exposure_keyboard(session)
-
-    assert not any(button.text.startswith("✓ ")
-                   for row in keyboard.inline_keyboard for button in row)
-
-
-def test_completed_unsaved_keyboard_only_offers_retry(session):
-    session.completed = True
-
-    keyboard = messages.build_exposure_keyboard(session)
-
-    assert keyboard.to_dict() == {"inline_keyboard": [[{
-        "text": "Retry saving", "callback_data": f"exposure:{session.token}:retry",
-    }]]}
-
-
-@pytest.mark.parametrize("completed", [False, True])
-def test_saved_session_has_no_keyboard(session, completed):
-    session.completed = completed
-    session.saved = True
+@pytest.mark.parametrize("saved,dismissed", [
+    (False, False), (True, True), (False, True),
+])
+def test_unsaved_or_dismissed_session_has_no_keyboard(session, saved, dismissed):
+    session.saved = saved
+    session.dismissed = dismissed
 
     assert messages.build_exposure_keyboard(session) is None
 
 
-@pytest.mark.parametrize("completed", [False, True])
-def test_render_uses_snapshot_only_without_mutation_scoring_or_time_checks(
-    session, monkeypatch, completed
-):
-    session.completed = completed
+def test_keyboard_is_read_only_without_mutation_scoring_or_time_checks(session, monkeypatch):
+    session.saved = True
     session.expires_at = 0
     before = dict(session.__dict__)
     values = {key: deepcopy(value) for key, value in before.items() if key != "lock"}
@@ -156,6 +105,7 @@ def assessed_session():
         record, AssessmentSnapshot(findings, service.rescore(record, findings)),
         chat_id=123456, user_id=234567, message_id=345678,
     )
+    state.saved = True
     return state, service
 
 
@@ -170,144 +120,41 @@ def test_formatter_short_legacy_output_stays_identical():
     )
 
 
-@pytest.mark.parametrize(
-    ("action", "score", "clicked", "downloaded", "submitted"),
-    [(None, 60, "Unconfirmed", "Unconfirmed", "Unconfirmed"),
-     ("clicked", 80, "Yes", "No", "Unconfirmed"),
-     ("downloaded", 80, "No", "Yes", "Unconfirmed"),
-     ("password", 90, "Unconfirmed", "Unconfirmed", "Password"),
-     ("otp", 90, "Unconfirmed", "Unconfirmed", "One-time code")],
-)
-@pytest.mark.parametrize("completed", [False, True])
-def test_formatter_real_scores_and_partial_answers(
-    assessed_session, action, score, clicked, downloaded, submitted, completed
-):
-    state, service = assessed_session
-    if action:
-        state.apply_answer(action, service)
-    if completed:
-        state.complete(service)
-
-    text = messages.ResultFormatter().format({"score": -999}, session=state)
-
-    assert f"Rule-based score: {score}" in text
-    assert f"Priority: {'Medium' if score == 60 else 'High'}" in text
-    assert f"Clicked link: {clicked}" in text
-    assert f"Downloaded file: {downloaded}" in text
-    assert f"Information submitted: {submitted}" in text
-    assert "Exposure unconfirmed" in text
-    questions = ["Did you click the link / download the file?",
-                 "Did you enter a password or code?"]
-    assert all((question in text) is (not completed) for question in questions)
-    if completed:
-        assert "Report not saved. Use Retry saving." in text
-        assert "Provisional" not in text
-    else:
-        assert "provisional" in text.lower()
-        assert "not saved" in text.lower()
-        assert "Finish and save" in text and "Skip unanswered" in text
-        assert "30 minutes" in text and "bot restart" in text
-    assert text.endswith(messages.ResultFormatter.FOOTER)
-
-
-def test_formatter_confirmed_no_answers_do_not_claim_unknown(assessed_session):
-    state, service = assessed_session
-    state.apply_answer("neither", service)
-    state.apply_answer("no_disclosure", service)
+def test_card_keeps_priority_score_rule_reasons_and_actions_only(assessed_session):
+    state, _ = assessed_session
 
     text = messages.ResultFormatter().format({}, session=state)
 
-    assert "Clicked link: No" in text
-    assert "Downloaded file: No" in text
-    assert "Information submitted: None reported" in text
-    assert "unconfirmed" not in text.lower()
+    assert "Priority: Medium" in text
+    assert "Rule-based score: 60" in text
+    assert "Matched rule: SuspiciousCredentialRule" in text
+    assert "Reasons:" in text and "- The AI identified" in text
+    assert "Recommended actions:" in text and "1. " in text
+    assert "Rule evaluation trace" not in text
+    assert "Provisional" not in text
+    assert "Did you" not in text
+    assert "Exposure unconfirmed" not in text
+    assert "Report not saved" not in text and "saved locally" not in text.lower()
+    assert "expire" not in text.lower() and "30 minutes" not in text
+    assert messages.ResultFormatter.FOOTER not in text
 
 
-@pytest.mark.parametrize("saved", [False, True])
-def test_formatter_completed_cache_is_authoritative(assessed_session, saved):
+def test_card_shows_the_latest_rescored_result(assessed_session):
     state, service = assessed_session
-    state.apply_answer("both", service)
-    state.apply_answer("otp", service)
-    state.complete(service)
-    state.result = {"score": -999}
-    state.exposure.update(clicked=None, downloaded=None, disclosure_answered=False)
-    state.saved = saved
 
-    text = messages.ResultFormatter().format({"score": -888}, session=state)
+    exposure, result = state.answer("clicked", service)
+    state.commit(exposure, result, state.build_report(service, exposure=exposure, result=result))
+    text = messages.ResultFormatter().format({}, session=state)
 
-    assert "Rule-based score: 90" in text
-    assert "Clicked link: Yes" in text and "Downloaded file: Yes" in text
-    assert "Information submitted: One-time code" in text
-    assert "unconfirmed" not in text.lower() and "Did you" not in text
-    assert ("Report saved locally." in text) is saved
-    assert ("Report not saved. Use Retry saving." in text) is (not saved)
+    assert "Priority: High" in text
+    assert "Rule-based score: 80" in text
+    assert "You reported clicking a link." in text
+    assert "Rule-based score: 60" not in text
 
 
-@pytest.mark.parametrize("exposure", [None, ["private invalid exposure"]])
-def test_formatter_partial_completed_report_keeps_unknown_exposure(session, exposure):
-    session.completed = True
-    session.report = {SCHEMA_VERSION_KEY: SCHEMA_VERSION, "exposure": exposure}
-    session.result = {"score": 99, "priority": "HIGH"}
-    session.exposure.update(clicked=True, downloaded=True, disclosure_answered=True)
-    before = deepcopy(session.report)
-
-    text = messages.ResultFormatter().format({}, session=session)
-
-    assert "No assessment available." in text
-    assert "Clicked link: Unconfirmed" in text
-    assert "Downloaded file: Unconfirmed" in text
-    assert "Information submitted: Unconfirmed" in text
-    assert "Exposure unconfirmed" in text
-    assert "Report not saved. Use Retry saving." in text
-    assert "Rule-based score: 99" not in text
-    assert "private invalid exposure" not in text
-    assert session.report == before
-
-
-def test_formatter_frozen_saved_payload_displays_canonical_values(session):
-    session.saved = True
-    session.report = MappingProxyType({
-        SCHEMA_VERSION_KEY: SCHEMA_VERSION,
-        "result": MappingProxyType({
-            "score": 60, "priority": "MEDIUM", "reasons": ("Verify sender", 123),
-        }),
-        "exposure": MappingProxyType({
-            "clicked": False, "downloaded": True,
-            "submitted_category": "otp", "disclosure_answered": True,
-        }),
-    })
-
-    text = messages.ResultFormatter().format({}, session=session)
-
-    assert "Priority: Medium\nRule-based score: 60" in text
-    assert " - Verify sender" in text
-    assert "123" not in text
-    assert "Clicked link: No" in text
-    assert "Downloaded file: Yes" in text
-    assert "Information submitted: One-time code" in text
-    assert "Report saved locally." in text
-    assert "Did you" not in text and "unconfirmed" not in text.lower()
-
-
-@pytest.mark.parametrize("value", [0, 1, "yes", None])
-def test_formatter_requires_identity_booleans(session, value):
-    session.exposure.update(clicked=value, downloaded=value,
-                            submitted_category="private secret", disclosure_answered=value)
-
-    text = messages.ResultFormatter().format({}, session=session)
-
-    assert "Clicked link: Unconfirmed" in text
-    assert "Downloaded file: Unconfirmed" in text
-    assert "Information submitted: Unconfirmed" in text
-    assert "Exposure unconfirmed" in text
-    assert "private secret" not in text
-
-
-@pytest.mark.parametrize("completed", [False, True])
-def test_formatter_is_read_only_and_saved_overrides_pending(session, monkeypatch, completed):
-    session.completed = completed
-    session.saved = True
-    before = dict(session.__dict__)
+def test_formatter_is_read_only_and_never_touches_scoring_or_time(assessed_session, monkeypatch):
+    state, _ = assessed_session
+    before = dict(state.__dict__)
     values = {key: deepcopy(value) for key, value in before.items() if key != "lock"}
     monkeypatch.setattr(messages, "build_exposure_keyboard", Mock(side_effect=AssertionError))
     monkeypatch.setattr("phishreport.bot.exposure.time.monotonic",
@@ -315,41 +162,31 @@ def test_formatter_is_read_only_and_saved_overrides_pending(session, monkeypatch
     for name in ("assess", "assess_with_findings", "rescore", "build_exposure_report"):
         monkeypatch.setattr(AssessmentService, name, Mock(side_effect=AssertionError))
 
-    text = messages.ResultFormatter().format({}, session=session)
+    text = messages.ResultFormatter().format({}, session=state)
 
-    assert "Report saved locally." in text
-    assert "Did you" not in text and "Retry saving" not in text
-    assert all(session.__dict__[key] is value for key, value in before.items())
-    assert {key: value for key, value in session.__dict__.items() if key != "lock"} == values
-    for private in (session.token, "123456", "234567", "345678", "AI findings",
+    assert "Rule-based score: 60" in text
+    assert all(state.__dict__[key] is value for key, value in before.items())
+    assert {key: value for key, value in state.__dict__.items() if key != "lock"} == values
+    for private in (state.token, "123456", "234567", "345678", "AI findings",
                     "private message", "private sender"):
         assert private not in text
 
 
 @pytest.mark.parametrize("character", ["A", "😀"])
-@pytest.mark.parametrize("lifecycle", ["legacy", "pending", "completed", "saved"])
-def test_formatter_bounds_whole_reply_in_utf16(session, character, lifecycle):
-    result = {"score": 80, "priority": "HIGH", "reasons": [character * 6000]}
-    session.result = result
-    session.completed = lifecycle == "completed"
-    session.saved = lifecycle == "saved"
+def test_card_bounds_the_reply_in_utf16_without_notices(assessed_session, character):
+    state, _ = assessed_session
+    state.result = {
+        "score": 80, "priority": "HIGH",
+        "reasons": [character * 6000], "checklist": ["Act now"],
+    }
 
-    text = messages.ResultFormatter().format(
-        result, session=None if lifecycle == "legacy" else session
-    )
+    text = messages.ResultFormatter().format(state.result, session=state)
 
     assert len(text.encode("utf-16-le")) // 2 <= 4000
     assert text.encode("utf-16-le").decode("utf-16-le") == text
     assert "..." in text and "Rule-based score: 80" in text
-    assert text.endswith(messages.ResultFormatter.FOOTER)
-    if lifecycle == "pending":
-        assert "Did you click the link / download the file?" in text
-        assert "Did you enter a password or code?" in text
-        assert "Exposure unconfirmed" in text and "30 minutes" in text
-    elif lifecycle == "completed":
-        assert "Report not saved. Use Retry saving." in text
-    elif lifecycle == "saved":
-        assert "Report saved locally." in text
+    assert messages.ResultFormatter.FOOTER not in text
+    assert "Provisional" not in text and "expire" not in text.lower()
 
 
 def test_alert_renders_typed_result_with_safe_html_and_ordered_trace():

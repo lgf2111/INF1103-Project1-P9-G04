@@ -202,7 +202,11 @@ def test_custom_assessment_keeps_findings_dedup_and_high_rescore(plugin_file, ex
     ai.assess.assert_called_once()
     builder.build.assert_called_once()
     update.effective_message.reply_text.assert_awaited_once()
-    data.save.assert_not_called()
+    assert data.save.call_count == 2
+    initial, revised = data.save.call_args_list[0].args[0], data.save.call_args_list[1].args[0]
+    assert initial["assessment_id"] == revised["assessment_id"]
+    assert (initial["result"]["score"], initial["result"]["priority"]) == (60, "MEDIUM")
+    assert (revised["result"]["score"], revised["result"]["priority"]) == (80, "HIGH")
 
 
 @pytest.mark.parametrize("body,error_type", [

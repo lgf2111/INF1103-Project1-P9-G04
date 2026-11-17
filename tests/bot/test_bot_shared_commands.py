@@ -55,8 +55,10 @@ def test_bot_non_commands_reach_original_builder_untouched(command_bot, monkeypa
     session, = manager._sessions.values()
     assert session.record["message"] == text
     assert session.findings == FINDINGS
-    assert "Provisional assessment" in update.effective_message.reply_text.call_args.args[0]
-    data.save.assert_not_called()
+    assert "Priority: Medium" in update.effective_message.reply_text.call_args.args[0]
+    assert "Provisional assessment" not in update.effective_message.reply_text.call_args.args[0]
+    data.save.assert_called_once()
+    assert data.save.call_args.args[0]["assessment_id"] == session.assessment_id
 
 
 def test_bot_check_routes_once_and_retains_snapshot_for_exposure(command_bot, monkeypatch):
@@ -101,7 +103,11 @@ def test_bot_check_routes_once_and_retains_snapshot_for_exposure(command_bot, mo
     builder.build.assert_called_once_with(executed[0])
     ai.assess.assert_called_once()
     update.effective_message.reply_text.assert_called_once()
-    data.save.assert_not_called()
+    assert data.save.call_count == 2
+    initial, revised = data.save.call_args_list[0].args[0], data.save.call_args_list[1].args[0]
+    assert initial["assessment_id"] == revised["assessment_id"]
+    assert (initial["result"]["score"], initial["result"]["priority"]) == (60, "MEDIUM")
+    assert (revised["result"]["score"], revised["result"]["priority"]) == (80, "HIGH")
 
 
 @pytest.mark.parametrize("available", [True, False])

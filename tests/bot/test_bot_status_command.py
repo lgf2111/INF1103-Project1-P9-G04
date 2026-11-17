@@ -81,12 +81,12 @@ def test_bot_status_counts_only_owned_live_pending_sessions_without_mutation(mon
     manager = TelegramIOManager(data, assessment=assessment)
     states = [
         {}, {"chat_id": 999}, {"user_id": 99}, {"expires_at": 99},
-        {"expires_at": 100}, {"saved": True}, {"completed": True},
+        {"expires_at": 100}, {"saved": True}, {"dismissed": True},
     ]
     for number, changes in enumerate(states):
         fields = {
             "chat_id": 123, "user_id": 42, "expires_at": 101,
-            "completed": False, "saved": False, "lock": Mock(),
+            "dismissed": False, "saved": False, "lock": Mock(),
         }
         fields.update(changes)
         manager._sessions[str(number)] = SimpleNamespace(**fields)
@@ -97,7 +97,7 @@ def test_bot_status_counts_only_owned_live_pending_sessions_without_mutation(mon
     asyncio.run(manager.assess_message(update, None))
 
     update.effective_message.reply_text.assert_awaited_once_with(
-        "Session: Active exposure sessions awaiting answers: 1\nSaved reports: 3"
+        "Session: Active exposure sessions awaiting answers: 2\nSaved reports: 3"
     )
     assert manager._sessions == sessions
     assert {key: value.__dict__ for key, value in sessions.items()} == before

@@ -16,7 +16,6 @@ from phishreport.bot.exposure import ExposureSession
 from phishreport.bot.feedback_ui import (
     CATEGORY_CODES,
     CATEGORY_LABELS,
-    assessment_feedback_keyboard,
     corrected_priority_keyboard,
     feedback_category_keyboard,
     feedback_comment_keyboard,
@@ -85,9 +84,9 @@ class TelegramIOManager:
     ) -> ExposureSession | None:
         """Resolve an owned session and lazily maintain the in-memory caches.
 
-        Invalid requests do not trigger housekeeping. Keep locked work and
-        completed unsaved reports available for finalization/storage retries.
-        Only a new source request may make room by evicting saved sessions.
+        Invalid requests do not trigger housekeeping. Reports are saved before
+        their card is shown, so an expired or evicted session only costs the
+        optional follow-up tap, never stored history.
         """
         chat = getattr(update, "effective_chat", None)
         user = getattr(update, "effective_user", None)
@@ -125,8 +124,7 @@ class TelegramIOManager:
 
         now = time.monotonic()
         for cached_token, session in list(self._sessions.items()):
-            if (now >= session.expires_at and not session.lock.locked()
-                    and (not session.completed or session.saved)):
+            if now >= session.expires_at and not session.lock.locked():
                 del self._sessions[cached_token]
 
         if token is None and candidate is None and len(self._sessions) >= self._session_limit:
@@ -147,39 +145,34 @@ class TelegramIOManager:
             return candidate
         return None
 
-    async def _save_exposure_report(self, session: ExposureSession) -> None:
-        """Complete and save once, retaining both locks until storage finishes.
+    async def _write_report(self, report: dict, commit=None) -> None:
+        """Append one validated revision, shielding the write from cancellation.
 
-        Callers must not already hold session.lock. A failed write leaves the
-        completed snapshot available for retry. Cancellation after writing starts
-        waits for its outcome; success is recorded before cancellation propagates.
+        Callers must not already hold self._save_lock. `commit` runs only after
+        the revision reached storage, including when cancellation arrives late,
+        so a retry never saves the same revision twice.
         """
-        async with session.lock:
-            if session.saved:
-                return
-            if self._assessment is None:
-                raise ValueError("Message assessment is not available")
-            report = session.complete(self._assessment)
-            async with self._save_lock:
-                write_task = asyncio.create_task(asyncio.to_thread(self._data_manager.save, report))
-                cancellation = None
-                while True:
-                    try:
-                        await asyncio.shield(write_task)
-                        break
-                    except asyncio.CancelledError as error:
-                        # A cancelled worker task cannot deliver an outcome. This
-                        # guard also prevents spinning during process shutdown.
-                        if write_task.cancelled():
-                            raise
-                        if cancellation is None:
-                            cancellation = error
-                session.saved = True
-                if cancellation is not None:
-                    raise cancellation
+        async with self._save_lock:
+            write_task = asyncio.create_task(asyncio.to_thread(self._data_manager.save, report))
+            cancellation = None
+            while True:
+                try:
+                    await asyncio.shield(write_task)
+                    break
+                except asyncio.CancelledError as error:
+                    # A cancelled worker task cannot deliver an outcome. This
+                    # guard also prevents spinning during process shutdown.
+                    if write_task.cancelled():
+                        raise
+                    if cancellation is None:
+                        cancellation = error
+            if commit is not None:
+                commit()
+            if cancellation is not None:
+                raise cancellation
 
     async def exposure_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Acknowledge exposure buttons, serialize answers and render current state."""
+        """Apply one follow-up answer, save its revision and edit the saved card."""
         query = getattr(update, "callback_query", None)
         if query is None:
             return
@@ -191,13 +184,13 @@ class TelegramIOManager:
             return
 
         unavailable = (
-            "These questions are not available. "
+            "This assessment is closed. "
             "Paste the message again to start a new assessment."
         )
         payload = getattr(query, "data", None)
         match = re.fullmatch(
             rf"{re.escape(EXPOSURE_CALLBACK_PREFIX)}:([A-Za-z0-9_-]{{16}}):"
-            r"(clicked|downloaded|both|neither|password|otp|no_disclosure|finish|skip|retry)",
+            r"(clicked|password|nothing)",
             payload,
         ) if isinstance(payload, str) else None
         session = self._find_exposure_session(update, match[1]) if match else None
@@ -206,49 +199,38 @@ class TelegramIOManager:
                 await query.edit_message_text(unavailable, reply_markup=None)
                 return
 
-            action = match[2]
-            feedback = ""
-            try:
-                if action in {"finish", "skip"}:
-                    # The helper owns session.lock, including during storage.
-                    await self._save_exposure_report(session)
-                elif action == "retry":
-                    async with session.lock:
-                        if not session.completed:
-                            raise ValueError("No completed report to retry")
-                    await self._save_exposure_report(session)
-                else:
-                    async with session.lock:
-                        # Replayed answer buttons only render the frozen report.
-                        if not session.completed:
-                            if self._assessment is None:
-                                raise ValueError("Message assessment is not available")
-                            session.apply_answer(action, self._assessment)
-            except (AssessmentError, OSError, ValueError, RuntimeError):
-                feedback = "Could not update the assessment. Please try again.\n\n"
-
-            # Hold the lock across the edit: another button cannot replace a
-            # newer rendered state with an older reply after a slow Telegram call.
+            failed = False
+            # Hold the lock across the save and the edit: another tap cannot
+            # replace a newer rendered state with an older reply.
             async with session.lock:
-                if not session.completed and time.monotonic() >= session.expires_at:
+                if time.monotonic() >= session.expires_at:
                     await query.edit_message_text(unavailable, reply_markup=None)
+                    return
+                if match[2] == "nothing":
+                    session.dismiss()
                 else:
-                    text = self._formatter.format(session.result, session=session)
-                    if feedback and not session.completed:
-                        text = feedback + text
-                    reply_markup = build_exposure_keyboard(session)
-                    if (
-                        session.saved
-                        and self._feedback_service is not None
-                        and isinstance(session.report, dict)
-                        and isinstance(session.report.get("assessment_id"), str)
-                    ):
-                        reply_markup = assessment_feedback_keyboard(
-                            session.report["assessment_id"]
-                        )
-                    await query.edit_message_text(
-                        text, reply_markup=reply_markup,
-                    )
+                    try:
+                        if self._assessment is None:
+                            raise ValueError("Message assessment is not available")
+                        candidate = session.answer(match[2], self._assessment)
+                        if candidate is not None:
+                            exposure, result = candidate
+                            report = session.build_report(
+                                self._assessment, exposure=exposure, result=result,
+                            )
+                            await self._write_report(
+                                report,
+                                lambda: session.commit(exposure, result, report),
+                            )
+                    except (AssessmentError, OSError, ValueError, RuntimeError):
+                        failed = True
+
+                text = self._formatter.format(session.result, session=session)
+                if failed:
+                    text = "Could not update the assessment. Please try again.\n\n" + text
+                await query.edit_message_text(
+                    text, reply_markup=build_exposure_keyboard(session),
+                )
         except BadRequest as error:
             if "message is not modified" not in str(error).lower():
                 raise
@@ -321,7 +303,7 @@ class TelegramIOManager:
                 now = time.monotonic()
                 count = sum(
                     session.chat_id == chat_id and session.user_id == user_id
-                    and not session.completed and not session.saved and session.expires_at > now
+                    and not session.dismissed and session.expires_at > now
                     for session in self._sessions.values()
                 )
                 status_label = f"Active exposure sessions awaiting answers: {count}"
@@ -357,8 +339,7 @@ class TelegramIOManager:
             if session is None:
                 if len(self._sessions) >= self._session_limit:
                     await message.reply_text(
-                        "Too many pending assessments. "
-                        "Finish or skip an earlier one, then try again."
+                        "Too many recent assessments. Please try again shortly."
                     )
                     return
                 if command is None:
@@ -412,7 +393,7 @@ class TelegramIOManager:
                 while session.token in self._sessions:
                     session.token = secrets.token_urlsafe(12)
                 # Index before delivery: Telegram failures must not lose the AI
-                # snapshot or any completed report when delivery is retried.
+                # snapshot or the saved revision when delivery is retried.
                 self._sessions[session.token] = session
                 self._source_sessions[(chat_id, user_id, message_id)] = session.token
 
@@ -421,6 +402,24 @@ class TelegramIOManager:
             async with session.lock:
                 if session.reply_message_id is not None:
                     return
+                if not session.saved:
+                    if self._assessment is None:
+                        await message.reply_text("Message assessment is not available right now.")
+                        return
+                    try:
+                        report = session.build_report(self._assessment)
+                        await self._write_report(report, lambda: session.commit(
+                            session.exposure, session.result, report,
+                        ))
+                    except asyncio.CancelledError:
+                        raise
+                    except (AssessmentError, OSError, ValueError, RuntimeError):
+                        self._sessions.pop(session.token, None)
+                        self._source_sessions.pop((chat_id, user_id, message_id), None)
+                        await message.reply_text(
+                            "Could not save the report. Please try again."
+                        )
+                        return
                 reply = await message.reply_text(
                     self._formatter.format(session.result, session=session),
                     reply_markup=build_exposure_keyboard(session),
@@ -570,8 +569,8 @@ class TelegramIOManager:
         await message.reply_text("Thank you. Your feedback was saved for review.")
 
     def _load_assessment_result(self, assessment_id: str) -> dict:
-        """Load one v3 report by ID and return its result with the ID attached."""
-        for source in self._data_manager.load(strict=True):
+        """Load one v3 report by ID and return its newest revision with the ID attached."""
+        for source in reversed(self._data_manager.load(strict=True)):
             report = Report(source)
             if report.assessment_id == assessment_id and report.schema_version == SCHEMA_VERSION:
                 return {**report.to_dict()["result"], "assessment_id": assessment_id}
