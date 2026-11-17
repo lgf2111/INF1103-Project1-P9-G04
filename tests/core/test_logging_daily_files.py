@@ -3,6 +3,7 @@
 import logging
 import time
 from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 
 import pytest
 
@@ -60,17 +61,26 @@ def added_handler(before):
 def test_records_roll_into_the_next_dated_file_at_midnight(daily_logs, monkeypatch):
     clock = FakeClock(local_timestamp(2026, 11, 17, 23, 59, 30))
     monkeypatch.setattr(time, "time", clock.time)
+    before = logging.getLogger().handlers[:]
     assert AppLogging.setup() is True
+
+    # FileHandler opens the dated file before TimedRotatingFileHandler works out
+    # rolloverAt, so the handler reads that new file's real mtime instead of the
+    # frozen clock. Pin the rollover from the frozen moment; otherwise the test
+    # depends on the machine's timezone and real wall clock.
+    handler = added_handler(before)
+    handler.rolloverAt = handler.computeRollover(int(clock.moment))
 
     logger = logging.getLogger("phishreport.daily")
     logger.warning("before midnight")
-    first = daily_logs / "phishreport-2026-11-17.log"
+    first = Path(handler._path_for(clock.moment))
     assert "before midnight" in first.read_text(encoding="utf-8")
 
     clock.moment = local_timestamp(2026, 11, 18, 0, 0, 30)
     logger.warning("after midnight")
 
-    second = daily_logs / "phishreport-2026-11-18.log"
+    second = Path(handler._path_for(clock.moment))
+    assert second != first
     assert second.is_file()
     assert "after midnight" in second.read_text(encoding="utf-8")
     assert "after midnight" not in first.read_text(encoding="utf-8")
