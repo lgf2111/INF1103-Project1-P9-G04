@@ -202,24 +202,33 @@ class EmailMonitor:
             saved = True
         except (AssessmentError, OSError, ValueError):
             AppLogging.log_failure(logger, "Could not save an email report")
-        alert = result["priority"] in ALERT_PRIORITIES
-        self._say(
-            f"Checked an email: priority {result['priority']}" + (", alert sent." if alert else ".")
+        if result["priority"] not in ALERT_PRIORITIES:
+            self._say(f"Checked an email: priority {result['priority']}.")
+            return CLEAN
+        source = EmailSource(raw)
+        text = self._formatter.format(
+            result, sender, source.subject, source.gmail_url(account.address)
         )
-        if alert:
-            source = EmailSource(raw)
+        # An unlink may have landed since the check above; it revokes the link before
+        # deleting it, and waits for this lock, so nothing is sent after it returns.
+        async with self._store.delivery(account.chat_id):
+            try:
+                if not await asyncio.to_thread(self._store.is_current, account):
+                    return LINK_CHANGED
+            except (AssessmentError, OSError, ValueError):
+                AppLogging.log_failure(logger, "Could not verify the Gmail link is still active")
+                return RETRY
+            self._say(f"Checked an email: priority {result['priority']}, alert sent.")
             await self._send(
                 account.chat_id,
-                self._formatter.format(
-                    result, sender, source.subject, source.gmail_url(account.address)
-                ),
+                text,
                 reply_markup=(
                     assessment_feedback_keyboard(result["assessment_id"])
                     if saved and self._feedback_service is not None
                     else None
                 ),
             )
-        return FLAGGED if alert else CLEAN
+        return FLAGGED
 
     async def _send(self, chat_id: int, text: str, reply_markup=None) -> None:
         try:

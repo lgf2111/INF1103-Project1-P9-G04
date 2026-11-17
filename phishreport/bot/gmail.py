@@ -1,5 +1,6 @@
 """Link a Gmail account over IMAP and read the mail that arrives after linking."""
 
+import asyncio
 import imaplib
 import json
 import os
@@ -13,6 +14,8 @@ from pathlib import Path
 from threading import Lock
 from urllib.parse import quote
 from uuid import uuid4
+
+from phishreport.errors import StorageFailure
 
 IMAP_HOST = "imap.gmail.com"
 ADDRESS_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -42,11 +45,20 @@ class AccountStore:
 
     The app password has to be stored to keep polling, so the file is created with
     mode 0600 and replaced atomically. It is never logged.
+
+    A missing file is an empty list, but an unreadable or malformed one raises
+    StorageFailure and is left untouched, so it is never overwritten by a new link.
+
+    Unlinking first revokes the link: after `revoke` no delivery for it passes
+    `is_current`. `delivery` serialises sends with unlinking, so an alert that is
+    already being sent finishes before the credential is deleted.
     """
 
     def __init__(self, path: str | os.PathLike[str]) -> None:
         self._path = Path(path)
         self._lock = Lock()
+        self._revoked: set[tuple[int, str | None]] = set()
+        self._gates: dict[int, asyncio.Lock] = {}
 
     def _read(self) -> dict[str, dict]:
         try:
@@ -54,9 +66,11 @@ class AccountStore:
                 data = json.load(stream)
         except FileNotFoundError:
             return {}
-        except (ValueError, UnicodeError):
-            return {}
-        return data if isinstance(data, dict) else {}
+        except (OSError, ValueError, UnicodeError) as error:
+            raise StorageFailure() from error
+        if not isinstance(data, dict) or not all(isinstance(v, dict) for v in data.values()):
+            raise StorageFailure()
+        return data
 
     def _write(self, data: dict[str, dict]) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
@@ -76,9 +90,11 @@ class AccountStore:
         accounts = []
         for value in data.values():
             try:
-                accounts.append(LinkedAccount(**value))
+                account = LinkedAccount(**value)
             except TypeError:
                 continue
+            if (account.chat_id, account.link_id) not in self._revoked:
+                accounts.append(account)
         return accounts
 
     def get(self, chat_id: int) -> LinkedAccount | None:
@@ -96,7 +112,24 @@ class AccountStore:
     def is_current(self, account: LinkedAccount) -> bool:
         """Return whether this snapshot still belongs to the active link."""
         with self._lock:
-            return self._matches_link(self._read().get(str(account.chat_id)), account)
+            return (
+                (account.chat_id, account.link_id) not in self._revoked
+                and self._matches_link(self._read().get(str(account.chat_id)), account)
+            )
+
+    def revoke(self, chat_id: int) -> bool:
+        """Stop the chat's active link from delivering anything. False if none is linked."""
+        with self._lock:
+            current = self._read().get(str(chat_id))
+            if current is None:
+                return False
+            self._revoked.add((chat_id, current.get("link_id")))
+            return True
+
+    def delivery(self, chat_id: int) -> asyncio.Lock:
+        """Return the lock held while an alert is sent and while the link is removed."""
+        with self._lock:
+            return self._gates.setdefault(chat_id, asyncio.Lock())
 
     def save(self, account: LinkedAccount) -> None:
         """Create or replace a link, even when the mailbox credentials match."""
@@ -129,6 +162,7 @@ class AccountStore:
                 return False
             del data[key]
             self._write(data)
+            self._revoked.discard((chat_id, current.get("link_id")))
             return True
 
 

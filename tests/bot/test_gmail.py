@@ -4,6 +4,7 @@ import asyncio
 import os
 import ssl
 import stat
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -20,7 +21,7 @@ from phishreport.bot.gmail import (
 from phishreport.bot.gmail_handlers import GmailLinkHandlers
 from phishreport.bot.monitor import CLEAN, EmailMonitor
 from phishreport.data import DataManager, JsonReportStorage
-from phishreport.errors import AIUnavailable
+from phishreport.errors import AIUnavailable, StorageFailure
 from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.logic import LogicManager
 
@@ -425,6 +426,7 @@ def test_account_storage_failures_get_safe_replies(operation, error_type):
     error = error_type("PRIVATE storage path")
     store.save.side_effect = error
     store.remove.side_effect = error
+    store.revoke.side_effect = error
     store.get.side_effect = error
     up = update()
     handlers = GmailLinkHandlers(store, lambda u: True, lambda a, p: FakeMailbox())
@@ -451,3 +453,119 @@ def test_progress_save_failure_retains_in_memory_uid(tmp_path, manual):
     monitor._store.advance_cursor.assert_called_once_with(account, 9)
     assert account.last_uid == 5
     assert store.get(1).last_uid == 5
+
+
+def test_unlink_during_inflight_assessment_delivers_no_alert(tmp_path):
+    monitor, store, bot, data = monitor_for(tmp_path, FakeMailbox([(9, RAW)]))
+    handlers = GmailLinkHandlers(store, lambda _: True)
+    saving, release = threading.Event(), threading.Event()
+
+    def hold_the_save(_report):
+        saving.set()
+        release.wait(5)
+
+    data.save.side_effect = hold_the_save
+
+    async def scenario():
+        poll = asyncio.create_task(monitor.poll_once())
+        await asyncio.to_thread(saving.wait, 5)
+        await handlers.unlink(update(), SimpleNamespace(args=[]))
+        release.set()
+        await poll
+
+    asyncio.run(scenario())
+
+    bot.send_message.assert_not_awaited()
+    assert store.get(1) is None
+
+
+def test_unlink_waits_for_an_alert_already_being_sent(tmp_path):
+    monitor, store, bot, _ = monitor_for(tmp_path, FakeMailbox([(9, RAW)]))
+    handlers = GmailLinkHandlers(store, lambda _: True)
+    events = []
+
+    async def scenario():
+        sending, release = asyncio.Event(), asyncio.Event()
+
+        async def slow_send(**_options):
+            sending.set()
+            await release.wait()
+            events.append("sent")
+
+        bot.send_message = slow_send
+        poll = asyncio.create_task(monitor.poll_once())
+        await sending.wait()
+        unlink = asyncio.create_task(handlers.unlink(update(), SimpleNamespace(args=[])))
+        await asyncio.sleep(0.05)
+        assert not unlink.done() and store.get(1) is None  # revoked, not yet removed
+        release.set()
+        await unlink
+        events.append("unlinked")
+        await poll
+
+    asyncio.run(scenario())
+
+    assert events == ["sent", "unlinked"]
+    assert store.all() == []
+
+
+@pytest.mark.parametrize("content", [b"{not json", b"[1, 2]", b'{"1": "oops"}', b"\xff\xfe"])
+def test_link_refuses_to_overwrite_a_corrupt_account_file(tmp_path, content):
+    path = tmp_path / "g.json"
+    path.write_bytes(content)
+    store = AccountStore(path)
+    up = update()
+
+    asyncio.run(GmailLinkHandlers(store, lambda u: True, lambda a, p: FakeMailbox()).link(
+        up, SimpleNamespace(args=["a@gmail.com", "password"]),
+    ))
+
+    assert "Could not save the Gmail link" in up.effective_chat.send_message.call_args.args[0]
+    with pytest.raises(StorageFailure):
+        store.save(LinkedAccount(1, "a@gmail.com", "x", 0))
+    assert path.read_bytes() == content
+
+
+def test_a_parse_error_is_not_an_empty_account_list(tmp_path):
+    path = tmp_path / "g.json"
+    path.write_text('{"1": {"chat_id": 1,')
+    store = AccountStore(path)
+
+    for read in (store.all, lambda: store.get(1), lambda: store.remove(1)):
+        with pytest.raises(StorageFailure):
+            read()
+    assert path.read_text() == '{"1": {"chat_id": 1,'
+
+
+def test_a_missing_account_file_is_an_empty_list(tmp_path):
+    assert AccountStore(tmp_path / "none.json").all() == []
+
+
+def test_unlinking_twice_is_a_no_op_with_the_same_message(tmp_path):
+    store = AccountStore(tmp_path / "g.json")
+    store.save(LinkedAccount(1, "a@gmail.com", "x", 0))
+    handlers = GmailLinkHandlers(store, lambda _: True)
+    replies = []
+    for _ in range(3):
+        up = update()
+        asyncio.run(handlers.unlink(up, SimpleNamespace(args=[])))
+        replies.append(up.effective_message.reply_text.call_args.args[0])
+
+    assert "unlinked" in replies[0]
+    assert replies[1] == replies[2] == "No Gmail account is linked to this chat."
+    assert store.all() == []
+
+
+def test_link_poll_alert_unlink_works_end_to_end(tmp_path):
+    monitor, store, bot, _ = monitor_for(tmp_path, FakeMailbox([(9, RAW)]))
+    handlers = GmailLinkHandlers(store, lambda _: True, lambda a, p: FakeMailbox(newest=5))
+    up = update()
+
+    asyncio.run(handlers.link(up, SimpleNamespace(args=["a@gmail.com", "x"])))
+    asyncio.run(monitor.poll_once())
+    asyncio.run(handlers.unlink(up, SimpleNamespace(args=[])))
+    asyncio.run(monitor.poll_once())
+
+    assert bot.send_message.await_count == 1
+    assert store.all() == []
+    assert "unlinked" in up.effective_message.reply_text.call_args.args[0]
