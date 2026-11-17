@@ -95,6 +95,66 @@ def test_keyboard_is_read_only_without_mutation_scoring_or_time_checks(session, 
     assert {key: value for key, value in session.__dict__.items() if key != "lock"} == values
 
 
+def test_confirmation_card_quotes_the_exact_text_and_warning():
+    assert messages.build_confirmation_card("Verify your password now") == (
+        'Check this message?\n\n"Verify your password now"\n\n'
+        "This text is sent to the AI provider for analysis."
+    )
+    assert messages.CONFIRMATION_PROMPT == "Check this message?"
+    assert (
+        messages.CONFIRMATION_WARNING
+        == "This text is sent to the AI provider for analysis."
+    )
+
+
+def test_confirmation_copy_is_exact():
+    assert messages.CONFIRMATION_YES == "Yes, check it"
+    assert messages.CONFIRMATION_CANCEL == "Cancel"
+    assert messages.CONFIRMATION_CANCELLED == "Cancelled. Nothing was sent or saved."
+    assert (
+        messages.CONFIRMATION_EXPIRED
+        == "This confirmation expired. Paste the message again."
+    )
+
+
+@pytest.mark.parametrize("length", [0, 1, 399, 400])
+def test_confirmation_preview_keeps_text_at_or_below_the_limit(length):
+    text = "Z" * length
+
+    assert messages.confirmation_preview(text) == text
+    assert messages.build_confirmation_card(text).count("Z") == length
+
+
+def test_confirmation_preview_truncates_to_400_characters_with_an_ellipsis():
+    text = "Z" * 401
+
+    preview = messages.confirmation_preview(text)
+
+    assert preview == "Z" * 400 + "..."
+    assert len(preview) == 403
+    card = messages.build_confirmation_card(text)
+    assert f'"{preview}"' in card
+    assert "Z" * 401 not in card
+
+
+def test_confirmation_keyboard_has_exact_yes_and_cancel_payloads():
+    token = "A" * 16
+
+    keyboard = messages.build_confirmation_keyboard(token)
+
+    assert isinstance(keyboard, InlineKeyboardMarkup)
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
+        ["Yes, check it", "Cancel"],
+    ]
+    assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
+        [f"exposure:{token}:confirm", f"exposure:{token}:cancel"],
+    ]
+    for row in keyboard.to_dict()["inline_keyboard"]:
+        for button in row:
+            assert set(button) == {"text", "callback_data"}
+            assert len(button["callback_data"].encode("utf-8")) < 64
+
+
 @pytest.fixture
 def assessed_session():
     service = AssessmentService(Mock(), LogicManager())

@@ -383,3 +383,77 @@ def test_session_token_is_urlsafe_and_fits_callback_payload(exposure_module, inp
 
     assert re.fullmatch(r"[A-Za-z0-9_-]{16}", session.token)
     assert len(f"exposure:{session.token}:password".encode("utf-8")) < 64
+
+
+@pytest.fixture
+def pending_record():
+    return {
+        "channel": "chat",
+        "message": "Verify your password now.",
+        "sender": None,
+        "metadata": {"labels": ["original"]},
+    }
+
+
+def test_pending_confirmation_waits_with_owned_source_and_raw_record(
+    exposure_module, pending_record,
+):
+    pending = exposure_module.PendingConfirmation(
+        pending_record, chat_id=101, user_id=202, message_id=303,
+    )
+
+    assert (pending.chat_id, pending.user_id, pending.message_id) == (101, 202, 303)
+    assert pending.record == pending_record
+    assert pending.card_message_id is None
+    assert pending.resolution is None
+    assert isinstance(pending.lock, asyncio.Lock) and not pending.lock.locked()
+    assert pending.created_at == pending.expires_at - 30 * 60
+    assert not pending.expired
+
+
+@pytest.mark.parametrize("direction", ["caller-to-pending", "pending-to-caller"])
+def test_pending_confirmation_deep_copies_the_record(
+    exposure_module, pending_record, direction,
+):
+    pending = exposure_module.PendingConfirmation(
+        pending_record, chat_id=101, user_id=202, message_id=303,
+    )
+
+    if direction == "caller-to-pending":
+        pending_record["metadata"]["labels"].append("changed")
+        assert pending.record["metadata"]["labels"] == ["original"]
+    else:
+        pending.record["metadata"]["labels"].append("changed")
+        assert pending_record["metadata"]["labels"] == ["original"]
+
+
+def test_pending_confirmation_expires_thirty_minutes_after_creation(
+    exposure_module, pending_record, monkeypatch,
+):
+    ticks = iter([100.0, 1899.999, 1900.0])
+    monkeypatch.setattr(exposure_module.time, "monotonic", lambda: next(ticks))
+
+    pending = exposure_module.PendingConfirmation(
+        pending_record, chat_id=101, user_id=202, message_id=303,
+    )
+
+    assert pending.created_at == 100.0
+    assert pending.expires_at == 1900.0
+    assert not pending.expired
+    assert pending.expired
+
+
+def test_pending_confirmation_token_is_urlsafe_and_fits_callback_payload(
+    exposure_module, pending_record,
+):
+    pending = exposure_module.PendingConfirmation(
+        pending_record, chat_id=101, user_id=202, message_id=303,
+    )
+
+    assert re.fullmatch(r"[A-Za-z0-9_-]{16}", pending.token)
+    assert len(f"exposure:{pending.token}:confirm".encode("utf-8")) < 64
+
+
+def test_confirmation_actions_are_disjoint_from_follow_up_answers(exposure_module):
+    assert exposure_module.CONFIRM_ACTIONS == {"confirm", "cancel"}
+    assert exposure_module.CONFIRM_ACTIONS.isdisjoint(exposure_module.ANSWER_ACTIONS)

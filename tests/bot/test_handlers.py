@@ -17,7 +17,7 @@ from telegram.ext import Application, CallbackQueryHandler, CommandHandler, Mess
 
 from phishreport.assessment import AssessmentService, AssessmentSnapshot
 from phishreport.bot import handlers as handlers_module
-from phishreport.bot.exposure import ExposureSession
+from phishreport.bot.exposure import ExposureSession, PendingConfirmation
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.main import main
 from phishreport.bot.messages import EXPOSURE_CALLBACK_PREFIX, ChatRecordBuilder, ResultFormatter
@@ -68,6 +68,44 @@ def cache_lookup_session(manager, *, message_id=100, created_at=10):
     manager._sessions[session.token] = session
     manager._source_sessions[(session.chat_id, session.user_id, message_id)] = session.token
     return session
+
+
+def confirmation_update(
+    pending, action, *, user_id=42, chat_id=ALLOWED_CHAT_ID, message_id=None,
+):
+    result = lookup_update(
+        chat_id=chat_id, user_id=user_id,
+        message_id=pending.card_message_id if message_id is None else message_id,
+        callback=True,
+    )
+    result.callback_query = SimpleNamespace(
+        data=f"exposure:{pending.token}:{action}", answer=AsyncMock(),
+        edit_message_text=AsyncMock(),
+    )
+    return result
+
+
+def cache_pending_confirmation(manager, *, message_id=100, text="Verify your password now"):
+    pending = PendingConfirmation(
+        ChatRecordBuilder().build(text),
+        chat_id=ALLOWED_CHAT_ID, user_id=42, message_id=message_id,
+    )
+    pending.card_message_id = message_id + 1000
+    manager._confirmations[pending.token] = pending
+    manager._confirmation_sources[
+        (pending.chat_id, pending.user_id, message_id)
+    ] = pending.token
+    return pending
+
+
+@pytest.fixture
+def confirmation_setup():
+    ai = Mock(**{"assess.return_value": FINDINGS})
+    manager = TelegramIOManager(
+        Mock(spec=DataManager), ALLOWED_CHAT_ID,
+        assessment=AssessmentService(ai, LogicManager()),
+    )
+    return manager, cache_pending_confirmation(manager), ai
 
 
 @pytest.fixture
@@ -264,6 +302,132 @@ def test_exposure_callback_lookup_happens_after_ack(card_setup):
 
     manager._find_exposure_session = find
     asyncio.run(manager.exposure_callback(incoming, None))
+
+
+def test_confirmation_cancel_discards_without_ai_or_storage(confirmation_setup):
+    manager, pending, ai = confirmation_setup
+    incoming = confirmation_update(pending, "cancel")
+
+    asyncio.run(manager.exposure_callback(incoming, None))
+
+    incoming.callback_query.answer.assert_awaited_once_with()
+    incoming.callback_query.edit_message_text.assert_awaited_once_with(
+        "Cancelled. Nothing was sent or saved.", reply_markup=None,
+    )
+    ai.assess.assert_not_called()
+    manager._data_manager.save.assert_not_called()
+    assert manager._confirmations == {} and manager._confirmation_sources == {}
+    assert manager._sessions == {} and manager._source_sessions == {}
+
+
+def test_confirmation_yes_assesses_once_saves_raw_text_and_reuses_the_card(confirmation_setup):
+    manager, pending, ai = confirmation_setup
+    raw = pending.record["message"]
+    card_id = pending.card_message_id
+    incoming = confirmation_update(pending, "confirm")
+
+    asyncio.run(manager.exposure_callback(incoming, None))
+
+    ai.assess.assert_called_once()
+    manager._data_manager.save.assert_called_once()
+    saved = manager._data_manager.save.call_args.args[0]
+    assert saved["schema_version"] == 3
+    assert saved["message"] == raw
+    assert "Check this message?" not in saved["message"]
+    session, = manager._sessions.values()
+    assert session.token == pending.token
+    assert session.assessment_id == saved["assessment_id"]
+    assert session.reply_message_id == card_id
+    assert session.record["message"] == raw
+    assert manager._confirmations == {} and manager._confirmation_sources == {}
+    incoming.callback_query.edit_message_text.assert_awaited_once()
+    text = incoming.callback_query.edit_message_text.call_args.args[0]
+    assert "Priority: Medium" in text and "Rule-based score: 60" in text
+    keyboard = incoming.callback_query.edit_message_text.call_args.kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
+        ["Clicked link", "Shared a password/OTP"],
+        ["Nothing happened"],
+    ]
+
+
+def test_duplicate_confirmation_taps_run_one_assessment_and_one_save(confirmation_setup):
+    manager, pending, ai = confirmation_setup
+    first = confirmation_update(pending, "confirm")
+    second = confirmation_update(pending, "confirm")
+
+    async def scenario():
+        await asyncio.gather(
+            manager.exposure_callback(first, None),
+            manager.exposure_callback(second, None),
+        )
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+
+    assert ai.assess.call_count == 1
+    manager._data_manager.save.assert_called_once()
+    session, = manager._sessions.values()
+    assert session.token == pending.token and session.saved
+    for incoming in (first, second):
+        incoming.callback_query.answer.assert_awaited_once_with()
+        incoming.callback_query.edit_message_text.assert_awaited_once()
+        text = incoming.callback_query.edit_message_text.call_args.args[0]
+        assert "Priority: Medium" in text and "Rule-based score: 60" in text
+
+
+def test_expired_confirmation_card_never_assesses_or_saves(confirmation_setup):
+    manager, pending, ai = confirmation_setup
+    pending.expires_at = 0
+    incoming = confirmation_update(pending, "confirm")
+
+    asyncio.run(manager.exposure_callback(incoming, None))
+
+    incoming.callback_query.answer.assert_awaited_once_with()
+    incoming.callback_query.edit_message_text.assert_awaited_once_with(
+        "This confirmation expired. Paste the message again.", reply_markup=None,
+    )
+    ai.assess.assert_not_called()
+    manager._data_manager.save.assert_not_called()
+    assert manager._confirmations == {} and manager._confirmation_sources == {}
+    assert manager._sessions == {}
+
+
+@pytest.mark.parametrize("case", ["wrong_owner", "wrong_chat", "wrong_card", "missing_card"])
+def test_confirmation_callback_requires_the_exact_card_owner_and_chat(
+    confirmation_setup, case,
+):
+    manager, pending, ai = confirmation_setup
+    incoming = confirmation_update(pending, "confirm")
+    if case == "wrong_owner":
+        incoming.effective_user.id += 1
+    elif case == "wrong_chat":
+        incoming.effective_chat.id += 1
+    elif case == "wrong_card":
+        incoming.effective_message.message_id += 1
+    else:
+        pending.card_message_id = None
+        incoming.effective_message.message_id = pending.message_id
+
+    asyncio.run(manager.exposure_callback(incoming, None))
+
+    incoming.callback_query.answer.assert_awaited_once_with()
+    ai.assess.assert_not_called()
+    manager._data_manager.save.assert_not_called()
+    assert manager._confirmations[pending.token] is pending
+    assert manager._sessions == {}
+
+
+def test_confirmation_without_assessment_service_stops_without_saving():
+    manager = TelegramIOManager(Mock(spec=DataManager), ALLOWED_CHAT_ID)
+    pending = cache_pending_confirmation(manager)
+    incoming = confirmation_update(pending, "confirm")
+
+    asyncio.run(manager.exposure_callback(incoming, None))
+
+    incoming.callback_query.edit_message_text.assert_awaited_once_with(
+        "Message assessment is not available right now.", reply_markup=None,
+    )
+    manager._data_manager.save.assert_not_called()
+    assert manager._confirmations == {} and manager._sessions == {}
 
 
 @pytest.mark.parametrize("backend", ["json", "sqlite"])

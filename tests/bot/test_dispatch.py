@@ -97,6 +97,32 @@ def callback(bot, session, action, query_id):
     }, bot)
 
 
+def confirmation_callback(bot, pending, action, query_id):
+    return Update.de_json({
+        "update_id": 3000 + query_id,
+        "callback_query": {
+            "id": str(query_id), "from": USER, "chat_instance": "offline-chat",
+            "data": f"exposure:{pending.token}:{action}",
+            "message": {
+                "message_id": pending.card_message_id, "date": 1,
+                "chat": CHAT, "from": BOT, "text": "Check this message?",
+            },
+        },
+    }, bot)
+
+
+async def wait_for_cards(manager, request):
+    await request.until(lambda: bool(manager._confirmations) and all(
+        item.card_message_id is not None for item in manager._confirmations.values()
+    ))
+
+
+async def wait_for_sessions(manager, request):
+    await request.until(lambda: bool(manager._sessions) and all(
+        item.reply_message_id is not None for item in manager._sessions.values()
+    ))
+
+
 def offline_application(monkeypatch, tmp_path, backend):
     """Keep main's real composition; replace only external AI and HTTP I/O."""
     module = import_module("phishreport.bot.main")
@@ -162,7 +188,7 @@ def test_main_dispatch_exposure_acceptance(
     monkeypatch, tmp_path, backend, flags, action, expected_exposure,
     final_score, final_priority,
 ):
-    """Real application routing saves the paste, then appends one honest revision."""
+    """Real application routing confirms, saves the paste, then appends one revision."""
     async def scenario():
         app, manager, ai, request, errors = offline_application(monkeypatch, tmp_path, backend)
         suspicious, credential_request, insufficient_context = flags
@@ -187,11 +213,32 @@ def test_main_dispatch_exposure_acceptance(
         try:
             source = message(app.bot, 100)
             await asyncio.wait_for(app.process_update(source), 2)
-            await request.until(lambda: bool(manager._sessions) and all(
-                item.reply_message_id is not None for item in manager._sessions.values()
-            ))
+            await wait_for_cards(manager, request)
+            pending, = manager._confirmations.values()
+            card, = [data for endpoint, data in request.calls if endpoint == "sendMessage"]
+            assert card["text"] == (
+                "Check this message?\n\n"
+                f'"{TEXT}"\n\n'
+                "This text is sent to the AI provider for analysis."
+            )
+            assert [
+                [button["text"] for button in row]
+                for row in card["reply_markup"]["inline_keyboard"]
+            ] == [["Yes, check it", "Cancel"]]
+            assert ai.assess.call_count == 0 and writes == []
+            assert manager._data_manager.load(strict=True) == []
+
+            await asyncio.wait_for(
+                app.process_update(confirmation_callback(app.bot, pending, "confirm", 1)), 2,
+            )
+            await wait_for_sessions(manager, request)
+            await request.until(lambda: sum(
+                endpoint == "editMessageText" for endpoint, _ in request.calls
+            ) == 1)
             session, = manager._sessions.values()
-            initial, = [data for endpoint, data in request.calls if endpoint == "sendMessage"]
+            assert ("answerCallbackQuery", {"callback_query_id": "1"}) in request.calls
+            initial = [data for endpoint, data in request.calls
+                       if endpoint == "editMessageText"][-1]
             assert f"Priority: {initial_priority.title()}" in initial["text"]
             assert f"Rule-based score: {initial_score}" in initial["text"]
             assert "Provisional assessment." not in initial["text"]
@@ -215,12 +262,12 @@ def test_main_dispatch_exposure_acceptance(
             assert manager._data_manager.load(strict=True) == [initial_report]
 
             await asyncio.wait_for(
-                app.process_update(callback(app.bot, session, action, 1)), 2,
+                app.process_update(callback(app.bot, session, action, 2)), 2,
             )
             await request.until(lambda: sum(
                 endpoint == "editMessageText" for endpoint, _ in request.calls
-            ) == 1)
-            assert ("answerCallbackQuery", {"callback_query_id": "1"}) in request.calls
+            ) == 2)
+            assert ("answerCallbackQuery", {"callback_query_id": "2"}) in request.calls
             final_edit = [data for endpoint, data in request.calls
                           if endpoint == "editMessageText"][-1]
             assert "Provisional assessment." not in final_edit["text"]
@@ -254,7 +301,7 @@ def test_main_dispatch_exposure_acceptance(
             frozen_state = deepcopy((session.result, session.exposure, session.report))
             # Replays and stale labels are acknowledged without another write.
             for query_id, stale in enumerate(
-                (action, "finish", "skip", "retry", "downloaded", "otp", "both"), 2,
+                (action, "finish", "skip", "retry", "downloaded", "otp", "both"), 3,
             ):
                 await asyncio.wait_for(
                     app.process_update(callback(app.bot, session, stale, query_id)), 2,
@@ -302,7 +349,7 @@ def test_main_dispatch_stays_responsive_during_exposure_storage(monkeypatch, tmp
             if report["exposure"]["clicked"] is not True:
                 return actual_save(report)
             ack_before_write.append(
-                ("answerCallbackQuery", {"callback_query_id": "1"}) in request.calls
+                ("answerCallbackQuery", {"callback_query_id": "2"}) in request.calls
             )
             writes.append(deepcopy(report))
             loop.call_soon_threadsafe(started.set)
@@ -312,9 +359,12 @@ def test_main_dispatch_stays_responsive_during_exposure_storage(monkeypatch, tmp
         monkeypatch.setattr(manager._data_manager, "save", blocked_save)
         try:
             await asyncio.wait_for(app.process_update(message(app.bot, 100)), 2)
-            await request.until(lambda: bool(manager._sessions) and all(
-                session.reply_message_id is not None for session in manager._sessions.values()
-            ))
+            await wait_for_cards(manager, request)
+            pending, = manager._confirmations.values()
+            await asyncio.wait_for(
+                app.process_update(confirmation_callback(app.bot, pending, "confirm", 1)), 2,
+            )
+            await wait_for_sessions(manager, request)
             session, = manager._sessions.values()
             assert ai.assess.call_count == 1
             assert session.saved and session.result["score"] == 60
@@ -322,7 +372,7 @@ def test_main_dispatch_stays_responsive_during_exposure_storage(monkeypatch, tmp
             assert initial["result"]["priority"] == "MEDIUM"
 
             await asyncio.wait_for(
-                app.process_update(callback(app.bot, session, "clicked", 1)), 2,
+                app.process_update(callback(app.bot, session, "clicked", 2)), 2,
             )
             await asyncio.wait_for(started.wait(), 3)
             assert ack_before_write == [True]
@@ -331,30 +381,25 @@ def test_main_dispatch_stays_responsive_during_exposure_storage(monkeypatch, tmp
             assert ai.assess.call_count == 1
 
             await asyncio.wait_for(app.process_update(message(app.bot, 101)), 2)
+            await wait_for_cards(manager, request)
             await asyncio.wait_for(app.process_update(message(app.bot, 102, "/start")), 2)
-            async def wait_for_sessions(count):
-                while len(manager._sessions) < count:
-                    await asyncio.sleep(0.01)
-
-            await asyncio.wait_for(wait_for_sessions(2), 2)
             assert any(endpoint == "sendMessage" and "Welcome" in data["text"]
                        for endpoint, data in request.calls)
             assert not release.is_set()
-            assert ai.assess.call_count == 2  # One AI call per distinct source, none for answers.
-            assert len(writes) == 1
-            # The new paste waits for the shared writer, not for the event loop.
-            assert sum(item.reply_message_id is not None
-                       for item in manager._sessions.values()) == 1
+            # The unconfirmed paste waits for a tap, so it runs no AI and no save.
+            assert ai.assess.call_count == 1
+            assert len(writes) == 1 and len(manager._sessions) == 1
             release.set()
-            await request.until(lambda: all(
-                item.reply_message_id is not None for item in manager._sessions.values()
-            ))
             await request.until(lambda: session.result["score"] == 80)
+            second, = manager._confirmations.values()
+            second_confirm = confirmation_callback(app.bot, second, "confirm", 3)
+            await asyncio.wait_for(app.process_update(second_confirm), 2)
+            await request.until(lambda: len(manager._sessions) == 2)
             await asyncio.wait_for(
-                app.process_update(callback(app.bot, session, "password", 3)), 2,
+                app.process_update(callback(app.bot, session, "password", 4)), 2,
             )
             await request.until(lambda: session.result["score"] == 90)
-            for query_id, action in ((4, "finish"), (5, "retry")):
+            for query_id, action in ((5, "finish"), (6, "retry")):
                 await asyncio.wait_for(
                     app.process_update(callback(app.bot, session, action, query_id)), 2,
                 )
@@ -411,15 +456,19 @@ def test_main_dispatch_start_while_initial_ai_is_blocked(monkeypatch, tmp_path):
         ai.assess.side_effect = blocked_ai
         try:
             await asyncio.wait_for(app.process_update(message(app.bot, 100)), 2)
-            await asyncio.wait_for(started.wait(), 3)
+            await wait_for_cards(manager, request)
+            pending, = manager._confirmations.values()
             await asyncio.wait_for(app.process_update(message(app.bot, 101, "/start")), 2)
             assert any(endpoint == "sendMessage" and "Welcome" in data["text"]
                        for endpoint, data in request.calls)
             assert not release.is_set() and not manager._sessions
+            await asyncio.wait_for(
+                app.process_update(confirmation_callback(app.bot, pending, "confirm", 1)), 2,
+            )
+            await asyncio.wait_for(started.wait(), 3)
+            assert not manager._sessions
             release.set()
-            await request.until(lambda: bool(manager._sessions) and all(
-                session.reply_message_id is not None for session in manager._sessions.values()
-            ))
+            await wait_for_sessions(manager, request)
         finally:
             release.set()
             await asyncio.wait_for(app.stop(), 5)
@@ -443,18 +492,24 @@ def test_main_dispatch_malformed_exposure_is_acknowledged_and_rejected(
         await app.start()
         try:
             await asyncio.wait_for(app.process_update(message(app.bot, 100)), 2)
-            await request.until(lambda: bool(manager._sessions) and all(
-                session.reply_message_id is not None for session in manager._sessions.values()
-            ))
+            await wait_for_cards(manager, request)
+            pending, = manager._confirmations.values()
+            await asyncio.wait_for(
+                app.process_update(confirmation_callback(app.bot, pending, "confirm", 1)), 2,
+            )
+            await wait_for_sessions(manager, request)
             session, = manager._sessions.values()
             await asyncio.wait_for(
-                app.process_update(callback(app.bot, session, action, 1)), 2,
+                app.process_update(callback(app.bot, session, action, 2)), 2,
             )
-            await request.until(lambda: any(
+            await request.until(lambda: sum(
                 endpoint == "editMessageText" for endpoint, _ in request.calls
+            ) == 2)
+            await request.until(lambda: any(
+                endpoint == "answerCallbackQuery" and data["callback_query_id"] == "2"
+                for endpoint, data in request.calls
             ))
-            assert ("answerCallbackQuery", {"callback_query_id": "1"}) in request.calls
-            edit, = [data for endpoint, data in request.calls if endpoint == "editMessageText"]
+            edit = [data for endpoint, data in request.calls if endpoint == "editMessageText"][-1]
             assert edit["text"] == (
                 "This assessment is closed. "
                 "Paste the message again to start a new assessment."
@@ -487,19 +542,39 @@ def test_main_shared_command_dispatch_preserves_content_and_exposure_save(
         try:
             await app.process_update(message(app.bot, 100, raw))
             await request.until(lambda: any(e == "sendMessage" for e, _ in request.calls))
-            session, = manager._sessions.values()
+            if prefix.startswith("/check"):
+                session, = manager._sessions.values()
+                initial_reply = next(
+                    data["text"] for endpoint, data in request.calls if endpoint == "sendMessage"
+                )
+                query_id = 1
+            else:
+                await wait_for_cards(manager, request)
+                pending, = manager._confirmations.values()
+                card = next(
+                    data["text"] for endpoint, data in request.calls if endpoint == "sendMessage"
+                )
+                assert "Check this message?" in card
+                ai.assess.assert_not_called()
+                assert manager._data_manager.load(strict=True) == []
+                await app.process_update(confirmation_callback(app.bot, pending, "confirm", 1))
+                await wait_for_sessions(manager, request)
+                await request.until(lambda: any(e == "editMessageText" for e, _ in request.calls))
+                session, = manager._sessions.values()
+                initial_reply = [
+                    data["text"] for endpoint, data in request.calls
+                    if endpoint == "editMessageText"
+                ][-1]
+                query_id = 2
             assert session.record["message"] == expected
-            initial_reply = next(
-                data["text"] for endpoint, data in request.calls if endpoint == "sendMessage"
-            )
             assert "Priority: Medium" in initial_reply
             assert "Exposure unconfirmed" not in initial_reply
             initial, = manager._data_manager.load(strict=True)
             assert initial["message"] == expected
             assert initial["result"]["priority"] == "MEDIUM"
-            await app.process_update(callback(app.bot, session, "clicked", 1))
+            await app.process_update(callback(app.bot, session, "clicked", query_id))
             await request.until(lambda: any(e == "editMessageText" for e, _ in request.calls))
-            assert session.result["score"] == 80
+            await request.until(lambda: session.result["score"] == 80)
             await request.until(lambda: len(manager._data_manager.load(strict=True)) == 2)
             initial, saved = manager._data_manager.load(strict=True)
             assert initial["assessment_id"] == saved["assessment_id"]
@@ -718,10 +793,16 @@ def test_one_file_extends_cli_telegram_help_and_menu_without_changing_free_text(
 
             original = "  Untouched plain CASE\nKeep  spaces  "
             await app.process_update(message(app.bot, 102, original))
-            await request.until(lambda: bool(manager._sessions) and all(
-                session.reply_message_id is not None for session in manager._sessions.values()
-            ))
+            await wait_for_cards(manager, request)
             builder.build.assert_called_once_with(original)
+            ai.assess.assert_not_called()
+            assert not manager._sessions
+            bot_save.assert_not_called()
+            card = [data["text"] for e, data in request.calls if e == "sendMessage"][-1]
+            assert "Check this message?" in card
+            pending, = manager._confirmations.values()
+            await app.process_update(confirmation_callback(app.bot, pending, "confirm", 1))
+            await wait_for_sessions(manager, request)
             ai.assess.assert_called_once()
             session, = manager._sessions.values()
             assert session.record["message"] == original and session.findings == FINDINGS

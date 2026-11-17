@@ -4,6 +4,7 @@ import asyncio
 import re
 import secrets
 import time
+from copy import deepcopy
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
@@ -12,7 +13,12 @@ from telegram.ext import ContextTypes
 
 from phishreport.ai.errors import AIErrorTranslator
 from phishreport.assessment import AssessmentSnapshot
-from phishreport.bot.exposure import ExposureSession
+from phishreport.bot.exposure import (
+    CANCEL_ACTION,
+    CONFIRM_ACTIONS,
+    ExposureSession,
+    PendingConfirmation,
+)
 from phishreport.bot.feedback_ui import (
     CATEGORY_CODES,
     CATEGORY_LABELS,
@@ -21,9 +27,13 @@ from phishreport.bot.feedback_ui import (
     feedback_comment_keyboard,
 )
 from phishreport.bot.messages import (
+    CONFIRMATION_CANCELLED,
+    CONFIRMATION_EXPIRED,
     EXPOSURE_CALLBACK_PREFIX,
     ChatRecordBuilder,
     ResultFormatter,
+    build_confirmation_card,
+    build_confirmation_keyboard,
     build_exposure_keyboard,
 )
 from phishreport.data import DataManager
@@ -66,6 +76,9 @@ class TelegramIOManager:
         # Keep exposure sessions by token and source (chat, user, message) identity.
         self._sessions: dict[str, ExposureSession] = {}
         self._source_sessions: dict[tuple[int, int, int], str] = {}
+        # Keep unassessed messages behind a confirmation card until the owner taps.
+        self._confirmations: dict[str, PendingConfirmation] = {}
+        self._confirmation_sources: dict[tuple[int, int, int], str] = {}
         self._session_limit = 1000
 
     @property
@@ -145,6 +158,230 @@ class TelegramIOManager:
             return candidate
         return None
 
+    def _find_pending_confirmation(
+        self, update: Update, token: str | None = None,
+    ) -> PendingConfirmation | None:
+        """Resolve an owned confirmation card without changing a live tap."""
+        chat = getattr(update, "effective_chat", None)
+        user = getattr(update, "effective_user", None)
+        message = getattr(update, "effective_message", None)
+        chat_id = getattr(chat, "id", None)
+        user_id = getattr(user, "id", None)
+        message_id = getattr(message, "message_id", None)
+        if any(type(value) is not int for value in (chat_id, user_id, message_id)):
+            return None
+        if getattr(chat, "type", None) != ChatType.PRIVATE or not self.is_allowed(update):
+            return None
+
+        query = getattr(update, "callback_query", None)
+        if token is None:
+            if query is not None:
+                return None
+            source = (chat_id, user_id, message_id)
+            candidate = self._confirmations.get(self._confirmation_sources.get(source))
+            if candidate is None or (
+                candidate.chat_id, candidate.user_id, candidate.message_id
+            ) != source:
+                return None
+            if candidate.expired and not candidate.lock.locked():
+                self._forget_confirmation(candidate)
+                return None
+        else:
+            if query is None or not isinstance(token, str):
+                return None
+            if re.fullmatch(r"[A-Za-z0-9_-]{16}", token) is None:
+                return None
+            candidate = self._confirmations.get(token)
+            if candidate is None or (
+                candidate.chat_id != chat_id or candidate.user_id != user_id
+                or candidate.card_message_id is None
+                or candidate.card_message_id != message_id
+            ):
+                return None
+        return candidate
+
+    def _forget_confirmation(self, pending: PendingConfirmation) -> None:
+        """Drop one confirmation and its source index without touching storage."""
+        self._confirmations.pop(pending.token, None)
+        source = (pending.chat_id, pending.user_id, pending.message_id)
+        if self._confirmation_sources.get(source) == pending.token:
+            del self._confirmation_sources[source]
+
+    def _prune_confirmations(self) -> None:
+        """Drop expired, unlocked confirmations and their source indexes."""
+        now = time.monotonic()
+        for token, pending in list(self._confirmations.items()):
+            if now >= pending.expires_at and not pending.lock.locked():
+                del self._confirmations[token]
+        for source, token in list(self._confirmation_sources.items()):
+            if token not in self._confirmations:
+                del self._confirmation_sources[source]
+
+    async def _request_confirmation(self, update: Update, text: str) -> None:
+        """Show one card and retain the validated record until the user answers."""
+        message = update.effective_message
+        chat_id = update.effective_chat.id
+        user_id = update.effective_user.id
+        message_id = message.message_id
+
+        # Replays of an assessed source or an open card must not add another message.
+        if self._find_exposure_session(update) is not None:
+            return
+        if self._find_pending_confirmation(update) is not None:
+            return
+
+        try:
+            record = self._record_builder.build(text)
+        except AssessmentError as error:
+            await message.reply_text(self._error_translator.translate(error))
+            return
+        except (ValueError, OSError):
+            await message.reply_text("Invalid input. Please revise it and try again.")
+            return
+
+        self._prune_confirmations()
+        if len(self._sessions) + len(self._confirmations) >= self._session_limit:
+            for pending in sorted(
+                (
+                    item for item in self._confirmations.values()
+                    if not item.lock.locked()
+                ),
+                key=lambda item: item.created_at,
+            ):
+                if len(self._sessions) + len(self._confirmations) < self._session_limit:
+                    break
+                self._forget_confirmation(pending)
+            if len(self._sessions) + len(self._confirmations) >= self._session_limit:
+                await message.reply_text(
+                    "Too many recent assessments. Please try again shortly."
+                )
+                return
+
+        pending = PendingConfirmation(
+            record, chat_id=chat_id, user_id=user_id, message_id=message_id,
+        )
+        while pending.token in self._sessions or pending.token in self._confirmations:
+            pending.token = secrets.token_urlsafe(12)
+        reply = await message.reply_text(
+            build_confirmation_card(text),
+            reply_markup=build_confirmation_keyboard(pending.token),
+        )
+        card_id = getattr(reply, "message_id", None)
+        if type(card_id) is not int:
+            # Without a usable card identifier the yes/no tap cannot be owned.
+            return
+        pending.card_message_id = card_id
+        self._confirmations[pending.token] = pending
+        self._confirmation_sources[(chat_id, user_id, message_id)] = pending.token
+
+    async def _confirmation_callback(
+        self, update: Update, query, token: str, action: str,
+    ) -> None:
+        """Apply one yes/no tap and reuse the same card for the saved assessment."""
+        pending = self._find_pending_confirmation(update, token)
+        if pending is None:
+            await self._replay_settled_confirmation(update, query, token)
+            return
+
+        async with pending.lock:
+            if self._confirmations.get(pending.token) is not pending:
+                # A duplicate tap waited for the first one to settle this card.
+                await self._replay_settled_confirmation(update, query, token, pending)
+                return
+            if pending.expired:
+                pending.resolution = "expired"
+                self._forget_confirmation(pending)
+                await query.edit_message_text(CONFIRMATION_EXPIRED, reply_markup=None)
+                return
+            if action == CANCEL_ACTION:
+                pending.resolution = "cancelled"
+                self._forget_confirmation(pending)
+                await query.edit_message_text(CONFIRMATION_CANCELLED, reply_markup=None)
+                return
+            await self._confirm_pending(update, query, pending)
+
+    async def _replay_settled_confirmation(
+        self, update: Update, query, token: str, pending: PendingConfirmation | None = None,
+    ) -> None:
+        """Answer a repeated tap without running the assessment a second time."""
+        if pending is None or pending.resolution == "confirmed":
+            session = self._find_exposure_session(update, token)
+            if session is not None:
+                async with session.lock:
+                    if not session.saved:
+                        # The original yes is still saving and will edit this card.
+                        return
+                    text = self._formatter.format(session.result, session=session)
+                    await query.edit_message_text(
+                        text, reply_markup=build_exposure_keyboard(session),
+                    )
+                return
+        if pending is not None and pending.resolution == "cancelled":
+            await query.edit_message_text(CONFIRMATION_CANCELLED, reply_markup=None)
+            return
+        await query.edit_message_text(CONFIRMATION_EXPIRED, reply_markup=None)
+
+    async def _confirm_pending(
+        self, update: Update, query, pending: PendingConfirmation,
+    ) -> None:
+        """Assess, save and replace the confirmation card in one message."""
+        if self._assessment is None:
+            pending.resolution = "failed"
+            self._forget_confirmation(pending)
+            await query.edit_message_text(
+                "Message assessment is not available right now.", reply_markup=None,
+            )
+            return
+
+        try:
+            record = deepcopy(pending.record)
+            snapshot = await asyncio.to_thread(
+                self._assessment.assess_with_findings, record,
+            )
+        except AssessmentError as error:
+            pending.resolution = "failed"
+            self._forget_confirmation(pending)
+            await query.edit_message_text(
+                self._error_translator.translate(error), reply_markup=None,
+            )
+            return
+
+        session = ExposureSession(
+            record, snapshot,
+            chat_id=pending.chat_id, user_id=pending.user_id,
+            message_id=pending.message_id,
+        )
+        session.token = pending.token
+        while session.token in self._sessions:
+            session.token = secrets.token_urlsafe(12)
+        session.reply_message_id = pending.card_message_id
+        try:
+            report = session.build_report(self._assessment)
+            await self._write_report(
+                report,
+                lambda: session.commit(session.exposure, session.result, report),
+            )
+        except asyncio.CancelledError:
+            raise
+        except (AssessmentError, OSError, ValueError, RuntimeError):
+            pending.resolution = "failed"
+            self._forget_confirmation(pending)
+            await query.edit_message_text(
+                "Could not save the report. Please try again.", reply_markup=None,
+            )
+            return
+
+        self._sessions[session.token] = session
+        self._source_sessions[(pending.chat_id, pending.user_id, pending.message_id)] = (
+            session.token
+        )
+        pending.resolution = "confirmed"
+        self._forget_confirmation(pending)
+        await query.edit_message_text(
+            self._formatter.format(session.result, session=session),
+            reply_markup=build_exposure_keyboard(session),
+        )
+
     async def _write_report(self, report: dict, commit=None) -> None:
         """Append one validated revision, shielding the write from cancellation.
 
@@ -190,11 +427,15 @@ class TelegramIOManager:
         payload = getattr(query, "data", None)
         match = re.fullmatch(
             rf"{re.escape(EXPOSURE_CALLBACK_PREFIX)}:([A-Za-z0-9_-]{{16}}):"
-            r"(clicked|password|nothing)",
+            r"(clicked|password|nothing|confirm|cancel)",
             payload,
         ) if isinstance(payload, str) else None
-        session = self._find_exposure_session(update, match[1]) if match else None
         try:
+            if match and match[2] in CONFIRM_ACTIONS:
+                await self._confirmation_callback(update, query, match[1], match[2])
+                return
+
+            session = self._find_exposure_session(update, match[1]) if match else None
             if session is None:
                 await query.edit_message_text(unavailable, reply_markup=None)
                 return
@@ -264,7 +505,7 @@ class TelegramIOManager:
             await message.reply_text("Connection check passed.")
 
     async def assess_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Cache one assessment per source and deliver provisional exposure questions."""
+        """Ask before assessing free text, then cache one assessment per source."""
         chat = getattr(update, "effective_chat", None)
         user = getattr(update, "effective_user", None)
         message = getattr(update, "effective_message", None)
@@ -335,6 +576,10 @@ class TelegramIOManager:
                 await message.reply_text("Message assessment is not available right now.")
                 return
 
+            if command is None:
+                await self._request_confirmation(update, text)
+                return
+
             session = self._find_exposure_session(update)
             if session is None:
                 if len(self._sessions) >= self._session_limit:
@@ -342,55 +587,36 @@ class TelegramIOManager:
                         "Too many recent assessments. Please try again shortly."
                     )
                     return
-                if command is None:
-                    try:
-                        record = self._record_builder.build(text)
-                    except AssessmentError as error:
-                        await message.reply_text(self._error_translator.translate(error))
-                        return
-                    except (ValueError, OSError):
-                        await message.reply_text("Invalid input. Please revise it and try again.")
-                        return
-                if command is not None:
-                    request = CommandRequest(text, "telegram")
-                    try:
-                        reply = await asyncio.to_thread(router.route, request)
-                    except (AssessmentError, OSError, ValueError, RuntimeError) as error:
-                        if command.policy.failure != "assessment":
-                            failure_text = failure_messages[command.policy.failure]
-                        elif isinstance(error, AssessmentError):
-                            failure_text = self._error_translator.translate(error)
-                        elif isinstance(error, (ValueError, RuntimeError)):
-                            raise
-                        else:
-                            failure_text = "Sorry, the check failed. Please try again."
-                        await message.reply_text(failure_text)
-                        return
-                    if reply.kind != "assessment":
-                        await message.reply_text(reply.text)
-                        return
-                    outcome = request.session["check_outcome"]
-                    if (not isinstance(outcome, CheckOutcome)
-                            or not isinstance(outcome.findings, dict)):
-                        raise TypeError(
-                            "Assessment commands must retain a CheckOutcome with findings."
-                        )
-                    record = outcome.record
-                    snapshot = AssessmentSnapshot(outcome.findings, outcome.result)
-                else:
-                    try:
-                        # Retain findings for later answers; AI work stays off-loop.
-                        snapshot = await asyncio.to_thread(
-                            self._assessment.assess_with_findings, record,
-                        )
-                    except AssessmentError as error:
-                        await message.reply_text(self._error_translator.translate(error))
-                        return
+                request = CommandRequest(text, "telegram")
+                try:
+                    reply = await asyncio.to_thread(router.route, request)
+                except (AssessmentError, OSError, ValueError, RuntimeError) as error:
+                    if command.policy.failure != "assessment":
+                        failure_text = failure_messages[command.policy.failure]
+                    elif isinstance(error, AssessmentError):
+                        failure_text = self._error_translator.translate(error)
+                    elif isinstance(error, (ValueError, RuntimeError)):
+                        raise
+                    else:
+                        failure_text = "Sorry, the check failed. Please try again."
+                    await message.reply_text(failure_text)
+                    return
+                if reply.kind != "assessment":
+                    await message.reply_text(reply.text)
+                    return
+                outcome = request.session["check_outcome"]
+                if (not isinstance(outcome, CheckOutcome)
+                        or not isinstance(outcome.findings, dict)):
+                    raise TypeError(
+                        "Assessment commands must retain a CheckOutcome with findings."
+                    )
+                record = outcome.record
+                snapshot = AssessmentSnapshot(outcome.findings, outcome.result)
 
                 session = ExposureSession(
                     record, snapshot, chat_id=chat_id, user_id=user_id, message_id=message_id,
                 )
-                while session.token in self._sessions:
+                while session.token in self._sessions or session.token in self._confirmations:
                     session.token = secrets.token_urlsafe(12)
                 # Index before delivery: Telegram failures must not lose the AI
                 # snapshot or the saved revision when delivery is retried.

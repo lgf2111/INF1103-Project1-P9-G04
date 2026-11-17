@@ -1,4 +1,4 @@
-"""Per-assessment state for an exposure card that is saved as soon as it is shown."""
+"""Per-assessment state for confirmation cards and saved exposure follow-ups."""
 
 import asyncio
 import secrets
@@ -10,6 +10,42 @@ from phishreport.assessment import AssessmentService, AssessmentSnapshot
 
 SESSION_TIMEOUT_SECONDS = 30 * 60
 ANSWER_ACTIONS = {"clicked", "password"}
+CONFIRM_ACTION = "confirm"
+CANCEL_ACTION = "cancel"
+CONFIRM_ACTIONS = {CONFIRM_ACTION, CANCEL_ACTION}
+
+
+class PendingConfirmation:
+    """Keep one unassessed message until its owner confirms or cancels it.
+
+    Nothing here calls AI or storage. The raw record waits behind a token for
+    the matching yes/no tap, and expires like an exposure session so a stale
+    pasted message cannot be assessed hours later.
+    """
+
+    def __init__(
+        self,
+        record: dict,
+        *,
+        chat_id: int,
+        user_id: int,
+        message_id: int,
+    ) -> None:
+        self.record = deepcopy(record)
+        self.chat_id = chat_id
+        self.user_id = user_id
+        self.message_id = message_id
+        self.card_message_id = None
+        self.token = secrets.token_urlsafe(12)
+        self.created_at = time.monotonic()
+        self.expires_at = self.created_at + SESSION_TIMEOUT_SECONDS
+        self.resolution = None
+        self.lock = asyncio.Lock()
+
+    @property
+    def expired(self) -> bool:
+        """Whether the confirmation card no longer accepts a tap."""
+        return time.monotonic() >= self.expires_at
 
 
 class ExposureSession:

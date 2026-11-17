@@ -45,6 +45,15 @@ def _callback(session, action):
     return update
 
 
+def _confirmation(pending):
+    update = _update(message_id=pending.card_message_id)
+    update.callback_query = SimpleNamespace(
+        data=f"exposure:{pending.token}:confirm",
+        answer=AsyncMock(), edit_message_text=AsyncMock(),
+    )
+    return update
+
+
 def test_cli_saved_plain_report_round_trips_with_the_displayed_identifier(data_manager):
     ai = Mock(**{"assess.return_value": FINDINGS})
     io = Mock()
@@ -104,6 +113,9 @@ def test_telegram_saved_exposure_report_round_trips_after_follow_up(
 
     async def scenario():
         await manager.assess_message(_update(MESSAGE), None)
+        pending, = manager._confirmations.values()
+        assert data_manager.load(strict=True) == []
+        await manager.exposure_callback(_confirmation(pending), None)
         session, = manager._sessions.values()
         initial, = data_manager.load(strict=True)
         assert initial["result"]["priority"] == "MEDIUM"

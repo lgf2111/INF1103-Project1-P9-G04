@@ -226,7 +226,7 @@ Enter these commands at the CLI menu or in the bot's private chat. CLI choices
 
 | Command | CLI | Telegram |
 | --- | --- | --- |
-| `/check <text>` | Assess pasted chat text using the existing link, file and exposure prompts; save and display the result. | Assess the text once and save a v3 report immediately, then offer three follow-up answers that append a revision using the retained AI findings. |
+| `/check <text>` | Assess pasted chat text using the existing link, file and exposure prompts; save and display the result. | Assess the text once and save a v3 report immediately, then offer three follow-up answers that append a revision using the retained AI findings. Plain pasted text asks for confirmation first. |
 | `/help` | List the shared commands. | List the shared commands; the Gmail commands below remain available. |
 | `/status` | Show that the CLI conversation is active and count saved reports. | Count the requesting user's active exposure sessions awaiting answers and count saved reports. |
 
@@ -241,8 +241,9 @@ Bot-addressed forms such as `/check@botname` are not recognized by the shared
 router and follow Telegram's default content path.
 The router accepts leading whitespace and preserves the argument's internal and
 trailing whitespace. Ordinary pasted Telegram text still takes the default
-assessment path. Unknown slash input also takes that path in Telegram; the CLI
-instead shows its invalid-choice message. While Telegram is collecting a feedback
+assessment path, with a confirmation card before any AI call or save. Unknown
+slash input also takes that path in Telegram; the CLI instead shows its
+invalid-choice message. While Telegram is collecting a feedback
 comment, text reaching this handler, including `/check`, `/help` and `/status`,
 is treated as that comment. The existing Start and Gmail handlers retain priority.
 
@@ -259,14 +260,29 @@ button. The button acknowledges the tap and checks whether the existing
 DataManager can read local history. Missing or empty history passes. If the
 read fails, the bot asks the user to retry.
 
-**Assessing a message:** paste text in a private chat. The bot calls the shared
-`AssessmentService` once for validated AI findings, saves a schema v3 report and
-shows a compact card with priority, score, matched rule, reasons and recommended
-actions. It extracts the first supported URL and filename clue (or an attachment
-mention) from the text; these are not verified attachments or evidence of any
-interaction. The card leaves out the rule trace, provisional notes and expiry text.
+**Assessing a pasted message:** paste text in a private chat. Before any AI or
+storage work, the bot replies with a confirmation card: **Check this message?**,
+the text in double quotes, and **This text is sent to the AI provider for
+analysis.** The preview cuts at 400 characters and adds `...` when the text is
+longer. The keyboard offers **Yes, check it** and **Cancel**; nothing is sent or
+saved until **Yes, check it** is tapped.
 
-Below the card, one keyboard offers three follow-ups:
+**Yes, check it** calls the shared `AssessmentService` once for validated AI
+findings, saves a schema v3 report and replaces the confirmation card in the same
+chat message with a compact result card showing priority, score, matched rule,
+reasons and recommended actions. It extracts the first supported URL and filename
+clue (or an attachment mention) from the text; these are not verified attachments
+or evidence of any interaction. The card leaves out the rule trace, provisional
+notes and expiry text. The saved `message` is exactly the pasted text, never the
+confirmation wrapper.
+
+**Cancel** replaces the card with **Cancelled. Nothing was sent or saved.** and
+removes the keyboard without an AI call or a stored report. An unanswered
+confirmation expires after 30 minutes; tapping it then replies **This confirmation
+expired. Paste the message again.** and runs no assessment. `/check <text>` is
+unchanged and still assesses and saves immediately without a confirmation card.
+
+Below the result card, one keyboard offers three follow-ups:
 
 - **Clicked link**
 - **Shared a password/OTP**
@@ -279,12 +295,13 @@ and keeps the two answer buttons. **Nothing happened** only removes the keyboard
 the saved MEDIUM report is untouched. Answers can be combined: tapping both
 buttons appends two revisions under the same `assessment_id`.
 
-The pasted report is saved before its card appears, so closing the chat or
-restarting the bot loses only the optional follow-ups, never the initial report.
-Sessions still expire after 30 minutes, but no expiry text appears in chat.
-Expired or unknown buttons reply that the assessment is closed. A failed initial
-write replies **Could not save the report. Please try again.** and leaves no
-partial session; a failed follow-up keeps the saved card and can be retried.
+A confirmed report is saved before its result card replaces the confirmation card,
+so closing the chat or restarting the bot loses only the optional follow-ups, never
+the initial report. Exposure sessions still expire after 30 minutes, but no expiry
+text appears in chat. Expired or unknown follow-up buttons reply that the assessment
+is closed. A failed initial write replies **Could not save the report. Please try
+again.** and leaves no partial session; a failed follow-up keeps the saved card and
+can be retried.
 
 AI and storage work run on worker threads, and message/callback handlers do not
 wait for future answers. Another message or command can be handled while a
@@ -473,10 +490,13 @@ Repeat the checklist with `PHISHREPORT_STORAGE = "sqlite"`; it uses the sibling
 Selections in this checklist simulate exposure only: do not visit the SMS link
 or enter/send any real password or one-time code.
 
-1. Paste your real suspicious SMS. Check the compact card with priority, score,
-   matched rule, reasons and actions, plus the three follow-up buttons. History
-   must already contain one MEDIUM report (60 if the AI also sees a credential
-   request, otherwise 45).
+1. Paste your real suspicious SMS. Before any AI or storage work, check the
+   confirmation card with **Check this message?**, the quoted text and the provider
+   notice. Tap **Cancel** once: expect **Cancelled. Nothing was sent or saved.**,
+   no keyboard and no new history. Paste it again, tap **Yes, check it**, and check
+   the compact card with priority, score, matched rule, reasons and actions, plus
+   the three follow-up buttons. History must contain exactly one MEDIUM report (60
+   if the AI also sees a credential request, otherwise 45).
 2. Tap **Clicked link**. Expect **80 / HIGH** and a second report with the same
    `assessment_id`. On a new submission, tap **Shared a password/OTP**: expect
    **90 / HIGH**. The card is edited in place and no provisional or expiry text
@@ -485,8 +505,9 @@ or enter/send any real password or one-time code.
    the saved MEDIUM report is unchanged. On another, tap **Clicked link** and
    then **Nothing happened**; the click stays in the saved revision.
 4. While the card is up, send a second message and `/start`, and check both
-   receive replies. Repeat a follow-up tap and confirm history gains no duplicate
-   revision. A stale Finish/Skip button replies that the assessment is closed.
+   receive replies; the second message gets its own confirmation card. Repeat a
+   follow-up tap and confirm history gains no duplicate revision. A stale
+   Finish/Skip button replies that the assessment is closed.
 5. Stop and restart the bot: saved reports remain and old buttons say the
    assessment is closed. Start the CLI with the same backend/path and inspect
    saved links and revisions in history and summaries. Repeat for both backends.
