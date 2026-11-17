@@ -6,6 +6,7 @@ from phishreport.io.render import AssessmentRenderer
 from phishreport.model import AssessmentResult
 
 MAX_REPLY_CHARS = 4000  # Telegram rejects messages longer than 4096 characters.
+EXPOSURE_SAVED = "Saved. Nothing more to answer."
 
 
 def _bounded(text: str, suffix: str = "") -> str:
@@ -37,7 +38,10 @@ class ResultFormatter:
         so one pasted message produces one short reply.
         """
         if session is not None:
-            return _bounded(self._card(session.result))
+            text = self._card(session.result)
+            if session.finished:
+                return _bounded(text, "\n\n" + EXPOSURE_SAVED)
+            return _bounded(text)
         text = self._text_renderer.render(self._assessment_renderer.render(result))
         return _bounded(text, "\n\n" + self.FOOTER)
 

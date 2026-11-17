@@ -281,6 +281,7 @@ def test_main_dispatch_exposure_acceptance(
             if action == "nothing":
                 assert writes == [initial_report]
                 assert final_edit.get("reply_markup") is None
+                assert final_edit["text"].endswith("\n\nSaved. Nothing more to answer.")
                 assert session.dismissed
             else:
                 assert len(writes) == 2
@@ -291,30 +292,56 @@ def test_main_dispatch_exposure_acceptance(
                 assert revised["result"]["priority"] == final_priority
                 assert session.exposure == expected_exposure
                 assert not session.dismissed
-                assert [
-                    [button["text"] for button in row]
-                    for row in final_edit["reply_markup"]["inline_keyboard"]
-                ] == [["Clicked link", "Shared a password/OTP"]]
+                if action == "password":
+                    assert final_edit.get("reply_markup") is None
+                    assert final_edit["text"].endswith("\n\nSaved. Nothing more to answer.")
+                else:
+                    assert [
+                        [button["text"] for button in row]
+                        for row in final_edit["reply_markup"]["inline_keyboard"]
+                    ] == [["Shared a password/OTP", "Nothing else"]]
             assert session.saved and session.result["score"] == final_score
 
             frozen_writes = deepcopy(writes)
             frozen_state = deepcopy((session.result, session.exposure, session.report))
-            # Replays and stale labels are acknowledged without another write.
-            for query_id, stale in enumerate(
-                (action, "finish", "skip", "retry", "downloaded", "otp", "both"), 3,
-            ):
+            edits_before = sum(
+                endpoint == "editMessageText" for endpoint, _ in request.calls
+            )
+            if action == "clicked":
+                # The card is still open, so replaying its answer rewrites it
+                # once without another assessment or write.
                 await asyncio.wait_for(
-                    app.process_update(callback(app.bot, session, stale, query_id)), 2,
+                    app.process_update(callback(app.bot, session, "clicked", 3)), 2,
                 )
                 await request.until(lambda: sum(
                     endpoint == "editMessageText" for endpoint, _ in request.calls
-                ) == query_id)
+                ) == edits_before + 1)
                 assert (
-                    "answerCallbackQuery", {"callback_query_id": str(query_id)}
+                    "answerCallbackQuery", {"callback_query_id": "3"}
                 ) in request.calls
                 assert writes == frozen_writes
                 assert (session.result, session.exposure, session.report) == frozen_state
                 assert ai.assess.call_count == 1
+            else:
+                # The keyboard is gone: any old answer is acknowledged and
+                # changes nothing, with no second write.
+                for query_id, stale in enumerate(
+                    ("clicked", "password", "nothing"), 3,
+                ):
+                    await asyncio.wait_for(
+                        app.process_update(callback(app.bot, session, stale, query_id)), 2,
+                    )
+                    await request.until(lambda: any(
+                        endpoint == "answerCallbackQuery"
+                        and data["callback_query_id"] == str(query_id)
+                        for endpoint, data in request.calls
+                    ))
+                    assert sum(
+                        endpoint == "editMessageText" for endpoint, _ in request.calls
+                    ) == edits_before
+                    assert writes == frozen_writes
+                    assert (session.result, session.exposure, session.report) == frozen_state
+                    assert ai.assess.call_count == 1
             await asyncio.wait_for(app.process_update(source), 2)
         finally:
             # stop drains PTB's nonblocking tasks, including replayed source delivery.

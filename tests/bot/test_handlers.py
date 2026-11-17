@@ -165,9 +165,13 @@ def test_exposure_answer_rescores_saves_and_edits_in_place(card_setup, action, s
     assert saved["result"]["priority"] == "HIGH"
     assert saved["exposure"] == exposure
     keyboard = incoming.callback_query.edit_message_text.call_args.kwargs["reply_markup"]
-    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
-        ["Clicked link", "Shared a password/OTP"],
-    ]
+    if action == "password":
+        assert keyboard is None
+        assert text.endswith("\n\nSaved. Nothing more to answer.")
+    else:
+        assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
+            ["Shared a password/OTP", "Nothing else"],
+        ]
     assert ai.assess.call_count == 1
 
 
@@ -203,8 +207,110 @@ def test_repeated_and_chained_answers_save_only_when_state_changes(card_setup):
     assert ai.assess.call_count == 1
 
 
+def test_password_answer_ends_the_card_and_a_repeat_saves_only_once(card_setup):
+    manager, session, ai = card_setup
+    first = answer_update("password", session)
+
+    asyncio.run(asyncio.wait_for(manager.exposure_callback(first, None), 5))
+
+    text = first.callback_query.edit_message_text.call_args.args[0]
+    assert "Rule-based score: 90" in text
+    assert text.endswith("\n\nSaved. Nothing more to answer.")
+    assert first.callback_query.edit_message_text.call_args.kwargs["reply_markup"] is None
+    manager._data_manager.save.assert_called_once()
+
+    repeat = answer_update("password", session)
+    asyncio.run(asyncio.wait_for(manager.exposure_callback(repeat, None), 5))
+
+    repeat.callback_query.answer.assert_awaited_once_with("Already saved.")
+    repeat.callback_query.edit_message_text.assert_not_awaited()
+    manager._data_manager.save.assert_called_once()
+    assert ai.assess.call_count == 1
+
+
+def test_clicked_answer_keeps_only_the_answers_that_can_raise_the_score(card_setup):
+    manager, session, ai = card_setup
+    incoming = answer_update("clicked", session)
+
+    asyncio.run(asyncio.wait_for(manager.exposure_callback(incoming, None), 5))
+
+    text = incoming.callback_query.edit_message_text.call_args.args[0]
+    assert "Rule-based score: 80" in text
+    assert "Saved. Nothing more to answer." not in text
+    keyboard = incoming.callback_query.edit_message_text.call_args.kwargs["reply_markup"]
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
+        ["Shared a password/OTP", "Nothing else"],
+    ]
+    assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
+        [f"exposure:{session.token}:password", f"exposure:{session.token}:nothing"],
+    ]
+    manager._data_manager.save.assert_called_once()
+    assert ai.assess.call_count == 1
+
+
+def test_nothing_else_ends_the_clicked_card_and_keeps_the_80_report(card_setup):
+    manager, session, ai = card_setup
+
+    async def scenario():
+        await manager.exposure_callback(answer_update("clicked", session), None)
+        manager._data_manager.save.assert_called_once()
+        clicked_report = deepcopy(manager._data_manager.save.call_args.args[0])
+
+        incoming = answer_update("nothing", session)
+        await manager.exposure_callback(incoming, None)
+
+        text = incoming.callback_query.edit_message_text.call_args.args[0]
+        assert "Rule-based score: 80" in text
+        assert text.endswith("\n\nSaved. Nothing more to answer.")
+        assert incoming.callback_query.edit_message_text.call_args.kwargs["reply_markup"] is None
+        assert session.result["score"] == 80 and session.report["result"]["score"] == 80
+        assert session.report["assessment_id"] == clicked_report["assessment_id"]
+        manager._data_manager.save.assert_called_once()
+        assert ai.assess.call_count == 1
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+
+
+@pytest.mark.parametrize("stale_action", ["clicked", "password", "nothing"])
+def test_stale_answer_after_removal_changes_nothing_and_acks(card_setup, stale_action):
+    manager, session, ai = card_setup
+
+    async def scenario():
+        await manager.exposure_callback(answer_update("password", session), None)
+        before = deepcopy((session.result, session.exposure, session.report))
+        manager._data_manager.save.assert_called_once()
+
+        stale = answer_update(stale_action, session)
+        await manager.exposure_callback(stale, None)
+
+        stale.callback_query.answer.assert_awaited_once_with("Already saved.")
+        stale.callback_query.edit_message_text.assert_not_awaited()
+        assert (session.result, session.exposure, session.report) == before
+        manager._data_manager.save.assert_called_once()
+        assert ai.assess.call_count == 1
+
+    asyncio.run(asyncio.wait_for(scenario(), 5))
+
+
+def test_expired_answer_acks_expiry_without_changing_the_card(card_setup):
+    manager, session, ai = card_setup
+    before = deepcopy((session.result, session.exposure, session.report))
+    session.expires_at = 0
+    incoming = answer_update("clicked", session)
+
+    asyncio.run(asyncio.wait_for(manager.exposure_callback(incoming, None), 5))
+
+    incoming.callback_query.answer.assert_awaited_once_with(
+        "This assessment expired. Paste the message again to start a new assessment."
+    )
+    incoming.callback_query.edit_message_text.assert_not_awaited()
+    assert (session.result, session.exposure, session.report) == before
+    manager._data_manager.save.assert_not_called()
+    assert ai.assess.call_count == 1
+
+
 @pytest.mark.parametrize("case", [
-    "wrong_owner", "wrong_reply", "expired", "unknown_token", "unknown_action",
+    "wrong_owner", "wrong_reply", "unknown_token", "unknown_action",
     "old_downloaded", "old_finish", "old_skip", "old_retry", "newline", "prefix",
     "token_length", "none_payload", "numeric_payload",
 ])
@@ -215,8 +321,6 @@ def test_exposure_callback_invalid_neutral_no_work(card_setup, case):
         incoming.effective_user.id += 1
     elif case == "wrong_reply":
         incoming.effective_message.message_id += 1
-    elif case == "expired":
-        session.expires_at = 0
     else:
         incoming.callback_query.data = {
             "unknown_token": f"exposure:{'_' * 16}:clicked",
@@ -543,10 +647,9 @@ def test_exposure_callback_ack_before_lock_expiry_while_waiting(card_setup, acti
         await task
 
     asyncio.run(asyncio.wait_for(scenario(), 5))
-    incoming.callback_query.edit_message_text.assert_awaited_once_with(
-        UNAVAILABLE_EXPOSURE, reply_markup=None,
-    )
+    incoming.callback_query.edit_message_text.assert_not_awaited()
     assert session.exposure["clicked"] is None and not session.dismissed
+    assert session.result["score"] == 60
     manager._data_manager.save.assert_not_called()
 
 
