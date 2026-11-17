@@ -17,6 +17,7 @@ from phishreport.io.commands import CommandRequest, CommandRouter
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
+from phishreport.reporting import ReportQueryResult, ReportQueryService
 
 logger = AppLogging.get_logger(__name__)
 
@@ -71,6 +72,7 @@ class PhishReportApp:
         self._ai_manager = ai_manager
         self._logic_manager = logic_manager
         self._data_manager = data_manager
+        self._report_query = ReportQueryService(data_manager, logic_manager)
         self._env_loader = env_loader or EnvLoader()
         self._error_translator = error_translator or AIErrorTranslator()
         self._feedback_service = feedback_service
@@ -108,7 +110,7 @@ class PhishReportApp:
                 ),
                 assess_record=self._assessment.assess,
                 session_status=lambda request: "CLI conversation active",
-                report_count=lambda: len(self._data_manager.load(strict=True)),
+                report_count=lambda: len(self._report_query.load()),
             ))
             router = CommandRouter(catalog)
             resolved = router.resolve(command_text)
@@ -210,13 +212,13 @@ class PhishReportApp:
         self.check_message(record)
 
     def load_reports(self) -> list[dict] | None:
-        """Return validated JSON history, or None after reporting a read failure.
+        """Return validated history, or None after reporting a read failure.
 
         An empty list means missing/empty history; None means history could not
         be read safely. Keep this distinction when deciding what to display.
         """
         try:
-            return self._data_manager.load(strict=True)
+            return self._report_query.load()
         except (AssessmentError, OSError, ValueError):
             AppLogging.log_failure(logger, "Reading local report history failed")
             self._io_manager.show_message(
@@ -225,34 +227,40 @@ class PhishReportApp:
             return None
 
     def view_reports(self):
-        """Load local JSON history and send it to I/O for display."""
+        """Load local history and send it to I/O for display."""
         records = self.load_reports()
         if records is not None:
             self._io_manager.display_list(records)
 
-    def summarize_reports(self):
-        """Ask for filter criteria, then show counts and statistics for matching reports."""
+    def _query_reports(self) -> ReportQueryResult | None:
+        """Load history, prompt for filters and handle user-facing failures."""
         records = self.load_reports()
         if records is None:
-            return
+            return None
+        if not records:
+            self._io_manager.show_message("No saved reports yet.")
+            return None
         try:
-            report_filter = self._logic_manager.build_filter(
-                **self._io_manager.collect_summary_filter()
+            return self._report_query.query(
+                records=records, **self._io_manager.collect_summary_filter()
             )
         except AssessmentError as error:
             AppLogging.log_failure(logger, "Report filter validation failed")
             self._io_manager.show_message(error.user_message)
-            return
         except ValueError:
             AppLogging.log_failure(logger, "Report filter validation failed")
             self._io_manager.show_message(
                 "Invalid report filter. Check the channel, priority and minimum score, "
                 "then try again."
             )
-            return
-        matching = [record for record in records if report_filter.matches(record)]
-        summary = self._logic_manager.summarize(matching)
-        self._io_manager.display_summary(summary, report_filter.describe())
+        return None
+
+    def summarize_reports(self):
+        """Show counts and statistics for matching saved reports."""
+        selection = self._query_reports()
+        if selection is not None:
+            summary = self._report_query.summarize(selection)
+            self._io_manager.display_summary(summary, selection.description)
 
     def run(self):
         """Initialize configuration and logging, then run the interactive menu loop.

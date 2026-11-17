@@ -182,14 +182,15 @@ downloaded file or a submitted password or code.
 | `SummaryMetric` (abstract) | Contract for one summary block. Subclasses: `PriorityBreakdown`, `ChannelBreakdown`, `ScoreStatistics`, `ReportedExposure`. |
 | `ReportSummarizer` | Runs each metric over the records and builds a `ReportSummary`. A new statistic is a new `SummaryMetric` subclass, with no change to the summarizer. |
 | `LogicManager` | `build_filter()` and `summarize()` expose the feature to the application. |
-| `DataManager` | The existing `query()` returns only the records that match the filter. |
+| `ReportQueryService` | Loads history through `DataManager` in strict mode, filters in storage order, and uses `LogicManager` to summarize the selected rows. |
 | `IOManager` / `ReportPresenter` | `collect_summary_filter()` asks for the criteria and `display_summary()` prints the result. |
-| `PhishReportApp` | `summarize_reports()` connects the four managers. |
+| `PhishReportApp` | Handles CLI prompts, presentation, and user-facing errors. |
 
 **Tests:** `tests/core/test_summary.py` covers filter matching and validation,
 current and historical layouts, each metric (including unclassifiable values),
 a custom metric subclass, an empty history, an unreadable history file, the filter prompts, the printed
-summary and the menu flow. No AI service is needed.
+summary and the menu flow. `tests/core/test_report_query.py` covers strict reads and ordering across
+JSON and SQLite. Queries use saved assessments and work offline.
 
 ### Shared conversation commands
 

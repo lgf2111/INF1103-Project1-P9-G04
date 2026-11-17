@@ -260,7 +260,7 @@ def test_feedback_collection_validation_is_safe(app_parts):
 
 def test_summary_filter_failure_is_safe(app_parts):
     app, io, _, data, _ = app_parts
-    data.load.return_value = []
+    data.load.return_value = [{"message": "Saved report"}]
     io.collect_summary_filter.side_effect = ValueError("PRIVATE filter")
     app.summarize_reports()
     io.show_message.assert_called_once_with(
@@ -316,7 +316,7 @@ def test_input_boundaries_preserve_programming_errors_and_cancellation(
         def action():
             app._collect_feedback({"assessment_id": "completed"})
     else:
-        data.load.return_value = []
+        data.load.return_value = [{"message": "Saved report"}]
         io.collect_summary_filter.side_effect = error
         action = app.summarize_reports
     with pytest.raises(error_type):
