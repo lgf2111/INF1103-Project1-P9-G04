@@ -20,7 +20,7 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 | `phishreport/email_html.py` | Convert HTML email content to safe text. |
 | `phishreport/local_settings.py` | Manage local preferences. |
 | `phishreport/logging_setup.py` | Configure diagnostic logs. |
-| `docs/` | Organized guides, teammate handoffs, and project references. |
+| `docs/` | Guides, the exception matrix, the report and the deck. |
 | `requirements.txt` | Dependencies for Telegram and the offline tests. |
 | `tests/core/` | Offline tests for the shared core: AI, logic, data, I/O and the canonical manager package contracts. |
 | `tests/cli/` | Offline tests for the terminal interface, settings, uploads, the Docker helper and the feature showcase. |
@@ -291,7 +291,8 @@ exposure answers. Configure the CLI with the same backend and path to see them i
 **View saved reports** and **Summarize saved reports**, including saved links and
 Unconfirmed answers. Unknowns do not count as confirmed exposure. Existing
 CLI assessments and Gmail monitoring continue to save v2 reports; supported older
-history remains readable. See [backend contracts](docs/handoffs/BACKEND_HANDOFF.md).
+history remains readable. The storage contract itself is documented in
+`phishreport/data/storage.py`.
 
 Each new assessment requests AI findings using your Groq key; provider retries or
 fallback may make multiple HTTP attempts. Answers, rescoring and completed-save
