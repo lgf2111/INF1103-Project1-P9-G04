@@ -93,6 +93,15 @@ class ExposureSession:
             or self.exposure["disclosure_answered"] is True
         )
 
+    @property
+    def finished(self) -> bool:
+        """Whether no remaining answer can change the result any more.
+
+        A reported password or one-time code reaches the top band, and an
+        explicit dismissal closes the card. Either way the keyboard can go.
+        """
+        return self.dismissed or self.exposure["disclosure_answered"] is True
+
     def build_report(
         self,
         assessment: AssessmentService,
@@ -117,13 +126,16 @@ class ExposureSession:
 
         Async callers must serialize this with self.lock and persist the matching
         report before committing the candidate. Return None when the answer is
-        already recorded. Unknown, dismissed or late answers raise ValueError
-        and change nothing; retained findings keep the AI out of this path.
+        already recorded. Unknown, dismissed, finished or late answers raise
+        ValueError and change nothing; retained findings keep the AI out of this
+        path.
         """
         if not isinstance(action, str) or action not in ANSWER_ACTIONS:
             raise ValueError("Unknown exposure answer")
         if self.dismissed:
             raise ValueError("Exposure session is dismissed")
+        if self.exposure["disclosure_answered"] is True:
+            raise ValueError("Exposure session is finished")
         if time.monotonic() >= self.expires_at:
             raise ValueError("Exposure session has expired")
 

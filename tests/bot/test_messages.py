@@ -48,11 +48,15 @@ def test_saved_card_keyboard_has_exact_buttons_and_private_callback_payloads(ses
 
 
 @pytest.mark.parametrize(
-    ("clicked", "category", "answered"),
-    [(True, None, False), (None, "password", True), (True, "password", True)],
+    ("clicked", "category", "answered", "labels"),
+    [
+        (True, None, False, [["Shared a password/OTP", "Nothing else"]]),
+        (None, "password", True, None),
+        (True, "password", True, None),
+    ],
 )
-def test_answered_session_keeps_only_the_two_follow_up_buttons(
-    session, clicked, category, answered,
+def test_keyboard_offers_only_answers_that_can_still_change_the_result(
+    session, clicked, category, answered, labels,
 ):
     session.saved = True
     session.exposure.update(
@@ -61,8 +65,12 @@ def test_answered_session_keeps_only_the_two_follow_up_buttons(
 
     keyboard = messages.build_exposure_keyboard(session)
 
-    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == [
-        ["Clicked link", "Shared a password/OTP"],
+    if labels is None:
+        assert keyboard is None
+        return
+    assert [[button.text for button in row] for row in keyboard.inline_keyboard] == labels
+    assert [[button.callback_data for button in row] for row in keyboard.inline_keyboard] == [
+        [f"exposure:{session.token}:password", f"exposure:{session.token}:nothing"],
     ]
 
 
@@ -210,6 +218,19 @@ def test_card_shows_the_latest_rescored_result(assessed_session):
     assert "Rule-based score: 80" in text
     assert "You reported clicking a link." in text
     assert "Rule-based score: 60" not in text
+    assert messages.EXPOSURE_SAVED not in text
+
+
+def test_card_ends_with_the_saved_line_once_no_answer_remains(assessed_session):
+    state, service = assessed_session
+
+    exposure, result = state.answer("password", service)
+    state.commit(exposure, result, state.build_report(service, exposure=exposure, result=result))
+    text = messages.ResultFormatter().format({}, session=state)
+
+    assert "Rule-based score: 90" in text
+    assert text.endswith("\n\n" + messages.EXPOSURE_SAVED)
+    assert messages.EXPOSURE_SAVED == "Saved. Nothing more to answer."
 
 
 def test_formatter_is_read_only_and_never_touches_scoring_or_time(assessed_session, monkeypatch):

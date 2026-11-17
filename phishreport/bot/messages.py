@@ -5,9 +5,17 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from phishreport.bot.alert_formatter import PhishingAlertFormatter
 from phishreport.bot.chat_record_builder import ChatRecordBuilder
 from phishreport.bot.exposure import CANCEL_ACTION, CONFIRM_ACTION, ExposureSession
-from phishreport.bot.result_formatter import MAX_REPLY_CHARS, ResultFormatter
+from phishreport.bot.result_formatter import (
+    EXPOSURE_SAVED,
+    MAX_REPLY_CHARS,
+    ResultFormatter,
+)
 
 EXPOSURE_CALLBACK_PREFIX = "exposure"
+EXPOSURE_ALREADY_SAVED = "Already saved."
+EXPOSURE_EXPIRED = (
+    "This assessment expired. Paste the message again to start a new assessment."
+)
 CONFIRMATION_PROMPT = "Check this message?"
 CONFIRMATION_WARNING = "This text is sent to the AI provider for analysis."
 CONFIRMATION_YES = "Yes, check it"
@@ -47,8 +55,13 @@ def build_confirmation_keyboard(token: str) -> InlineKeyboardMarkup:
 
 
 def build_exposure_keyboard(session: ExposureSession) -> InlineKeyboardMarkup | None:
-    """Render the two follow-up answers and the dismissal without changing state."""
-    if session.dismissed or not session.saved:
+    """Render only the answers that can still change the result.
+
+    A reported password reaches the top band, so that answer ends the card.
+    After a reported click, only the password can raise the score further;
+    "Nothing else" closes the card without another write.
+    """
+    if not session.saved or session.finished:
         return None
 
     def button(label: str, action: str) -> InlineKeyboardButton:
@@ -56,16 +69,22 @@ def build_exposure_keyboard(session: ExposureSession) -> InlineKeyboardMarkup | 
             label, callback_data=f"{EXPOSURE_CALLBACK_PREFIX}:{session.token}:{action}"
         )
 
-    rows = [[button("Clicked link", "clicked"),
-             button("Shared a password/OTP", "password")]]
-    if not session.answered:
-        rows.append([button("Nothing happened", "nothing")])
+    if session.exposure["clicked"] is True:
+        rows = [[button("Shared a password/OTP", "password"),
+                 button("Nothing else", "nothing")]]
+    else:
+        rows = [[button("Clicked link", "clicked"),
+                 button("Shared a password/OTP", "password")],
+                [button("Nothing happened", "nothing")]]
     return InlineKeyboardMarkup(rows)
 
 
 __all__ = [
     "MAX_REPLY_CHARS",
     "EXPOSURE_CALLBACK_PREFIX",
+    "EXPOSURE_ALREADY_SAVED",
+    "EXPOSURE_EXPIRED",
+    "EXPOSURE_SAVED",
     "CONFIRMATION_PROMPT",
     "CONFIRMATION_WARNING",
     "CONFIRMATION_YES",

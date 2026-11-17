@@ -29,7 +29,9 @@ from phishreport.bot.feedback_ui import (
 from phishreport.bot.messages import (
     CONFIRMATION_CANCELLED,
     CONFIRMATION_EXPIRED,
+    EXPOSURE_ALREADY_SAVED,
     EXPOSURE_CALLBACK_PREFIX,
+    EXPOSURE_EXPIRED,
     ChatRecordBuilder,
     ResultFormatter,
     build_confirmation_card,
@@ -92,6 +94,35 @@ class TelegramIOManager:
             return False
         return self._allowed_chat_id is None or chat.id == self._allowed_chat_id
 
+    def _owned_callback_session(
+        self, update: Update, token: str | None,
+    ) -> ExposureSession | None:
+        """Resolve the session a callback addresses without pruning or time checks."""
+        chat = getattr(update, "effective_chat", None)
+        user = getattr(update, "effective_user", None)
+        message = getattr(update, "effective_message", None)
+        chat_id = getattr(chat, "id", None)
+        user_id = getattr(user, "id", None)
+        message_id = getattr(message, "message_id", None)
+        if any(type(value) is not int for value in (chat_id, user_id, message_id)):
+            return None
+        if getattr(chat, "type", None) != ChatType.PRIVATE or not self.is_allowed(update):
+            return None
+        if getattr(update, "callback_query", None) is None:
+            return None
+        if not isinstance(token, str):
+            return None
+        if re.fullmatch(r"[A-Za-z0-9_-]{16}", token) is None:
+            return None
+        candidate = self._sessions.get(token)
+        if candidate is None or (
+            candidate.chat_id != chat_id or candidate.user_id != user_id
+            or candidate.reply_message_id is None
+            or candidate.reply_message_id != message_id
+        ):
+            return None
+        return candidate
+
     def _find_exposure_session(
         self, update: Update, token: str | None = None,
     ) -> ExposureSession | None:
@@ -123,16 +154,8 @@ class TelegramIOManager:
             ) != source:
                 return None
         else:
-            if query is None or not isinstance(token, str):
-                return None
-            if re.fullmatch(r"[A-Za-z0-9_-]{16}", token) is None:
-                return None
-            candidate = self._sessions.get(token)
-            if candidate is None or (
-                candidate.chat_id != chat_id or candidate.user_id != user_id
-                or candidate.reply_message_id is None
-                or candidate.reply_message_id != message_id
-            ):
+            candidate = self._owned_callback_session(update, token)
+            if candidate is None:
                 return None
 
         now = time.monotonic()
@@ -157,6 +180,13 @@ class TelegramIOManager:
         if candidate is not None and candidate.token in self._sessions:
             return candidate
         return None
+
+    def _forget_exposure_session(self, session: ExposureSession) -> None:
+        """Drop one exposure session and its source index without touching storage."""
+        self._sessions.pop(session.token, None)
+        source = (session.chat_id, session.user_id, session.message_id)
+        if self._source_sessions.get(source) == session.token:
+            del self._source_sessions[source]
 
     def _find_pending_confirmation(
         self, update: Update, token: str | None = None,
@@ -413,11 +443,11 @@ class TelegramIOManager:
         query = getattr(update, "callback_query", None)
         if query is None:
             return
-        await query.answer()
         chat = getattr(update, "effective_chat", None)
         if (getattr(chat, "type", None) != ChatType.PRIVATE
                 or type(getattr(chat, "id", None)) is not int
                 or not self.is_allowed(update)):
+            await query.answer()
             return
 
         unavailable = (
@@ -432,9 +462,21 @@ class TelegramIOManager:
         ) if isinstance(payload, str) else None
         try:
             if match and match[2] in CONFIRM_ACTIONS:
+                await query.answer()
                 await self._confirmation_callback(update, query, match[1], match[2])
                 return
 
+            session = self._owned_callback_session(update, match[1]) if match else None
+            if session is not None and time.monotonic() >= session.expires_at:
+                await query.answer(EXPOSURE_EXPIRED)
+                if not session.lock.locked():
+                    self._forget_exposure_session(session)
+                return
+            if session is not None and session.finished:
+                await query.answer(EXPOSURE_ALREADY_SAVED)
+                return
+
+            await query.answer()
             session = self._find_exposure_session(update, match[1]) if match else None
             if session is None:
                 await query.edit_message_text(unavailable, reply_markup=None)
@@ -444,8 +486,9 @@ class TelegramIOManager:
             # Hold the lock across the save and the edit: another tap cannot
             # replace a newer rendered state with an older reply.
             async with session.lock:
-                if time.monotonic() >= session.expires_at:
-                    await query.edit_message_text(unavailable, reply_markup=None)
+                if time.monotonic() >= session.expires_at or session.finished:
+                    # A duplicate tap settled this card while it waited. It was
+                    # acknowledged above, so leave the saved card untouched.
                     return
                 if match[2] == "nothing":
                     session.dismiss()
