@@ -401,6 +401,36 @@ The local launcher defaults to JSON in `reports.json`. Set
 to select JSON or its SQLite sibling, as described under
 [report storage and migration](#report-storage-and-migration).
 
+#### Run the CLI and Telegram bot together
+
+The `both` target runs the interactive CLI on the main thread and the bot on a
+daemon thread in the same container. Both adapters share one storage backend and
+one report manager, so a CLI save and a bot save cannot overwrite each other.
+The combined launcher defaults to SQLite (`PHISHREPORT_STORAGE=sqlite`) because
+its write transactions are safer for two threads; set `PHISHREPORT_STORAGE=json`
+in `.env` only if you deliberately want the older JSON backend.
+
+```bash
+bash run.sh both
+```
+
+The helper builds the `both` target if needed, mounts `.phishreport-data/` at
+`/data`, mounts the local `emails/` folder, and publishes the CLI uploader on
+`http://localhost:8000`. It needs `GROQ_API_KEY`, `TELEGRAM_BOT_TOKEN` and the
+optional `TELEGRAM_ALLOWED_CHAT_ID` in `.env`. Press Ctrl+C or choose the CLI
+quit option to stop both loops cleanly. For a first run without the helper:
+
+```text
+docker build --target both -t phishreport-both .
+docker run --rm -it --env-file .env -p 127.0.0.1:8000:8000 \
+  --mount "type=bind,source=${PWD}/.phishreport-data,target=/data" \
+  --mount "type=bind,source=${PWD}/emails,target=/emails,readonly" \
+  -w /data phishreport-both
+```
+
+Only one polling process may use a bot token at a time, so stop any separately
+running `bash run.sh telegram` before starting the combined target.
+
 #### Verify the live connection
 
 1. In the configured private chat, send `/start` and look for the welcome

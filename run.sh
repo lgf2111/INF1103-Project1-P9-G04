@@ -6,6 +6,7 @@
 #   bash run.sh run       # run the CLI (loads your key from .env)
 #   bash run.sh test      # run the tests inside the container
 #   bash run.sh telegram # run the Telegram bot (loads .env)
+#   bash run.sh both     # run the CLI and the Telegram bot in one container
 #   bash run.sh shell     # open a shell inside the container
 #   bash run.sh clean     # remove the Docker images
 #
@@ -14,6 +15,7 @@
 
 IMAGE="phishreport"
 TELEGRAM_IMAGE="${IMAGE}-telegram"
+BOTH_IMAGE="${IMAGE}-both"
 
 # stop and show the error if any command fails
 set -e
@@ -143,6 +145,51 @@ elif [ "$command" = "telegram" ]; then
         -v "$(docker_path "$DATA_DIR"):/data" \
         "$TELEGRAM_IMAGE"
 
+elif [ "$command" = "both" ]; then
+    BOTH_ENV="$PROJECT_DIR/.env"
+    if [ ! -f "$BOTH_ENV" ]; then
+        echo "No .env file found."
+        echo "Copy .env.example to .env and set GROQ_API_KEY and TELEGRAM_BOT_TOKEN."
+        exit 1
+    fi
+    # The CLI menu keeps the same folder-import and upload behavior.
+    if [ -z "${PHISHREPORT_EMAIL_DIR:-}" ]; then
+        mkdir -p "$PROJECT_DIR/emails"
+    fi
+    EMAIL_DIR="${PHISHREPORT_EMAIL_DIR:-$PROJECT_DIR/emails}"
+    case "$EMAIL_DIR" in
+        /*|[A-Za-z]:[\\/]*) ;;
+        *) EMAIL_DIR="$PROJECT_DIR/$EMAIL_DIR" ;;
+    esac
+    if [ ! -d "$EMAIL_DIR" ]; then
+        echo "Email folder does not exist: $EMAIL_DIR"
+        exit 1
+    fi
+    EMAIL_DIR="$(CDPATH= cd -- "$EMAIL_DIR" && pwd -P)"
+
+    mkdir -p "$DATA_DIR"
+    prepare_data_file "reports.json" "[]"
+    prepare_data_file ".phishreport_config.json" "{}"
+    if [ ! -e "$DATA_DIR/logs" ] && [ -d "$PROJECT_DIR/logs" ]; then
+        cp -R "$PROJECT_DIR/logs" "$DATA_DIR/logs"
+    fi
+    mkdir -p "$DATA_DIR/logs"
+
+    if ! docker image inspect "$BOTH_IMAGE" >/dev/null 2>&1; then
+        docker build --target both -t "$BOTH_IMAGE" "$(docker_path "$PROJECT_DIR")"
+    fi
+    echo "Starting the CLI and Telegram bot in one container (Ctrl+C to quit)..."
+    echo "Reports, settings and logs: $DATA_DIR"
+    echo "SQLite is the default store; set PHISHREPORT_STORAGE=json in .env to override."
+    echo "For the email folder picker, enter /emails (host folder: $EMAIL_DIR)."
+    docker run --rm -it \
+        -p 127.0.0.1:8000:8000 \
+        --env-file "$(docker_path "$BOTH_ENV")" \
+        -v "$(docker_path "$DATA_DIR"):/data" \
+        -v "$(docker_path "$EMAIL_DIR"):/emails:ro" \
+        -w /data \
+        "$BOTH_IMAGE"
+
 elif [ "$command" = "shell" ]; then
     # Open an interactive shell INSIDE the container so you can look around
     # (Docker containers have no SSH; this is how you "get inside" one).
@@ -156,7 +203,7 @@ elif [ "$command" = "shell" ]; then
     fi
 
 elif [ "$command" = "clean" ]; then
-    for image in "$IMAGE" "$TELEGRAM_IMAGE"; do
+    for image in "$IMAGE" "$TELEGRAM_IMAGE" "$BOTH_IMAGE"; do
         if docker image inspect "$image" >/dev/null 2>&1; then
             echo "Removing the $image image..."
             docker rmi "$image"
@@ -171,7 +218,8 @@ else
     echo "  build   build the CLI Docker image"
     echo "  run     build if needed and run the CLI (needs .env with GROQ_API_KEY)"
     echo "  telegram build if needed and run the bot (needs Telegram settings in .env)"
+    echo "  both    build if needed and run the CLI and bot together (needs both)"
     echo "  test    run the tests in the container"
     echo "  shell   build if needed and open a shell inside the container"
-    echo "  clean   delete the CLI and Telegram images"
+    echo "  clean   delete the CLI, Telegram and both images"
 fi

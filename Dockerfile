@@ -20,6 +20,18 @@ ENV PHISHREPORT_REPORTS_PATH=/data/reports.json \
     PYTHONUNBUFFERED=1
 CMD ["python", "-m", "phishreport.bot"]
 
+FROM base AS both
+RUN mkdir -p /data
+# SQLite is the safe default when the CLI and bot write the same history.
+# An explicit PHISHREPORT_STORAGE from .env still overrides it at runtime.
+ENV PHISHREPORT_STORAGE=sqlite \
+    PHISHREPORT_REPORTS_PATH=/data/reports.json \
+    PHISHREPORT_GMAIL_PATH=/data/gmail_accounts.json \
+    PYTHONUNBUFFERED=1
+# The CLI file-upload option serves a one-shot page on port 8000.
+EXPOSE 8000
+CMD ["python", "-m", "phishreport.both"]
+
 FROM base AS cli
 
 # The file-upload option serves a one-shot page on port 8000.
