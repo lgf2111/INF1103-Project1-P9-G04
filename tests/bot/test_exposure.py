@@ -396,8 +396,11 @@ def pending_record():
 
 
 def test_pending_confirmation_waits_with_owned_source_and_raw_record(
-    exposure_module, pending_record,
+    exposure_module, pending_record, monkeypatch,
 ):
+    now = 1000.0
+    monkeypatch.setattr(exposure_module.time, "monotonic", lambda: now)
+
     pending = exposure_module.PendingConfirmation(
         pending_record, chat_id=101, user_id=202, message_id=303,
     )
@@ -407,9 +410,10 @@ def test_pending_confirmation_waits_with_owned_source_and_raw_record(
     assert pending.card_message_id is None
     assert pending.resolution is None
     assert isinstance(pending.lock, asyncio.Lock) and not pending.lock.locked()
+    assert pending.created_at == now
     assert (
-        pending.created_at
-        == pending.expires_at - exposure_module.CONFIRMATION_TIMEOUT_SECONDS
+        pending.expires_at
+        == now + exposure_module.CONFIRMATION_TIMEOUT_SECONDS
     )
     assert not pending.expired
 
