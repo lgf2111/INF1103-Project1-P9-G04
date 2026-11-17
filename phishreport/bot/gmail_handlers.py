@@ -89,7 +89,11 @@ class GmailLinkHandlers:
         if not self._is_allowed(update) or message is None or chat is None:
             return
         try:
-            removed = await asyncio.to_thread(self._store.remove, chat.id)
+            # Revoke first so a poll already in flight drops its alert, then wait for
+            # any alert being sent before the credential is deleted.
+            await asyncio.to_thread(self._store.revoke, chat.id)
+            async with self._store.delivery(chat.id):
+                removed = await asyncio.to_thread(self._store.remove, chat.id)
         except (AssessmentError, OSError, ValueError):
             await message.reply_text("Could not remove the Gmail link. Please try again.")
             return

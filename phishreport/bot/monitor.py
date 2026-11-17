@@ -40,20 +40,19 @@ class Outcome(Enum):
            AI rejects as invalid input. Advance, so one bad email cannot block the inbox.
     RETRY: anything else that failed (AI outage, storage, Telegram, unexpected error,
            link check). The cursor stays put and the next cycle retries this email.
+    LINK_CHANGED: the link was revoked or replaced mid-flight. Deliver nothing, alert
+           nothing, and do not advance the cursor; the new link owns the inbox now.
     """
 
     SENT = "sent"
     RETRY = "retry"
     DROP = "drop"
+    LINK_CHANGED = "link_changed"
 
 
 class Handled(NamedTuple):
     outcome: Outcome
     flagged: bool = False
-
-
-class LinkChanged(Exception):
-    """The Gmail link was removed or replaced while an email was being checked."""
 
 
 @dataclass
@@ -147,12 +146,11 @@ class EmailMonitor:
         for uid, raw in emails:
             try:
                 if not await asyncio.to_thread(self._store.is_handled, account, uid):
-                    if (await self._handle(account, raw)).outcome is Outcome.RETRY:
+                    outcome = (await self._handle(account, raw)).outcome
+                    if outcome in (Outcome.RETRY, Outcome.LINK_CHANGED):
                         return
                 if not await asyncio.to_thread(self._store.advance_cursor, account, uid):
                     return
-            except LinkChanged:
-                return
             except (AssessmentError, OSError, ValueError):
                 self._say("Could not save Gmail progress. Will retry.")
                 return
@@ -179,9 +177,8 @@ class EmailMonitor:
         counts = {"flagged": 0, "clean": 0, "skipped": 0, "retry": 0}
         done = []
         for uid, raw in emails:
-            try:
-                handled = await self._handle(account, raw)
-            except LinkChanged:
+            handled = await self._handle(account, raw)
+            if handled.outcome is Outcome.LINK_CHANGED:
                 return "Gmail link changed during the check. Run /checkmail again."
             if handled.outcome is Outcome.RETRY:
                 counts["retry"] += 1
@@ -209,11 +206,9 @@ class EmailMonitor:
         return reply + "."
 
     async def _handle(self, account: LinkedAccount, raw: bytes) -> Handled:
-        """Assess one email. Raises LinkChanged; any other failure is a RETRY."""
+        """Assess one email. Failures become outcomes; nothing escapes this call."""
         try:
             return await self._assess_email(account, raw)
-        except LinkChanged:
-            raise
         except Exception as error:  # Unknown failures are not provably permanent.
             AppLogging.log_failure(logger, "Unexpected error while checking an email")
             self._say(f"An email failed with an unexpected error ({type(error).__name__}); "
@@ -231,7 +226,7 @@ class EmailMonitor:
         try:
             if not await asyncio.to_thread(self._store.is_current, account):
                 self._pending.pop(key, None)
-                raise LinkChanged
+                return Handled(Outcome.LINK_CHANGED)
         except (AssessmentError, OSError, ValueError):
             AppLogging.log_failure(logger, "Could not verify the Gmail link is still active")
             return Handled(Outcome.RETRY)
@@ -248,17 +243,30 @@ class EmailMonitor:
         alert = result["priority"] in ALERT_PRIORITIES
         if alert:
             source = EmailSource(raw)
-            delivered = await self._send(
-                account.chat_id,
-                self._formatter.format(
-                    result, pending.sender, source.subject, source.gmail_url(account.address)
-                ),
-                reply_markup=(
-                    assessment_feedback_keyboard(result["assessment_id"])
-                    if self._feedback_service is not None
-                    else None
-                ),
+            text = self._formatter.format(
+                result, pending.sender, source.subject, source.gmail_url(account.address)
             )
+            reply_markup = (
+                assessment_feedback_keyboard(result["assessment_id"])
+                if self._feedback_service is not None
+                else None
+            )
+            # An unlink may have landed since the check above; it revokes the link
+            # before deleting it and waits for this lock, so nothing is sent after it
+            # returns, and nothing is sent if it got there first.
+            async with self._store.delivery(account.chat_id):
+                try:
+                    if not await asyncio.to_thread(self._store.is_current, account):
+                        self._pending.pop(key, None)
+                        return Handled(Outcome.LINK_CHANGED)
+                except (AssessmentError, OSError, ValueError):
+                    AppLogging.log_failure(
+                        logger, "Could not verify the Gmail link is still active"
+                    )
+                    return Handled(Outcome.RETRY)
+                delivered = await self._send(
+                    account.chat_id, text, reply_markup=reply_markup
+                )
             if not delivered:
                 self._say("Could not send the alert; will retry.")
                 return Handled(Outcome.RETRY)
