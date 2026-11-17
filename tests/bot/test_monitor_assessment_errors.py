@@ -9,7 +9,7 @@ import pytest
 from phishreport.ai._provider_errors import ProviderFailure, ProviderFailureReason
 from phishreport.assessment import AssessmentService
 from phishreport.bot.gmail import AccountStore, LinkedAccount
-from phishreport.bot.monitor import FLAGGED, EmailMonitor
+from phishreport.bot.monitor import EmailMonitor, Handled, Outcome
 from phishreport.errors import AIUnavailable, AssessmentError, InvalidInput, StorageFailure
 from phishreport.logic import LogicManager
 
@@ -76,7 +76,7 @@ def test_invalid_input_skips_and_advances_uid_safely(tmp_path, capsys):
     assert SECRET not in output
 
 
-def test_typed_storage_failure_still_alerts_without_feedback_or_second_ai_call(tmp_path, capsys):
+def test_typed_storage_failure_retries_without_alert_or_second_ai_call(tmp_path, capsys):
     monitor, store, bot, data, provider = monitor_for(tmp_path)
     error = StorageFailure()
     error.__cause__ = OSError(SECRET)
@@ -84,13 +84,14 @@ def test_typed_storage_failure_still_alerts_without_feedback_or_second_ai_call(t
 
     outcome = asyncio.run(monitor._assess_email(store.get(1), RAW))
 
-    assert outcome == FLAGGED
+    assert outcome == Handled(Outcome.RETRY)
+    bot.send_message.assert_not_awaited()
+    data.save.side_effect = None
+    assert asyncio.run(monitor._assess_email(store.get(1), RAW)) == Handled(Outcome.SENT, True)
     provider.assess.assert_called_once()
-    data.save.assert_called_once()
-    bot.send_message.assert_awaited_once()
+    assert data.save.call_count == 2
     assert "MEDIUM risk" in bot.send_message.call_args.kwargs["text"]
     assert "<b>Score:</b> 60/100" in bot.send_message.call_args.kwargs["text"]
-    assert "reply_markup" not in bot.send_message.call_args.kwargs
     assert SECRET not in capsys.readouterr().out
 
 
