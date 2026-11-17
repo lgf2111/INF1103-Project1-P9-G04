@@ -24,6 +24,14 @@ CONFIRMATION_CANCELLED = "Cancelled. Nothing was sent or saved."
 CONFIRMATION_EXPIRED = "This confirmation expired. Paste the message again."
 CONFIRMATION_PREVIEW_CHARS = 400
 
+STATUS_CALLBACK_PREFIX = "status"
+STATUS_CSV_CALLBACK = "status:csv"
+STATUS_SUMMARY_CALLBACK = "status:summary"
+STATUS_CSV_LABEL = "Download all reports (CSV)"
+STATUS_SUMMARY_LABEL = "Download summary (TXT)"
+STATUS_NOTHING_SAVED = "Nothing saved yet."
+STATUS_DOWNLOAD_FAILED = "Could not prepare the download. Please try again."
+
 
 def confirmation_preview(text: str) -> str:
     """Quote at most 400 characters, marking any cut with a trailing ellipsis."""
@@ -79,6 +87,37 @@ def build_exposure_keyboard(session: ExposureSession) -> InlineKeyboardMarkup | 
     return InlineKeyboardMarkup(rows)
 
 
+def build_status_keyboard(has_reports: bool) -> InlineKeyboardMarkup | None:
+    """Offer the two downloads in one row, only when history has a report."""
+    if not has_reports:
+        return None
+    return InlineKeyboardMarkup(
+        [[
+            InlineKeyboardButton(STATUS_CSV_LABEL, callback_data=STATUS_CSV_CALLBACK),
+            InlineKeyboardButton(
+                STATUS_SUMMARY_LABEL, callback_data=STATUS_SUMMARY_CALLBACK,
+            ),
+        ]]
+    )
+
+
+def build_summary_document(summary, description: str = "all reports") -> str:
+    """Render the CLI summary as a text document with the same sections."""
+    lines = [
+        "=== Report summary ===",
+        f"Showing: {description}",
+        f"Reports: {summary.total}",
+    ]
+    if summary.total == 0:
+        lines.append("No saved reports match.")
+        return "\n".join(lines) + "\n"
+    for section in summary.sections:
+        lines.append("")
+        lines.append(f"{section.title}:")
+        lines.extend(f" - {label}: {value}" for label, value in section.rows)
+    return "\n".join(lines) + "\n"
+
+
 __all__ = [
     "MAX_REPLY_CHARS",
     "EXPOSURE_CALLBACK_PREFIX",
@@ -92,11 +131,20 @@ __all__ = [
     "CONFIRMATION_CANCELLED",
     "CONFIRMATION_EXPIRED",
     "CONFIRMATION_PREVIEW_CHARS",
+    "STATUS_CALLBACK_PREFIX",
+    "STATUS_CSV_CALLBACK",
+    "STATUS_SUMMARY_CALLBACK",
+    "STATUS_CSV_LABEL",
+    "STATUS_SUMMARY_LABEL",
+    "STATUS_NOTHING_SAVED",
+    "STATUS_DOWNLOAD_FAILED",
     "ChatRecordBuilder",
     "PhishingAlertFormatter",
     "ResultFormatter",
     "build_confirmation_card",
     "build_confirmation_keyboard",
     "build_exposure_keyboard",
+    "build_status_keyboard",
+    "build_summary_document",
     "confirmation_preview",
 ]

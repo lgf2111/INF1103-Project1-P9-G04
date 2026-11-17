@@ -1,8 +1,10 @@
-"""Write selected report rows to a new CSV file."""
+"""Write selected report rows to a new CSV file or an in-memory stream."""
 
 import csv
+import io
 from collections.abc import Iterable
 from pathlib import Path
+from typing import TextIO
 
 from phishreport.model import Report
 
@@ -36,6 +38,20 @@ def _csv_row(record: dict) -> tuple[str | int | float | None, ...]:
     )
 
 
+def write_reports_csv(stream: TextIO, records: Iterable[dict]) -> None:
+    """Write the shared header and ordered rows to any text stream."""
+    writer = csv.writer(stream)
+    writer.writerow(CSV_COLUMNS)
+    writer.writerows(_csv_row(record) for record in records)
+
+
+def reports_csv_bytes(records: Iterable[dict]) -> bytes:
+    """Build the same CSV in memory for transports that send a document."""
+    stream = io.StringIO(newline="")
+    write_reports_csv(stream, records)
+    return stream.getvalue().encode("utf-8")
+
+
 def export_reports_csv(destination: str | Path, records: Iterable[dict]) -> None:
     """Write the ordered rows to a new UTF-8 CSV, with a header even if empty."""
     path = Path(destination)
@@ -43,9 +59,7 @@ def export_reports_csv(destination: str | Path, records: Iterable[dict]) -> None
     try:
         with path.open("x", encoding="utf-8", newline="") as stream:
             created = True
-            writer = csv.writer(stream)
-            writer.writerow(CSV_COLUMNS)
-            writer.writerows(_csv_row(record) for record in records)
+            write_reports_csv(stream, records)
     except BaseException as error:
         if created:
             try:

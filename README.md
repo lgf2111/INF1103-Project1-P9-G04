@@ -159,7 +159,7 @@ Start the application:
 uv run --python 3.14 --no-project --with-requirements requirements.txt python -m phishreport.cli
 ```
 
-You can manually check a suspicious message, import or upload an `.eml` email, view, summarize, and export saved reports. New assessments require a valid response from the Groq API.
+You can paste one message to check it, upload an `.eml` email, view, summarize, and export saved reports. New assessments require a valid response from the Groq API.
 
 ### Report summary
 
@@ -167,7 +167,7 @@ You can manually check a suspicious message, import or upload an `.eml` email, v
 messages were high priority, which channel they came from, or whether people who
 reported clicking a link are a growing share.
 
-**How to use it:** Choose **5. Summarize saved reports** in the CLI menu. Optionally
+**How to use it:** Choose **3. Summarize saved reports** in the CLI menu. Optionally
 filter by priority (high, medium, low) and channel (email, sms, chat), or press Enter
 to include everything. The summary shows counts by priority and channel, the average,
 highest and lowest rule-based score, and how many reports include a clicked link, a
@@ -194,7 +194,7 @@ JSON and SQLite. Queries use saved assessments and work offline.
 
 ### Export saved reports as CSV
 
-Choose **6. Filter and export saved reports**, then select a priority and channel
+Choose **4. Filter and export saved reports**, then select a priority and channel
 or press Enter for all. The CLI previews the selection in storage order. Enter
 a path for a new CSV file to export those same rows, or press Enter to skip.
 Relative paths are resolved from the CLI's working directory. Use an existing,
@@ -228,7 +228,7 @@ Enter these commands at the CLI menu or in the bot's private chat. CLI choices
 | --- | --- | --- |
 | `/check <text>` | Assess pasted chat text using the existing link, file and exposure prompts; save and display the result. | Assess the text once and save a v3 report immediately, then offer three follow-up answers that append a revision using the retained AI findings. Plain pasted text asks for confirmation first. |
 | `/help` | List the shared commands. | List the shared commands; the Gmail commands below remain available. |
-| `/status` | Show that the CLI conversation is active and count saved reports. | Count the requesting user's active exposure sessions awaiting answers and count saved reports. |
+| `/status` | Show that the CLI conversation is active and count saved reports. | Count the requesting user's active exposure sessions awaiting answers and count saved reports; when reports exist, offer the dated CSV and summary downloads. |
 
 Status counts reports from the configured history backend using strict loading;
 a read failure shows an error rather than a zero count. It does not request AI
@@ -684,22 +684,19 @@ The first matching rule determines the score and priority. Every new assessment 
 
 ### Import an email
 
-PhishReport supports three ways to submit a message:
+PhishReport supports these ways to submit a message:
 
-1. **Manual input:** Enter an email, SMS or chat message directly.
-2. **Folder import:** Select an exported `.eml` email from a local folder.
-3. **Browser upload:** Upload one `.eml` email through the local browser page at `http://localhost:8000` when the uploader is running.
+1. **Manual input:** Choose **1. Check a message** and paste an email, SMS or chat message. The channel, sender, first link and any attachment name are derived from the text, so they are not asked for. After the verdict is saved, an optional checklist asks what you did with the message.
+2. **Browser upload:** Type `upload` at the menu prompt to open the local browser page at `http://localhost:8000` and upload one `.eml` email there. Upload is not a numbered menu option.
+3. **Folder import:** The saved-folder picker remains available to code that calls `IOManager.collect_input_from_folder()` directly, but it is not reachable from the menu.
 
 ### CLI menu options
 
-The CLI provides two separate methods for importing `.eml` email files:
+The menu has five numbered items: **1. Check a message**, **2. View saved reports**, **3. Summarize saved reports**, **4. Filter and export saved reports** and **5. Quit**.
 
-- **Option 2 — Import the newest emails from your saved folder:** Opens the configured email folder and lists available `.eml` files, with the newest files shown first. Users can select which email to import.
-- **Option 3 — Upload an .eml in a browser:** Opens a local browser upload workflow, allowing users to select and upload an `.eml` file without navigating through the saved folder.
+Type `upload` at the menu prompt to start the browser upload workflow, or `feedback` to correct the most recent saved report with a category, an optional comment and an optional corrected priority. Neither keyword occupies a numbered slot. For manual entry, enter multiple lines and type `END` on its own line to finish; blank lines inside the message are preserved.
 
-For manual message entry (Option 1), users can enter multiple lines of text. Type `END` on its own line to finish entering the message. Blank lines within the message are preserved.
-
-Both `.eml` methods use the same email parser. The application reads supported text/HTML email content but **does not analyse attachments or embedded images**. Non-`.eml` browser uploads are rejected. Each imported file is limited to **2 MiB**. Users are asked separately whether they clicked links, downloaded files or disclosed credentials.
+The two `.eml` methods use the same email parser. The application reads supported text/HTML email content but **does not analyse attachments or embedded images**. Non-`.eml` browser uploads are rejected. Each imported file is limited to **2 MiB**. After the verdict is printed and saved, an optional checklist asks what you did with the message: click the link, download the file, enter a password, or enter a one-time code. On a terminal, use Up/Down to move, Space to toggle, Enter to confirm and Esc to skip. Piped or non-interactive input uses the equivalent numbered prompt (`1,3,4 + Enter, or Enter to skip`). Skipping leaves the original saved verdict unchanged; confirming re-scores from the retained findings and replaces that same report.
 
 ## Run Docker with persistent reports
 

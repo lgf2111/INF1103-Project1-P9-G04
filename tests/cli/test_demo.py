@@ -74,23 +74,16 @@ def test_demo_real_email_pipeline_and_reload(
 ):
     path = REAL_EMAILS / name
     sender, message = io_manager.eml_reader.read_path(path)
+    assert sender
     demo_reply(demo_transport)
     if entry == "manual":
-        answers = iter([
-            "Email",
-            sender,
-            *message.split("\n"),
-            "END",
-            "no",
-            "no",
-            "no",
-        ])
+        answers = iter([*message.split("\n"), "END", ""])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         cli.app.check_message()
     elif entry == "folder":
         LocalSettings().save("eml_folder", str(REAL_EMAILS))
         files = io_manager.folder_picker.list_eml_files(REAL_EMAILS)
-        answers = iter([str(files.index(path) + 1), "no", "no", "no"])
+        answers = iter([str(files.index(path) + 1), ""])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         cli.app.check_message(io_manager.collect_input_from_folder())
     else:
@@ -102,7 +95,7 @@ def test_demo_real_email_pipeline_and_reload(
                 "content": path.read_bytes(),
             },
         )
-        answers = iter(["no", "no", "no"])
+        answers = iter([""])
         monkeypatch.setattr("builtins.input", lambda _: next(answers))
         cli.app.upload_file()
 
@@ -137,20 +130,20 @@ def test_demo_real_email_pipeline_and_reload(
 @pytest.mark.parametrize(
     "changes, actions, score",
     [
-        ({"suspicious": False, "credential_request": False}, ["no", "no", "no"], 10),
+        ({"suspicious": False, "credential_request": False}, [""], 10),
         (
             {"suspicious": False, "credential_request": False, "insufficient_context": True},
-            ["no", "no", "no"],
+            [""],
             20,
         ),
-        ({}, ["yes", "untrusted link reported", "yes", "reported file", "yes", "yes", "no"], 80),
-        ({"suspicious": False, "credential_request": False}, ["no", "no", "password"], 90),
-        ({"suspicious": False, "credential_request": False}, ["no", "no", "otp"], 90),
+        ({}, ["1"], 80),
+        ({"suspicious": False, "credential_request": False}, ["3"], 90),
+        ({"suspicious": False, "credential_request": False}, ["4"], 90),
     ],
     ids=[
         "normal-findings",
         "uncertain-findings",
-        "click-and-download",
+        "clicked-link",
         "password-disclosure",
         "otp-disclosure",
     ],
@@ -187,8 +180,6 @@ def test_demo_failed_ai_differs_from_failed_save(cli, demo_transport, monkeypatc
         demo_transport.return_value.__enter__.return_value.read.return_value = b'{"choices":[]}'
     else:
         monkeypatch.setattr(json_storage.os, "replace", Mock(side_effect=PermissionError()))
-    answers = iter(["no", "no", "no"])
-    monkeypatch.setattr("builtins.input", lambda _: next(answers))
     cli.app.check_message(
         io_manager.collect_input_from_upload(
             {
@@ -230,7 +221,7 @@ def test_demo_actual_http_upload_of_real_email(cli, demo_transport, monkeypatch)
     monkeypatch.setattr(web_upload, "BIND_HOST", "127.0.0.1")
     monkeypatch.setattr(web_upload, "PORT", 0)
     monkeypatch.setattr(web_upload, "_UploadServer", make_server)
-    answers = iter(["no", "no", "no"])
+    answers = iter([""])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     worker = threading.Thread(target=run, daemon=True)
     worker.start()

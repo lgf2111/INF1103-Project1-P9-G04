@@ -5,6 +5,7 @@ import re
 import secrets
 import time
 from copy import deepcopy
+from datetime import date
 
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.constants import ChatType
@@ -32,20 +33,31 @@ from phishreport.bot.messages import (
     EXPOSURE_ALREADY_SAVED,
     EXPOSURE_CALLBACK_PREFIX,
     EXPOSURE_EXPIRED,
+    STATUS_CSV_CALLBACK,
+    STATUS_DOWNLOAD_FAILED,
+    STATUS_NOTHING_SAVED,
+    STATUS_SUMMARY_CALLBACK,
     ChatRecordBuilder,
     ResultFormatter,
     build_confirmation_card,
     build_confirmation_keyboard,
     build_exposure_keyboard,
+    build_status_keyboard,
+    build_summary_document,
 )
 from phishreport.data import DataManager
 from phishreport.errors import AssessmentError
 from phishreport.io.check_command import CheckOutcome
 from phishreport.io.command_catalog import CommandCapabilities, discover_commands
 from phishreport.io.commands import CommandRequest, CommandRouter
+from phishreport.io.report_csv import reports_csv_bytes
+from phishreport.logic import LogicManager
 from phishreport.model import SCHEMA_VERSION, Report
+from phishreport.reporting import ReportQueryService
 
 CHECK_CONNECTION = "check_connection"
+STATUS_ACTION_CSV = "csv"
+STATUS_ACTION_SUMMARY = "summary"
 
 
 class TelegramIOManager:
@@ -64,6 +76,7 @@ class TelegramIOManager:
         formatter: ResultFormatter | None = None,
         error_translator: AIErrorTranslator | None = None,
         feedback_service=None,
+        report_query: ReportQueryService | None = None,
     ) -> None:
         self._data_manager = data_manager
         self._allowed_chat_id = allowed_chat_id
@@ -72,6 +85,10 @@ class TelegramIOManager:
         self._formatter = formatter or ResultFormatter()
         self._error_translator = error_translator or AIErrorTranslator()
         self._feedback_service = feedback_service
+        # Status downloads read the same history and summary contract as the CLI.
+        self._report_query = report_query or ReportQueryService(
+            data_manager, LogicManager()
+        )
         # Reports are saved by read-modify-write, so overlapping saves must take turns.
         self._save_lock = asyncio.Lock()
         self._feedback_lock = asyncio.Lock()
@@ -547,6 +564,56 @@ class TelegramIOManager:
         else:
             await message.reply_text("Connection check passed.")
 
+    async def status_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+        """Send the saved reports or the CLI summary as an in-memory document."""
+        query = getattr(update, "callback_query", None)
+        if query is None:
+            return
+        try:
+            # Answer first so the button stops spinning while history is read.
+            await query.answer()
+            if not self.is_allowed(update):
+                return
+            payload = getattr(query, "data", None)
+            if payload == STATUS_CSV_CALLBACK:
+                action = STATUS_ACTION_CSV
+            elif payload == STATUS_SUMMARY_CALLBACK:
+                action = STATUS_ACTION_SUMMARY
+            else:
+                return
+            message = update.effective_message
+            records = await asyncio.to_thread(self._report_query.load)
+            if not records:
+                await message.reply_text(STATUS_NOTHING_SAVED)
+                return
+            selection = self._report_query.query(records=records)
+            today = date.today().isoformat()
+            if action == STATUS_ACTION_CSV:
+                document = reports_csv_bytes(selection.records)
+                filename = f"phishreport-{today}.csv"
+            else:
+                summary = self._report_query.summarize(selection)
+                document = build_summary_document(summary).encode("utf-8")
+                filename = f"phishreport-summary-{today}.txt"
+            await context.bot.send_document(
+                chat_id=update.effective_chat.id,
+                document=document,
+                filename=filename,
+            )
+        except Exception:
+            # A failed publisher gets one short sentence, never a traceback.
+            failure_message = getattr(update, "effective_message", None)
+            if failure_message is not None:
+                await failure_message.reply_text(STATUS_DOWNLOAD_FAILED)
+
+    async def _reply_status(self, message, text: str, records: list[dict]) -> None:
+        """Show the existing status text and, when history exists, the downloads."""
+        keyboard = build_status_keyboard(bool(records))
+        if keyboard is None:
+            await message.reply_text(f"{text}\n\n{STATUS_NOTHING_SAVED}")
+            return
+        await message.reply_text(text, reply_markup=keyboard)
+
     async def assess_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         """Ask before assessing free text, then cache one assessment per source."""
         chat = getattr(update, "effective_chat", None)
@@ -574,11 +641,20 @@ class TelegramIOManager:
             "command": "Sorry, the command failed. Please try again.",
         }
         if text.lstrip().startswith("/"):
+            # The status reply reuses the one history read, so its text, buttons
+            # and downloads all describe the same snapshot of saved reports.
+            status_records: list[list[dict]] = []
+
+            def report_count():
+                records = self._report_query.load()
+                status_records.append(records)
+                return len(records)
+
             catalog = discover_commands(CommandCapabilities(
                 prepare_record=lambda request: self._record_builder.build(request.text),
                 assess_record=lambda record: self._assessment.assess_with_findings(record),
                 session_status=lambda request: status_label,
-                report_count=lambda: len(self._data_manager.load(strict=True)),
+                report_count=report_count,
             ))
             router = CommandRouter(catalog)
             command = router.resolve(text)
@@ -607,7 +683,13 @@ class TelegramIOManager:
                         failure_text = "Sorry, the check failed. Please try again."
                     await message.reply_text(failure_text)
                 else:
-                    await message.reply_text(reply.text)
+                    if command.name == "status":
+                        await self._reply_status(
+                            message, reply.text,
+                            status_records[0] if status_records else [],
+                        )
+                    else:
+                        await message.reply_text(reply.text)
                 return
 
         # Initialize before the first await, so concurrent ingress shares one

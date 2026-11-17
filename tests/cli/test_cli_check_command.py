@@ -15,14 +15,9 @@ from phishreport.io.help_command import HelpCommand
 @pytest.fixture
 def command_app(tmp_path):
     io = Mock()
-    io.build_record_from_message.side_effect = lambda text, channel: {
-        "channel": channel,
+    io.build_record_from_message.side_effect = lambda text: {
+        "channel": "chat",
         "message": text,
-    }
-    io.collect_feedback.return_value = {
-        "category": "incorrect_priority",
-        "comment": "Internal test",
-        "corrected_priority": "LOW",
     }
     ai = Mock(**{"assess.return_value": {"suspicious": True}})
     logic = Mock(
@@ -36,7 +31,7 @@ def command_app(tmp_path):
     return app, io, ai, logic, data, feedback
 
 
-def test_cli_command_uses_shared_execute_once_preserves_text_and_saves_feedback(
+def test_cli_command_uses_shared_execute_once_preserves_text_and_does_not_ask_feedback(
     command_app, monkeypatch,
 ):
     app, io, ai, logic, data, feedback = command_app
@@ -56,7 +51,7 @@ def test_cli_command_uses_shared_execute_once_preserves_text_and_saves_feedback(
     assert executions[0].text == text
     assert executions[0].channel == "cli"
     io.collect_input.assert_not_called()
-    io.build_record_from_message.assert_called_once_with(text, channel="chat")
+    io.build_record_from_message.assert_called_once_with(text)
     record = {"channel": "chat", "message": text}
     ai.assess.assert_called_once_with(record)
     logic.evaluate.assert_called_once_with({**record, "ai": {"suspicious": True}})
@@ -67,10 +62,7 @@ def test_cli_command_uses_shared_execute_once_preserves_text_and_saves_feedback(
     assert saved["assessment_id"] == result["assessment_id"]
     assert result["assessment_id"]
     assert "assessment_id" not in saved["result"]
-    feedback.submit.assert_called_once_with(
-        assessment_id=result["assessment_id"], assessment_result=result,
-        **io.collect_feedback.return_value,
-    )
+    feedback.submit.assert_not_called()
     assert all(call.args[0] != "Assessment ready." for call in io.show_message.call_args_list)
 
 
@@ -186,7 +178,9 @@ def test_cli_unknown_command_does_not_assess_or_save(command_app, text):
 
     app.check_message(command_text=text)
 
-    io.show_message.assert_called_once_with("Please choose 1, 2, 3, 4, 5, 6 or 7.")
+    io.show_message.assert_called_once_with(
+        "Please choose 1, 2, 3, 4, 5, upload or feedback."
+    )
     io.collect_input.assert_not_called()
     io.build_record_from_message.assert_not_called()
     io.display_result.assert_not_called()

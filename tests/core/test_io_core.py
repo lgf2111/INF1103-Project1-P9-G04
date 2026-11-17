@@ -520,20 +520,17 @@ def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, mo
     from phishreport.io import IOManager
 
     monkeypatch.chdir(tmp_path)
-    raw = b"From: fictional@example.test\r\n\r\nVerify your account."
+    raw = (
+        b"From: fictional@example.test\r\n\r\n"
+        b"Verify your account at https://example.test/verify."
+    )
     Path("message.eml").write_bytes(raw)
     Path(".phishreport_config.json").write_text('{"eml_folder": "."}', encoding="utf-8")
-    exposure_answers = [" YES ", " ", " https://example.test/verify ", "No", " Y ", " OTP "]
     terminal = ScriptedTerminal(
         [
-            " EMAIL ",
-            " fictional@example.test ",
-            "Verify your account.",
+            "Verify your account at https://example.test/verify.",
             "END",
-            *exposure_answers,
             "1",
-            *exposure_answers,
-            *exposure_answers,
         ]
     )
     manager = IOManager(terminal)
@@ -541,43 +538,31 @@ def test_io_manager_builds_the_same_record_through_all_three_routes(tmp_path, mo
     expected = {
         "channel": "email",
         "sender": "fictional@example.test",
-        "message": "Verify your account.",
+        "message": "Verify your account at https://example.test/verify.",
         "has_link": True,
         "link": "https://example.test/verify",
         "has_file": False,
         "file_name": None,
-        "clicked": True,
+        "clicked": False,
         "downloaded": False,
-        "submitted_category": "otp",
-        "disclosure_answered": True,
+        "submitted_category": None,
+        "disclosure_answered": False,
     }
-    assert manager.collect_input() == expected
+    assert manager.collect_input() == {**expected, "channel": "chat", "sender": None}
     assert manager.collect_input_from_folder() == expected
     upload = {"filename": "message.EML", "content": raw}
     assert manager.collect_input_from_upload(upload) == expected
 
-    exposure_prompts = [
-        "Was a link included? (yes/no): ",
-        "Enter the link: ",
-        "Link cannot be blank. Please enter the link: ",
-        "Was a file included? (yes/no): ",
-        "Did you click the link? (yes/no): ",
-        "Did you give a password or code? (password/otp/no): ",
-    ]
     assert terminal.prompts == [
-        "Enter channel (Email/SMS/Chat): ",
-        "Enter sender information (press Enter if unknown): ",
         "Enter the suspicious message: ", "",
-        *exposure_prompts,
         "Enter a number to pick a file, or 'c' to cancel: ",
-        *exposure_prompts,
-        *exposure_prompts,
     ]
     assert terminal.lines == [
-    "Paste your message. Type END on its own line to finish.",
-    "1. message.eml",
-    "Email loaded successfully.",
-]
+        "Paste your message. Type END on its own line to finish.",
+        "Detected: chat",
+        "1. message.eml",
+        "Email loaded successfully.",
+    ]
 
 
 @pytest.mark.parametrize(
@@ -604,5 +589,8 @@ def test_io_manager_propagates_menu_interruption(interruption):
     with pytest.raises(interruption):
         IOManager(terminal).main_menu()
 
-    assert terminal.prompts == ["Choose 1-7: ", "Invalid choice. Please choose 1-7: "]
+    assert terminal.prompts == [
+        "Choose 1-5: ",
+        "Invalid choice. Please choose 1-5, upload or feedback: ",
+    ]
     assert terminal.lines[0] == "\n=== PhishReport ==="

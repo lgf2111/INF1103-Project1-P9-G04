@@ -9,6 +9,7 @@ import pytest
 
 from phishreport.bot import handlers as handlers_module
 from phishreport.bot.handlers import TelegramIOManager
+from phishreport.bot.messages import STATUS_NOTHING_SAVED, build_status_keyboard
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
 from phishreport.io.status_command import StatusCommand
 
@@ -63,9 +64,18 @@ def test_bot_status_reads_real_history_once_off_loop_without_assessment(
 
     asyncio.run(scenario())
 
-    update.effective_message.reply_text.assert_awaited_once_with(
+    expected_text = (
         f"Session: Active exposure sessions awaiting answers: 0\nSaved reports: {count}"
     )
+    if count:
+        update.effective_message.reply_text.assert_awaited_once_with(
+            expected_text,
+            reply_markup=build_status_keyboard(True),
+        )
+    else:
+        update.effective_message.reply_text.assert_awaited_once_with(
+            f"{expected_text}\n\n{STATUS_NOTHING_SAVED}"
+        )
     assert reads == [(True, reads[0][1])]
     assert reads[0][1] != main_thread
     assert len(executed) == 1 and executed[0].channel == "telegram"
@@ -97,7 +107,8 @@ def test_bot_status_counts_only_owned_live_pending_sessions_without_mutation(mon
     asyncio.run(manager.assess_message(update, None))
 
     update.effective_message.reply_text.assert_awaited_once_with(
-        "Session: Active exposure sessions awaiting answers: 2\nSaved reports: 3"
+        "Session: Active exposure sessions awaiting answers: 2\nSaved reports: 3",
+        reply_markup=build_status_keyboard(True),
     )
     assert manager._sessions == sessions
     assert {key: value.__dict__ for key, value in sessions.items()} == before

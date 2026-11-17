@@ -116,7 +116,7 @@ def test_cli_app_uses_its_own_managers_for_each_assessment():
 def test_cli_stores_optional_feedback_without_changing_the_assessment(tmp_path):
     record = {"channel": "email", "message": "A fictional message asks for a password."}
     io_manager = Mock()
-    io_manager.collect_feedback.return_value = {
+    io_manager.collect_correction.return_value = {
         "category": "incorrect_priority",
         "comment": "This was an internal test message.",
         "corrected_priority": "LOW",
@@ -143,6 +143,7 @@ def test_cli_stores_optional_feedback_without_changing_the_assessment(tmp_path):
     )
 
     app.check_message(record)
+    app.correct_latest_report()
 
     [report] = data_manager.load(strict=True)
     [feedback] = feedback_store.load()
@@ -182,7 +183,7 @@ def test_cli_does_not_offer_feedback_when_the_report_could_not_be_saved():
     app.check_message({"channel": "email", "message": "A fictional message."})
 
     io_manager.display_result.assert_called_once()
-    io_manager.collect_feedback.assert_not_called()
+    io_manager.collect_correction.assert_not_called()
     feedback_service.submit.assert_not_called()
 
 
@@ -268,7 +269,7 @@ def main_record():
 
 
 @pytest.mark.parametrize("invented_contact", [False, True])
-@pytest.mark.parametrize("disclosure, expected_score", [("no", 60), ("otp", 90)])
+@pytest.mark.parametrize("disclosure, expected_score", [("", 60), ("4", 90)])
 def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
     cli,
     main_app_boundary,
@@ -299,7 +300,7 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
         "absent@example.test" if invented_contact else "a1@example.test"
     ]
     main_completed_reply(main_app_boundary, findings)
-    answers = iter(["no", "no", disclosure])
+    answers = iter([disclosure])
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
     cli.app.upload_file()
     assert main_app_boundary.call_count == 1
@@ -314,7 +315,9 @@ def test_main_browser_html_email_uses_canonical_source_before_logic_and_save(
         assert "https://credential.example.test/login" in message
         assert "<p>" not in message and "Content-Type:" not in message
         assert records[0]["result"]["score"] == expected_score
-        cli.io_manager.display_result.assert_called_once()
+        assert cli.io_manager.display_result.call_count == (
+            2 if expected_score == 90 else 1
+        )
         displayed = cli.io_manager.display_result.call_args.args[0]
         assert displayed["assessment_id"] == records[0]["assessment_id"]
         assert {
@@ -373,10 +376,11 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
     main_completed_reply(main_app_boundary, findings)
     # Keep the saved-config file inside tmp_path so it doesn't touch the repo.
     monkeypatch.chdir(tmp_path)
-    # Option 2 now picks a .eml from a saved folder. First run asks for the
-    # folder; then the newest files are listed (encoded.eml is newer than
-    # malformed.eml). Pick the malformed one first (retry), then the good one.
-    answers = iter(["2", str(tmp_path), "2", "1", "no", "no", "no", "7"])
+    # Folder import is no longer a menu item, so call it directly to exercise
+    # the picker's retry: the malformed file is rejected, then the good one is
+    # decoded. The newest files are listed first, so encoded.eml is 1 and
+    # malformed.eml is 2.
+    answers = iter([str(tmp_path), "2", "1", ""])
     prompts = []
 
     def answer(prompt):
@@ -384,8 +388,8 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
         return next(answers)
 
     monkeypatch.setattr("builtins.input", answer)
-    cli.app.run()
-    assert prompts[0] == "Choose 1-7: "
+    record = cli.io_manager.collect_input_from_folder()
+    cli.app.check_message(record)
     assert any("email folder" in prompt.lower() for prompt in prompts)
     assert not any(
         "channel" in prompt.lower() or "input method" in prompt.lower() for prompt in prompts
@@ -401,6 +405,7 @@ def test_main_eml_retry_and_decoded_source_reach_real_pipeline(
         assert len(records) == 1
         assert records[0]["message"] == "Subject: Fictional request\n\n" + body
         assert records[0]["result"]["score"] == 60
+        assert prompts[-1].startswith("Enter numbers like 1,3,4 + Enter")
         cli.io_manager.display_result.assert_called_once()
         displayed = cli.io_manager.display_result.call_args.args[0]
         assert displayed["assessment_id"] == records[0]["assessment_id"]
@@ -503,7 +508,7 @@ def test_main_menu_continues_after_bad_record_then_saves_next_assessment(
     tmp_path,
 ):
     main_successful_reply(main_app_boundary)
-    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=["1", "1", "7"]))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=["1", "1", "5"]))
     monkeypatch.setattr(
         cli.io_manager,
         "collect_input",
@@ -547,7 +552,7 @@ def test_main_unwritable_log_destination_keeps_menu_available(
     # A file named "logs" makes os.makedirs("logs") fail, so the file log can't
     # open - the app must still run and warn about logging being unavailable.
     (tmp_path / "logs").write_text("not a directory")
-    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="7"))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="5"))
 
     cli.app.run()
 
@@ -672,7 +677,7 @@ def test_main_configured_storage_logging_uses_application_file(
     cli, main_app_boundary, tmp_path, monkeypatch
 ):
     (tmp_path / "reports.json").write_text("{PRIVATE_BROKEN")
-    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="7"))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(return_value="5"))
     cli.app.run()
     text = next((tmp_path / "logs").glob("phishreport-*.log")).read_text(encoding="utf-8")
     assert "data_manager" in text and "Could not read local report history" in text
@@ -740,13 +745,13 @@ def test_main_timeout_fallback_reaches_real_logic_and_saves_once(
     cli.io_manager.show_message.assert_not_called()
 
 
-@pytest.mark.parametrize("choice, handler_name", [("3", "upload_file"), ("4", "view_reports")])
+@pytest.mark.parametrize("choice, handler_name", [("upload", "upload_file"), ("2", "view_reports")])
 def test_main_menu_routes_upload_and_saved_reports(
     cli, main_app_boundary, monkeypatch, choice, handler_name
 ):
     handler = Mock()
     monkeypatch.setattr(cli.app, handler_name, handler)
-    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=[choice, "7"]))
+    monkeypatch.setattr(cli.io_manager, "main_menu", Mock(side_effect=[choice, "5"]))
 
     cli.app.run()
 

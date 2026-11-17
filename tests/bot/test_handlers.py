@@ -24,7 +24,12 @@ from phishreport.bot.exposure import (
 )
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
 from phishreport.bot.main import main
-from phishreport.bot.messages import EXPOSURE_CALLBACK_PREFIX, ChatRecordBuilder, ResultFormatter
+from phishreport.bot.messages import (
+    EXPOSURE_CALLBACK_PREFIX,
+    STATUS_CALLBACK_PREFIX,
+    ChatRecordBuilder,
+    ResultFormatter,
+)
 from phishreport.data import DataManager, JsonReportStorage, SqliteReportStorage
 from phishreport.errors import AIUnavailable, AssessmentError, FeedbackRejected, InvalidInput
 from phishreport.errors import StorageFailure as TypedStorageFailure
@@ -1302,7 +1307,7 @@ def test_launcher_registers_welcome_and_button_handlers_for_polling(monkeypatch)
 
     (app,) = polling.call_args.args
     polling.assert_called_once_with(app, allowed_updates=[Update.MESSAGE, Update.CALLBACK_QUERY])
-    start, link, checkmail, unlink, check, feedback, exposure, text = app.handlers[0]
+    start, link, checkmail, unlink, check, status, feedback, exposure, text = app.handlers[0]
     assert isinstance(start, CommandHandler)
     assert start.commands == {"start"}
     assert link.commands == {"linkgmail"}
@@ -1313,6 +1318,12 @@ def test_launcher_registers_welcome_and_button_handlers_for_polling(monkeypatch)
     assert not check.pattern.match(CHECK_CONNECTION + "\n")
     assert check.callback.__name__ == "check_connection"
     assert check.block
+    assert isinstance(status, CallbackQueryHandler)
+    assert status.callback.__self__ is check.callback.__self__
+    assert status.callback.__name__ == "status_callback"
+    assert status.pattern.pattern == rf"^{STATUS_CALLBACK_PREFIX}:"
+    assert status.pattern.match("status:csv")
+    assert not status.pattern.match("fb:o:assessment-123")
     assert isinstance(feedback, CallbackQueryHandler)
     assert feedback.pattern.match("fb:o:assessment-123")
     assert not feedback.pattern.match("other:assessment-123")

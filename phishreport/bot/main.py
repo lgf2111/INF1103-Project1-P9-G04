@@ -20,7 +20,11 @@ from phishreport.assessment import AssessmentService
 from phishreport.bot.gmail import AccountStore
 from phishreport.bot.gmail_handlers import GmailLinkHandlers
 from phishreport.bot.handlers import CHECK_CONNECTION, TelegramIOManager
-from phishreport.bot.messages import EXPOSURE_CALLBACK_PREFIX, ChatRecordBuilder
+from phishreport.bot.messages import (
+    EXPOSURE_CALLBACK_PREFIX,
+    STATUS_CALLBACK_PREFIX,
+    ChatRecordBuilder,
+)
 from phishreport.bot.monitor import EmailMonitor
 from phishreport.data import DataManager
 from phishreport.data.factory import create_report_storage
@@ -153,6 +157,11 @@ def main() -> int:
         application.add_handler(CommandHandler("unlinkgmail", gmail.unlink))
         application.add_handler(
             CallbackQueryHandler(manager.check_connection, pattern=rf"^{CHECK_CONNECTION}\Z")
+        )
+        application.add_handler(
+            CallbackQueryHandler(
+                manager.status_callback, pattern=rf"^{STATUS_CALLBACK_PREFIX}:"
+            )
         )
         application.add_handler(
             CallbackQueryHandler(manager.handle_feedback_callback, pattern=r"^fb:")

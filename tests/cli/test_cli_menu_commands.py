@@ -34,7 +34,7 @@ def menu_app(tmp_path, monkeypatch):
 
 def test_menu_routes_help_and_check_through_shared_commands_and_saves_once(menu_app, monkeypatch):
     raw = "  /check   Mixed CASE  message\nTrailing spaces  "
-    app, terminal, ai, logic, data = menu_app(["/help", raw, "no", "no", "no", "7"])
+    app, terminal, ai, logic, data = menu_app(["/help", raw, "", "5"])
     routed = []
     checked = []
     helped = []
@@ -71,13 +71,13 @@ def test_menu_routes_help_and_check_through_shared_commands_and_saves_once(menu_
     assert report["result"]["score"] == 60
     assert any("/help:" in entry.args[0] for entry in terminal.write.call_args_list)
     terminal.write.assert_any_call("Bye!")
-    assert terminal.read.call_count == 6
+    assert terminal.read.call_count == 4
 
 
 def test_menu_continues_after_usage_and_unknown_commands_then_assesses(menu_app):
     app, terminal, ai, logic, data = menu_app([
         "/check  ", "/unknown Content", "/CHECK Content", "/", "/check Valid Message",
-        "no", "no", "no", "7",
+        "", "5",
     ])
 
     app.run()
@@ -93,8 +93,8 @@ def test_menu_continues_after_usage_and_unknown_commands_then_assesses(menu_app)
 @pytest.mark.parametrize("error_type", [InvalidInput, AIUnavailable])
 def test_menu_continues_after_failed_command_and_saves_only_next_success(menu_app, error_type):
     app, terminal, ai, logic, data = menu_app([
-        "/check Failed Message", "no", "no", "no",
-        "/check Next Message", "no", "no", "no", "7",
+        "/check Failed Message", "4",
+        "/check Next Message", "", "5",
     ])
     ai.assess.side_effect = [error_type(), {"suspicious": True}]
 
@@ -109,7 +109,7 @@ def test_menu_continues_after_failed_command_and_saves_only_next_success(menu_ap
 
 def test_menu_numeric_manual_check_still_collects_and_assesses(menu_app):
     app, terminal, ai, logic, data = menu_app([
-        "1", "chat", "", "Manual Message", "END", "no", "no", "no", "7",
+        "1", "Manual Message", "END", "", "5",
     ])
 
     app.run()
