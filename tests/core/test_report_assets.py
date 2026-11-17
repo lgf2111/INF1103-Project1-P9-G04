@@ -9,6 +9,13 @@ ROOT = Path(__file__).resolve().parents[2]
 REPORT_DIR = ROOT / "docs" / "report"
 REFERENCE = re.compile(r"`(phishreport/[^`:]+\.py):(\d+)`")
 
+# docs/report/ holds locally generated submission artefacts and is git-ignored,
+# so it is absent from a clean checkout such as CI. Run
+# `python scripts/report_assets.py` to check the artefacts locally.
+pytestmark = pytest.mark.skipif(
+    not REPORT_DIR.is_dir(), reason="docs/report is not present in a clean checkout"
+)
+
 
 def text(name: str) -> str:
     path = REPORT_DIR / name
