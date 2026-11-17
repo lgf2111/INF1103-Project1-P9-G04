@@ -41,3 +41,6 @@ Thumbs.db
 
 # Personal notes, kept out of the repository
 docs/personal/
+
+# Submission artefacts stay local; they are packaged, not committed
+docs/report/

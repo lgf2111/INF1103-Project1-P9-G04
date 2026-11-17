@@ -20,7 +20,7 @@ PhishReport assesses suspicious emails, SMS and chat messages using the Groq API
 | `phishreport/email_html.py` | Convert HTML email content to safe text. |
 | `phishreport/local_settings.py` | Manage local preferences. |
 | `phishreport/logging_setup.py` | Configure diagnostic logs. |
-| `docs/` | Guides, the exception matrix, the report and the deck. |
+| `docs/` | Guides and the exception matrix. Submission artefacts build into an untracked `docs/report/`. |
 | `requirements.txt` | Dependencies for Telegram and the offline tests. |
 | `tests/core/` | Offline tests for the shared core: AI, logic, data, I/O and the canonical manager package contracts. |
 | `tests/cli/` | Offline tests for the terminal interface, settings, uploads, the Docker helper and the feature showcase. |
