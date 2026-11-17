@@ -59,7 +59,7 @@
         <li><strong>The verdict explains itself.</strong> Each result names the rule that matched and the fields it used.</li>
         <li><strong>Reports persist.</strong> JSON or SQLite, same contract, queryable and summarisable.</li>
       </ul>
-      <p style="margin-top:18px"><span class="pill">3107 tests</span><span class="pill">CI green</span><span class="pill">Docker</span></p>
+      <p style="margin-top:18px"><span class="pill">3,150 tests</span><span class="pill">CI green</span><span class="pill">Docker</span></p>
     </div>
     <div class="col-6">
       <img class="shot" src="cli-assess.png" alt="CLI assessment">
@@ -199,7 +199,7 @@
     <li>A LOW result never means "safe" — the score ranks response urgency, not maliciousness.</li>
     <li>Without exposure answers, a chat assessment is capped at MEDIUM by design.</li>
     <li>Gmail polling stores an app password (mode 0600) because polling needs it; unlinking deletes it.</li>
-    <li>Known gap: CLI-saved reports keep the score and trace but not the exposure answers, so the summary's exposure counters read zero.</li>
+    <li>Exposure answers are stored for CLI and chat assessments alike, and the summary counts them.</li>
   </ul>
   <p style="margin-top:26px; font-size:18px; color:#8a949f">Repo: github.com/lgf2111/INF1103-Project1-P9-G04 · demo script in docs/report/demo-script.md</p>
   <div class="num">10 / 10</div>
