@@ -10,7 +10,13 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from phishreport.assessment import AssessmentService
-from phishreport.bot.gmail import AccountStore, EmailSource, GmailMailbox, LinkedAccount, MailboxError
+from phishreport.bot.gmail import (
+    AccountStore,
+    EmailSource,
+    GmailMailbox,
+    LinkedAccount,
+    MailboxError,
+)
 from phishreport.bot.gmail_handlers import GmailLinkHandlers
 from phishreport.bot.monitor import CLEAN, EmailMonitor
 from phishreport.data import DataManager, JsonReportStorage
