@@ -14,6 +14,7 @@ from phishreport.feedback import FeedbackService, FeedbackStore
 from phishreport.io import IOManager
 from phishreport.io.command_catalog import CommandCapabilities, discover_commands
 from phishreport.io.commands import CommandRequest, CommandRouter
+from phishreport.io.report_csv import ReportExportError, export_reports_csv
 from phishreport.io.terminal import ConsoleTerminal
 from phishreport.logging_setup import AppLogging
 from phishreport.logic import LogicManager
@@ -140,7 +141,7 @@ class PhishReportApp:
                         )
                     return
                 if reply is None:
-                    self._io_manager.show_message("Please choose 1, 2, 3, 4, 5 or 6.")
+                    self._io_manager.show_message("Please choose 1, 2, 3, 4, 5, 6 or 7.")
                     return
                 if resolved.policy.execution != "assessment" or reply.kind != "assessment":
                     self._io_manager.show_message(reply.text)
@@ -262,6 +263,30 @@ class PhishReportApp:
             summary = self._report_query.summarize(selection)
             self._io_manager.display_summary(summary, selection.description)
 
+    def export_reports(self):
+        """Preview matching reports and optionally export the same selection."""
+        selection = self._query_reports()
+        if selection is None:
+            return
+        if not selection.records:
+            self._io_manager.show_message("No saved reports match.")
+            return
+
+        self._io_manager.display_list(selection.records)
+        destination = self._io_manager.collect_csv_path()
+        if destination is None:
+            return
+
+        try:
+            export_reports_csv(destination, selection.records)
+        except ReportExportError:
+            AppLogging.log_failure(logger, "Writing report CSV failed")
+            self._io_manager.show_message(
+                "Could not export reports. Choose a new file in a writable folder."
+            )
+            return
+        self._io_manager.show_message(f"Exported {len(selection.records)} report(s) to CSV.")
+
     def run(self):
         """Initialize configuration and logging, then run the interactive menu loop.
 
@@ -307,8 +332,10 @@ class PhishReportApp:
                 elif choice == "6":
                     self._io_manager.show_message("Bye!")
                     break
+                elif choice == "7":
+                    self.export_reports()
                 else:
-                    self._io_manager.show_message("Please choose 1, 2, 3, 4, 5 or 6.")
+                    self._io_manager.show_message("Please choose 1, 2, 3, 4, 5, 6 or 7.")
         except (KeyboardInterrupt, EOFError):
             # Ctrl+C (interrupt) or Ctrl+D (end of input): exit cleanly, no traceback.
             self._io_manager.show_message("\nInterrupted. Goodbye!")

@@ -159,7 +159,7 @@ Start the application:
 uv run --python 3.14 --no-project --with-requirements requirements.txt python -m phishreport.cli
 ```
 
-You can manually check a suspicious message, import or upload an `.eml` email, view saved reports, and summarize them. New assessments require a valid response from the Groq API.
+You can manually check a suspicious message, import or upload an `.eml` email, view, summarize, and export saved reports. New assessments require a valid response from the Groq API.
 
 ### Report summary
 
@@ -191,6 +191,33 @@ current and historical layouts, each metric (including unclassifiable values),
 a custom metric subclass, an empty history, an unreadable history file, the filter prompts, the printed
 summary and the menu flow. `tests/core/test_report_query.py` covers strict reads and ordering across
 JSON and SQLite. Queries use saved assessments and work offline.
+
+### Export saved reports as CSV
+
+Choose **7. Filter and export saved reports**, then select a priority and channel
+or press Enter for all. The CLI previews the selection in storage order. Enter
+a path for a new CSV file to export those same rows, or press Enter to skip.
+Relative paths are resolved from the CLI's working directory. Use an existing,
+writable parent folder. Existing files are kept intact.
+
+Files are UTF-8, comma-separated, with these ordered headers.
+
+| Position | Column | Value |
+| --- | --- | --- |
+| 1 | `assessment_id` | Saved assessment identifier, when present. |
+| 2 | `channel` | Stored channel. |
+| 3 | `priority` | Stored assessment priority, including supported legacy values. |
+| 4 | `score` | Stored numeric score. Zero is written as `0`. |
+| 5 | `message` | Stored message text in full. |
+
+Missing values are empty cells. Text starting with a tab, carriage return or
+line feed after leading spaces, or a formula marker after leading whitespace,
+is prefixed with an apostrophe for spreadsheet use. Formula markers are
+`=`, `+`, `-` and `@`, including their full-width versions.
+
+The CLI skips file creation when history is empty or the filter matches zero
+reports and shows a distinct message for each case. Calling the CSV writer
+directly with zero rows writes the header only.
 
 ### Shared conversation commands
 

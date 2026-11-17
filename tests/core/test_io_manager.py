@@ -77,7 +77,7 @@ def test_io_manager_main_menu_accepts_valid_choice(monkeypatch, choice):
 
 
 def test_io_manager_main_menu_reprompts_invalid_choice(monkeypatch):
-    answers = iter(["7", "hello", "1"])
+    answers = iter(["8", "hello", "1"])
 
     monkeypatch.setattr("builtins.input", lambda _: next(answers))
 
