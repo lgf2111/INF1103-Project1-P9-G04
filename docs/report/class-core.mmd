@@ -1,0 +1,49 @@
+classDiagram
+    class AssessmentService {
+        +assess()
+        +assess_with_findings()
+        +rescore()
+        +build_report()
+        +build_exposure_report()
+    }
+    class AIManager {
+        +assess()
+    }
+    class LogicManager {
+        +validate_record()
+        +rule_outcome()
+        +priority_for()
+        +evaluate()
+    }
+    class DataManager {
+        +save()
+        +load()
+        +query()
+    }
+    class IOManager {
+        +main_menu()
+        +collect_input()
+        +build_record_from_message()
+        +collect_input_from_folder()
+    }
+    class ReportValidator
+    class ReportPresenter {
+        +display_result()
+        +display_record()
+        +display_summary()
+    }
+    class PriorityRuleEngine {
+        +evaluate()
+        +score()
+    }
+    class ReportStorage {
+        <<abstract>>
+        +read_records()
+        +write_records()
+    }
+    AssessmentService --> AIManager : asks for findings
+    AssessmentService --> LogicManager : scores the findings
+    LogicManager --> PriorityRuleEngine : applies ordered rules
+    DataManager --> ReportValidator : validates before write
+    DataManager --> ReportStorage : persists through the contract
+    IOManager --> ReportPresenter : renders results
