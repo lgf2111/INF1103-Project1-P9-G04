@@ -49,7 +49,7 @@ persistence across runs.
 
 ## Act 3 — Telegram as the GUI (3 min)
 
-Start the bot (`bash run.sh telegram`), then on the phone:
+Start the bot (`bash run.sh gui`), then on the phone:
 
 1. `/start` — welcome and the connection check button. Tap it: "Connection check
    passed."

@@ -20,7 +20,7 @@ ENV PHISHREPORT_REPORTS_PATH=/data/reports.json \
     PYTHONUNBUFFERED=1
 CMD ["python", "-m", "phishreport.bot"]
 
-FROM base AS both
+FROM base AS all
 RUN mkdir -p /data
 # SQLite is the safe default when the CLI and bot write the same history.
 # An explicit PHISHREPORT_STORAGE from .env still overrides it at runtime.

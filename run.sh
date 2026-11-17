@@ -2,11 +2,11 @@
 # Simple helper to build and run PhishReport with Docker.
 #
 # Usage:
+#   bash run.sh cli       # run the CLI (loads your key from .env)
+#   bash run.sh gui       # run the Telegram bot (loads .env)
+#   bash run.sh all       # run the CLI and the Telegram bot in one container
 #   bash run.sh build     # build the CLI Docker image
-#   bash run.sh run       # run the CLI (loads your key from .env)
 #   bash run.sh test      # run the tests inside the container
-#   bash run.sh telegram # run the Telegram bot (loads .env)
-#   bash run.sh both     # run the CLI and the Telegram bot in one container
 #   bash run.sh shell     # open a shell inside the container
 #   bash run.sh clean     # remove the Docker images
 #
@@ -15,7 +15,7 @@
 
 IMAGE="phishreport"
 TELEGRAM_IMAGE="${IMAGE}-telegram"
-BOTH_IMAGE="${IMAGE}-both"
+ALL_IMAGE="${IMAGE}-all"
 
 # stop and show the error if any command fails
 set -e
@@ -75,9 +75,9 @@ ensure_image() {
 if [ "$command" = "build" ]; then
     echo "Building the $IMAGE image..."
     docker build -t "$IMAGE" "$(docker_path "$PROJECT_DIR")"
-    echo "Done. Start the app with: bash run.sh run"
+    echo "Done. Start the app with: bash run.sh cli"
 
-elif [ "$command" = "run" ]; then
+elif [ "$command" = "cli" ] || [ "$command" = "run" ]; then
     if [ ! -f "$PROJECT_DIR/.env" ]; then
         echo "No .env file found."
         echo "Copy .env.example to .env and add your GROQ_API_KEY before running the CLI."
@@ -124,7 +124,7 @@ elif [ "$command" = "test" ]; then
     echo "Running the tests inside the container..."
     docker run --rm --network none "$IMAGE" pytest
 
-elif [ "$command" = "telegram" ]; then
+elif [ "$command" = "gui" ] || [ "$command" = "telegram" ]; then
     TELEGRAM_ENV="$PROJECT_DIR/.env"
     if [ ! -f "$TELEGRAM_ENV" ]; then
         echo "Copy .env.example to .env and set TELEGRAM_BOT_TOKEN (TELEGRAM_ALLOWED_CHAT_ID is optional)."
@@ -145,9 +145,9 @@ elif [ "$command" = "telegram" ]; then
         -v "$(docker_path "$DATA_DIR"):/data" \
         "$TELEGRAM_IMAGE"
 
-elif [ "$command" = "both" ]; then
-    BOTH_ENV="$PROJECT_DIR/.env"
-    if [ ! -f "$BOTH_ENV" ]; then
+elif [ "$command" = "all" ]; then
+    ALL_ENV="$PROJECT_DIR/.env"
+    if [ ! -f "$ALL_ENV" ]; then
         echo "No .env file found."
         echo "Copy .env.example to .env and set GROQ_API_KEY and TELEGRAM_BOT_TOKEN."
         exit 1
@@ -175,8 +175,8 @@ elif [ "$command" = "both" ]; then
     fi
     mkdir -p "$DATA_DIR/logs"
 
-    if ! docker image inspect "$BOTH_IMAGE" >/dev/null 2>&1; then
-        docker build --target both -t "$BOTH_IMAGE" "$(docker_path "$PROJECT_DIR")"
+    if ! docker image inspect "$ALL_IMAGE" >/dev/null 2>&1; then
+        docker build --target all -t "$ALL_IMAGE" "$(docker_path "$PROJECT_DIR")"
     fi
     echo "Starting the CLI and Telegram bot in one container (Ctrl+C to quit)..."
     echo "Reports, settings and logs: $DATA_DIR"
@@ -184,11 +184,11 @@ elif [ "$command" = "both" ]; then
     echo "For the email folder picker, enter /emails (host folder: $EMAIL_DIR)."
     docker run --rm -it \
         -p 127.0.0.1:8000:8000 \
-        --env-file "$(docker_path "$BOTH_ENV")" \
+        --env-file "$(docker_path "$ALL_ENV")" \
         -v "$(docker_path "$DATA_DIR"):/data" \
         -v "$(docker_path "$EMAIL_DIR"):/emails:ro" \
         -w /data \
-        "$BOTH_IMAGE"
+        "$ALL_IMAGE"
 
 elif [ "$command" = "shell" ]; then
     # Open an interactive shell INSIDE the container so you can look around
@@ -203,7 +203,7 @@ elif [ "$command" = "shell" ]; then
     fi
 
 elif [ "$command" = "clean" ]; then
-    for image in "$IMAGE" "$TELEGRAM_IMAGE" "$BOTH_IMAGE"; do
+    for image in "$IMAGE" "$TELEGRAM_IMAGE" "$ALL_IMAGE"; do
         if docker image inspect "$image" >/dev/null 2>&1; then
             echo "Removing the $image image..."
             docker rmi "$image"
@@ -215,11 +215,11 @@ else
     echo ""
     echo "Usage: bash run.sh [command]"
     echo ""
+    echo "  cli     build if needed and run the CLI (needs .env with GROQ_API_KEY)"
+    echo "  gui     build if needed and run the Telegram bot (needs Telegram settings in .env)"
+    echo "  all     build if needed and run the CLI and bot together (needs both)"
     echo "  build   build the CLI Docker image"
-    echo "  run     build if needed and run the CLI (needs .env with GROQ_API_KEY)"
-    echo "  telegram build if needed and run the bot (needs Telegram settings in .env)"
-    echo "  both    build if needed and run the CLI and bot together (needs both)"
     echo "  test    run the tests in the container"
     echo "  shell   build if needed and open a shell inside the container"
-    echo "  clean   delete the CLI, Telegram and both images"
+    echo "  clean   delete the CLI, Telegram and all images"
 fi

@@ -366,7 +366,7 @@ TELEGRAM_ALLOWED_CHAT_ID=<optional positive private chat ID>
 Start Docker and run this from Bash or Git Bash:
 
 ```bash
-bash run.sh telegram
+bash run.sh gui
 ```
 
 The helper builds the `telegram` target if needed and mounts
@@ -403,7 +403,7 @@ to select JSON or its SQLite sibling, as described under
 
 #### Run the CLI and Telegram bot together
 
-The `both` target runs the interactive CLI on the main thread and the bot on a
+The `all` target runs the interactive CLI on the main thread and the bot on a
 daemon thread in the same container. Both adapters share one storage backend and
 one report manager, so a CLI save and a bot save cannot overwrite each other.
 The combined launcher defaults to SQLite (`PHISHREPORT_STORAGE=sqlite`) because
@@ -411,25 +411,25 @@ its write transactions are safer for two threads; set `PHISHREPORT_STORAGE=json`
 in `.env` only if you deliberately want the older JSON backend.
 
 ```bash
-bash run.sh both
+bash run.sh all
 ```
 
-The helper builds the `both` target if needed, mounts `.phishreport-data/` at
+The helper builds the `all` target if needed, mounts `.phishreport-data/` at
 `/data`, mounts the local `emails/` folder, and publishes the CLI uploader on
 `http://localhost:8000`. It needs `GROQ_API_KEY`, `TELEGRAM_BOT_TOKEN` and the
 optional `TELEGRAM_ALLOWED_CHAT_ID` in `.env`. Press Ctrl+C or choose the CLI
 quit option to stop both loops cleanly. For a first run without the helper:
 
 ```text
-docker build --target both -t phishreport-both .
+docker build --target all -t phishreport-all .
 docker run --rm -it --env-file .env -p 127.0.0.1:8000:8000 \
   --mount "type=bind,source=${PWD}/.phishreport-data,target=/data" \
   --mount "type=bind,source=${PWD}/emails,target=/emails,readonly" \
-  -w /data phishreport-both
+  -w /data phishreport-all
 ```
 
 Only one polling process may use a bot token at a time, so stop any separately
-running `bash run.sh telegram` before starting the combined target.
+running `bash run.sh gui` before starting the combined target.
 
 #### Verify the live connection
 
@@ -689,10 +689,10 @@ Bash/WSL on Windows:
 ```bash
 bash run.sh build
 bash run.sh test
-bash run.sh run
+bash run.sh cli
 ```
 
-`run.sh` builds the image automatically when needed, so `bash run.sh run` is
+`run.sh` builds the image automatically when needed, so `bash run.sh cli` is
 also enough for a first launch after configuring `.env`. Docker keeps reports,
 settings and logs in the host project's `.phishreport-data/` directory so they
 remain available between runs. The runner mounts the project's `emails/`
