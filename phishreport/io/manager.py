@@ -42,8 +42,9 @@ class IOManager:
         self._terminal.write("3. Summarize saved reports")
         self._terminal.write("4. Filter and export saved reports")
         self._terminal.write("5. Quit")
+        self._terminal.write("Or type a slash command: /check <message>, /status, /help")
 
-        prompt = "Choose 1-5: "
+        prompt = "Choose 1-5 or a /command: "
         while True:
             choice = self._terminal.read(prompt)
             if choice.lstrip().startswith("/"):
@@ -51,7 +52,7 @@ class IOManager:
             normalized = choice.strip().lower()
             if normalized in ("1", "2", "3", "4", "5", "upload", "feedback"):
                 return normalized
-            prompt = "Invalid choice. Please choose 1-5, upload or feedback: "
+            prompt = "Invalid choice. Please choose 1-5, a /command, upload or feedback: "
 
     def get_valid_choice(self, prompt, valid_choices, error_message):
         """Prompt until stripped, lowercase input matches one of valid_choices.

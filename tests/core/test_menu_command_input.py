@@ -17,7 +17,7 @@ def test_menu_returns_slash_input_untouched(text):
 
     assert IOManager(terminal).main_menu() == text
 
-    terminal.read.assert_called_once_with("Choose 1-5: ")
+    terminal.read.assert_called_once_with("Choose 1-5 or a /command: ")
 
 
 def test_menu_lists_the_export_action_before_quit():
@@ -33,6 +33,7 @@ def test_menu_lists_the_export_action_before_quit():
         call("3. Summarize saved reports"),
         call("4. Filter and export saved reports"),
         call("5. Quit"),
+        call("Or type a slash command: /check <message>, /status, /help"),
     ]
 
 
@@ -62,8 +63,8 @@ def test_menu_reprompts_invalid_non_commands_before_accepting_input(accepted):
     )
 
     assert terminal.read.call_args_list == [
-        call("Choose 1-5: "),
-        *[call("Invalid choice. Please choose 1-5, upload or feedback: ")] * 3,
+        call("Choose 1-5 or a /command: "),
+        *[call("Invalid choice. Please choose 1-5, a /command, upload or feedback: ")] * 3,
     ]
 
 

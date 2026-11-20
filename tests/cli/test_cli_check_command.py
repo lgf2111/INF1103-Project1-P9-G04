@@ -179,7 +179,7 @@ def test_cli_unknown_command_does_not_assess_or_save(command_app, text):
     app.check_message(command_text=text)
 
     io.show_message.assert_called_once_with(
-        "Please choose 1, 2, 3, 4, 5, upload or feedback."
+        "Please choose 1-5, a /command (try /help), upload or feedback."
     )
     io.collect_input.assert_not_called()
     io.build_record_from_message.assert_not_called()
