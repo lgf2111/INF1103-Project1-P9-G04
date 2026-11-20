@@ -93,6 +93,7 @@ def test_menu_lists_exactly_five_items_and_two_views_saved_reports(tmp_path, mon
         "3. Summarize saved reports",
         "4. Filter and export saved reports",
         "5. Quit",
+        "Or type a slash command: /check <message>, /status, /help",
     ]
 
     terminal.read.reset_mock()

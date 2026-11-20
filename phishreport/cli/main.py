@@ -147,7 +147,7 @@ class PhishReportApp:
                     return
                 if reply is None:
                     self._io_manager.show_message(
-                        "Please choose 1, 2, 3, 4, 5, upload or feedback."
+                        "Please choose 1-5, a /command (try /help), upload or feedback."
                     )
                     return
                 if resolved.policy.execution != "assessment" or reply.kind != "assessment":
@@ -419,7 +419,7 @@ class PhishReportApp:
                     self.correct_latest_report()
                 else:
                     self._io_manager.show_message(
-                        "Please choose 1, 2, 3, 4, 5, upload or feedback."
+                        "Please choose 1-5, a /command (try /help), upload or feedback."
                     )
         except (KeyboardInterrupt, EOFError):
             # Ctrl+C (interrupt) or Ctrl+D (end of input): exit cleanly, no traceback.

@@ -590,7 +590,7 @@ def test_io_manager_propagates_menu_interruption(interruption):
         IOManager(terminal).main_menu()
 
     assert terminal.prompts == [
-        "Choose 1-5: ",
-        "Invalid choice. Please choose 1-5, upload or feedback: ",
+        "Choose 1-5 or a /command: ",
+        "Invalid choice. Please choose 1-5, a /command, upload or feedback: ",
     ]
     assert terminal.lines[0] == "\n=== PhishReport ==="
